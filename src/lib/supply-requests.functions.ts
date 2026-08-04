@@ -197,12 +197,27 @@ export const searchProductsFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     if (!data.q.trim()) return [] as { id: string; name: string; unit: string | null }[];
-    const { data: rows, error } = await context.supabase
-      .from("products")
-      .select("id, name, unit")
+    const db = context.supabase as any;
+    const term = data.q.trim().replaceAll(",", "");
+    const { data: aliases, error: aliasError } = await db
+      .from("product_aliases")
+      .select("product_id, alias")
       .eq("organization_id", data.organizationId)
-      .ilike("name", `%${data.q}%`)
+      .ilike("normalized_alias", `%${term}%`)
+      .limit(20);
+    if (aliasError) throw new Error(aliasError.message);
+    const aliasProductIds = (aliases ?? []).map((row: any) => row.product_id);
+    const search = ["name", "normalized_name", "manufacturer", "description", "vendor_item_number", "internal_item_code"]
+      .map((column) => `${column}.ilike.%${term}%`);
+    if (aliasProductIds.length) search.push(`id.in.(${aliasProductIds.join(",")})`);
+    const { data: rows, error } = await db
+      .from("products")
+      .select("id, name, unit_of_measure")
+      .eq("organization_id", data.organizationId)
+      .eq("active", true)
+      .eq("staff_requestable", true)
+      .or(search.join(","))
       .limit(20);
     if (error) throw new Error(error.message);
-    return rows ?? [];
+    return (rows ?? []).map((row: any) => ({ id: row.id, name: row.name, unit: row.unit_of_measure }));
   });

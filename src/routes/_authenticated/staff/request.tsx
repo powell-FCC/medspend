@@ -128,7 +128,7 @@ function RequestPage() {
               />
               {(products.data ?? []).length > 0 && (
                 <ul className="mt-1 rounded-md border bg-card divide-y max-h-48 overflow-auto">
-                  {(products.data ?? []).map((p) => (
+                  {(products.data ?? []).map((p: { id: string; name: string; unit: string | null }) => (
                     <li key={p.id}>
                       <button
                         type="button"
