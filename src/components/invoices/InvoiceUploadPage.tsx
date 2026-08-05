@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useServerFn } from '@tanstack/react-start';
+import { useRouter } from '@tanstack/react-router';
 import { AlertCircle, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
@@ -14,7 +15,7 @@ import { InvoiceTable } from './InvoiceTable';
 type UploadState =
   | { kind: 'idle' }
   | { kind: 'uploading'; filename: string; progress: number }
-  | { kind: 'success'; filename: string }
+  | { kind: 'success'; filename: string; invoiceId: string }
   | { kind: 'error'; message: string };
 
 export function InvoiceUploadPage() {
@@ -22,6 +23,7 @@ export function InvoiceUploadPage() {
   const listInvoices = useServerFn(listVendorInvoicesFn);
   const recordInvoice = useServerFn(recordVendorInvoiceFn);
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [uploadState, setUploadState] = useState<UploadState>({ kind: 'idle' });
   const organizationId = active?.organizationId;
   const owner = active?.role === 'owner';
@@ -44,7 +46,7 @@ export function InvoiceUploadPage() {
       storagePath = await uploadVendorInvoice(organizationId, file, (progress) =>
         setUploadState({ kind: 'uploading', filename: file.name, progress }),
       );
-      await recordInvoice({
+      const invoice = await recordInvoice({
         data: {
           organizationId,
           storagePath,
@@ -55,7 +57,8 @@ export function InvoiceUploadPage() {
       });
       setUploadState({ kind: 'uploading', filename: file.name, progress: 100 });
       await queryClient.invalidateQueries({ queryKey });
-      setUploadState({ kind: 'success', filename: file.name });
+      setUploadState({ kind: 'success', filename: file.name, invoiceId: invoice.id });
+      window.setTimeout(() => router.navigate({ to: '/invoices/$invoiceId', params: { invoiceId: invoice.id } }), 900);
     } catch (error) {
       if (storagePath) {
         try {
@@ -84,7 +87,7 @@ export function InvoiceUploadPage() {
 
       <div className="my-5 min-h-20" aria-live="polite">
         {uploadState.kind === 'uploading' && <div className="rounded-xl border bg-card p-4"><div className="mb-3 flex items-center justify-between gap-3 text-sm"><span className="flex min-w-0 items-center gap-2 font-medium"><Loader2 className="h-4 w-4 animate-spin" /><span className="truncate">Uploading {uploadState.filename}</span></span><span>{uploadState.progress}%</span></div><Progress value={uploadState.progress} /></div>}
-        {uploadState.kind === 'success' && <Alert className="border-emerald-200 bg-emerald-50 text-emerald-950"><CheckCircle2 className="text-emerald-600" /><AlertTitle>Invoice uploaded</AlertTitle><AlertDescription>{uploadState.filename} is securely stored and ready for future processing.</AlertDescription></Alert>}
+        {uploadState.kind === 'success' && <Alert className="border-emerald-200 bg-emerald-50 text-emerald-950"><CheckCircle2 className="text-emerald-600" /><AlertTitle>Invoice Uploaded Successfully</AlertTitle><AlertDescription>{uploadState.filename} is securely stored. Status: Processing. Opening invoice review…</AlertDescription></Alert>}
         {uploadState.kind === 'error' && <Alert variant="destructive"><AlertCircle /><AlertTitle>Upload failed</AlertTitle><AlertDescription>{uploadState.message}</AlertDescription></Alert>}
       </div>
 

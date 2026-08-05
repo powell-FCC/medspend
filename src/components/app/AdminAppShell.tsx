@@ -1,17 +1,16 @@
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { LayoutDashboard, Upload, ShoppingCart, FileText, Package, Building2, ClipboardList, Settings, LogOut, Building } from "lucide-react";
+import { LayoutDashboard, Upload, ShoppingCart, Package, Building2, Users, Settings, LogOut, Building } from "lucide-react";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { supabase } from "@/integrations/supabase/client";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/upload", label: "Upload Invoice", icon: Upload, ownerOnly: true },
-  { to: "/purchases", label: "Purchases", icon: ShoppingCart },
-  { to: "/invoices", label: "Invoices", icon: FileText },
-  { to: "/products", label: "Products", icon: Package },
+  { to: "/inventory", label: "Inventory", icon: Package, ownerOnly: true },
+  { to: "/purchases", label: "Orders", icon: ShoppingCart },
   { to: "/vendors", label: "Vendors", icon: Building2 },
-  { to: "/supply-requests", label: "Supply Requests", icon: ClipboardList },
+  { to: "/upload", label: "Upload Invoice", icon: Upload, ownerOnly: true },
+  { to: "/supply-requests", label: "Staff", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

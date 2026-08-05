@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedInventoryRouteImport } from './routes/_authenticated/inventory'
 import { Route as AuthenticatedInvoicesRouteImport } from './routes/_authenticated/invoices'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedProductsRouteImport } from './routes/_authenticated/products'
@@ -25,6 +26,7 @@ import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedVendorsRouteImport } from './routes/_authenticated/vendors'
 import { Route as AuthConfirmRouteImport } from './routes/auth_.confirm'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
+import { Route as AuthenticatedInvoicesInvoiceIdRouteImport } from './routes/_authenticated/invoices.$invoiceId'
 import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authenticated/staff/index'
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
 import { Route as AuthenticatedStaffRequestsRouteImport } from './routes/_authenticated/staff/requests'
@@ -46,6 +48,11 @@ const AuthRoute = AuthRouteImport.update({
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedInventoryRoute = AuthenticatedInventoryRouteImport.update({
+  id: '/inventory',
+  path: '/inventory',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedInvoicesRoute = AuthenticatedInvoicesRouteImport.update({
@@ -110,6 +117,12 @@ const JoinTokenRoute = JoinTokenRouteImport.update({
   path: '/join/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedInvoicesInvoiceIdRoute =
+  AuthenticatedInvoicesInvoiceIdRouteImport.update({
+    id: '/$invoiceId',
+    path: '/$invoiceId',
+    getParentRoute: () => AuthenticatedInvoicesRoute,
+  } as any)
 const AuthenticatedStaffIndexRoute = AuthenticatedStaffIndexRouteImport.update({
   id: '/staff/',
   path: '/staff/',
@@ -132,7 +145,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/invoices': typeof AuthenticatedInvoicesRoute
+  '/inventory': typeof AuthenticatedInventoryRoute
+  '/invoices': typeof AuthenticatedInvoicesRouteWithChildren
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/products': typeof AuthenticatedProductsRoute
   '/profile': typeof AuthenticatedProfileRoute
@@ -144,6 +158,7 @@ export interface FileRoutesByFullPath {
   '/vendors': typeof AuthenticatedVendorsRoute
   '/auth/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
+  '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRoute
   '/staff/': typeof AuthenticatedStaffIndexRoute
@@ -152,7 +167,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/invoices': typeof AuthenticatedInvoicesRoute
+  '/inventory': typeof AuthenticatedInventoryRoute
+  '/invoices': typeof AuthenticatedInvoicesRouteWithChildren
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/products': typeof AuthenticatedProductsRoute
   '/profile': typeof AuthenticatedProfileRoute
@@ -164,6 +180,7 @@ export interface FileRoutesByTo {
   '/vendors': typeof AuthenticatedVendorsRoute
   '/auth/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
+  '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRoute
   '/staff': typeof AuthenticatedStaffIndexRoute
@@ -174,7 +191,8 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
-  '/_authenticated/invoices': typeof AuthenticatedInvoicesRoute
+  '/_authenticated/inventory': typeof AuthenticatedInventoryRoute
+  '/_authenticated/invoices': typeof AuthenticatedInvoicesRouteWithChildren
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
   '/_authenticated/products': typeof AuthenticatedProductsRoute
   '/_authenticated/profile': typeof AuthenticatedProfileRoute
@@ -186,6 +204,7 @@ export interface FileRoutesById {
   '/_authenticated/vendors': typeof AuthenticatedVendorsRoute
   '/auth_/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
+  '/_authenticated/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/_authenticated/staff/request': typeof AuthenticatedStaffRequestRoute
   '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRoute
   '/_authenticated/staff/': typeof AuthenticatedStaffIndexRoute
@@ -196,6 +215,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/dashboard'
+    | '/inventory'
     | '/invoices'
     | '/onboarding'
     | '/products'
@@ -208,6 +228,7 @@ export interface FileRouteTypes {
     | '/vendors'
     | '/auth/confirm'
     | '/join/$token'
+    | '/invoices/$invoiceId'
     | '/staff/request'
     | '/staff/requests'
     | '/staff/'
@@ -216,6 +237,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/dashboard'
+    | '/inventory'
     | '/invoices'
     | '/onboarding'
     | '/products'
@@ -228,6 +250,7 @@ export interface FileRouteTypes {
     | '/vendors'
     | '/auth/confirm'
     | '/join/$token'
+    | '/invoices/$invoiceId'
     | '/staff/request'
     | '/staff/requests'
     | '/staff'
@@ -237,6 +260,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/dashboard'
+    | '/_authenticated/inventory'
     | '/_authenticated/invoices'
     | '/_authenticated/onboarding'
     | '/_authenticated/products'
@@ -249,6 +273,7 @@ export interface FileRouteTypes {
     | '/_authenticated/vendors'
     | '/auth_/confirm'
     | '/join/$token'
+    | '/_authenticated/invoices/$invoiceId'
     | '/_authenticated/staff/request'
     | '/_authenticated/staff/requests'
     | '/_authenticated/staff/'
@@ -290,6 +315,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/inventory': {
+      id: '/_authenticated/inventory'
+      path: '/inventory'
+      fullPath: '/inventory'
+      preLoaderRoute: typeof AuthenticatedInventoryRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/invoices': {
@@ -376,6 +408,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JoinTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/invoices/$invoiceId': {
+      id: '/_authenticated/invoices/$invoiceId'
+      path: '/$invoiceId'
+      fullPath: '/invoices/$invoiceId'
+      preLoaderRoute: typeof AuthenticatedInvoicesInvoiceIdRouteImport
+      parentRoute: typeof AuthenticatedInvoicesRoute
+    }
     '/_authenticated/staff/': {
       id: '/_authenticated/staff/'
       path: '/staff'
@@ -400,9 +439,23 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedInvoicesRouteChildren {
+  AuthenticatedInvoicesInvoiceIdRoute: typeof AuthenticatedInvoicesInvoiceIdRoute
+}
+
+const AuthenticatedInvoicesRouteChildren: AuthenticatedInvoicesRouteChildren = {
+  AuthenticatedInvoicesInvoiceIdRoute: AuthenticatedInvoicesInvoiceIdRoute,
+}
+
+const AuthenticatedInvoicesRouteWithChildren =
+  AuthenticatedInvoicesRoute._addFileChildren(
+    AuthenticatedInvoicesRouteChildren,
+  )
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
-  AuthenticatedInvoicesRoute: typeof AuthenticatedInvoicesRoute
+  AuthenticatedInventoryRoute: typeof AuthenticatedInventoryRoute
+  AuthenticatedInvoicesRoute: typeof AuthenticatedInvoicesRouteWithChildren
   AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
   AuthenticatedProductsRoute: typeof AuthenticatedProductsRoute
   AuthenticatedProfileRoute: typeof AuthenticatedProfileRoute
@@ -419,7 +472,8 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
-  AuthenticatedInvoicesRoute: AuthenticatedInvoicesRoute,
+  AuthenticatedInventoryRoute: AuthenticatedInventoryRoute,
+  AuthenticatedInvoicesRoute: AuthenticatedInvoicesRouteWithChildren,
   AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
   AuthenticatedProductsRoute: AuthenticatedProductsRoute,
   AuthenticatedProfileRoute: AuthenticatedProfileRoute,

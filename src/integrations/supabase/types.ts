@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      invoice_processing_jobs: {
+        Row: { id: string; organization_id: string; invoice_id: string; status: string; created_at: string; updated_at: string }
+        Insert: { id?: string; organization_id: string; invoice_id: string; status?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; organization_id?: string; invoice_id?: string; status?: string; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      invoice_items: {
+        Row: { id: string; invoice_id: string; organization_id: string; sku: string | null; description: string; quantity: number; unit_price: number | null; total_price: number | null; unit_of_measure: string | null; created_at: string }
+        Insert: { id?: string; invoice_id: string; organization_id: string; sku?: string | null; description: string; quantity: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; created_at?: string }
+        Update: { id?: string; invoice_id?: string; organization_id?: string; sku?: string | null; description?: string; quantity?: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; created_at?: string }
+        Relationships: []
+      }
+      inventory_items: {
+        Row: { id: string; organization_id: string; sku: string | null; name: string; description: string | null; category: string | null; manufacturer: string | null; unit: string; quantity: number; par_level: number | null; last_purchase_price: number | null; last_purchase_date: string | null; vendor_name: string | null; active: boolean; created_at: string; updated_at: string }
+        Insert: { id?: string; organization_id: string; sku?: string | null; name: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; organization_id?: string; sku?: string | null; name?: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit?: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      inventory_categories: {
+        Row: { id: string; organization_id: string; name: string; created_at: string }
+        Insert: { id?: string; organization_id: string; name: string; created_at?: string }
+        Update: { id?: string; organization_id?: string; name?: string; created_at?: string }
+        Relationships: []
+      }
+      inventory_adjustments: {
+        Row: { id: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; created_at: string }
+        Insert: { id?: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; created_at?: string }
+        Update: { id?: string; organization_id?: string; inventory_item_id?: string; adjustment_amount?: number; previous_quantity?: number; new_quantity?: number; reason?: string; created_by?: string; created_at?: string }
+        Relationships: []
+      }
       invoice_line_items: {
         Row: {
           created_at: string
@@ -78,30 +108,42 @@ export type Database = {
           id: string
           invoice_date: string | null
           invoice_number: string | null
+          invoice_total: number | null
           organization_id: string
+          processing_status: string
+          source_file_id: string | null
           total: number | null
           updated_at: string
           vendor_id: string | null
+          vendor_name: string | null
         }
         Insert: {
           created_at?: string
           id?: string
           invoice_date?: string | null
           invoice_number?: string | null
+          invoice_total?: number | null
           organization_id: string
+          processing_status?: string
+          source_file_id?: string | null
           total?: number | null
           updated_at?: string
           vendor_id?: string | null
+          vendor_name?: string | null
         }
         Update: {
           created_at?: string
           id?: string
           invoice_date?: string | null
           invoice_number?: string | null
+          invoice_total?: number | null
           organization_id?: string
+          processing_status?: string
+          source_file_id?: string | null
           total?: number | null
           updated_at?: string
           vendor_id?: string | null
+          vendor_name?: string | null
         }
         Relationships: [
           {
@@ -687,6 +729,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      adjust_inventory_quantity: {
+        Args: { _organization_id: string; _inventory_item_id: string; _adjustment_amount: number; _reason: string }
+        Returns: number
+      }
       accept_invitation: {
         Args: { _raw_token: string }
         Returns: {
@@ -717,6 +763,10 @@ export type Database = {
       }
       is_org_admin: { Args: { _org: string; _user: string }; Returns: boolean }
       is_org_member: { Args: { _org: string; _user: string }; Returns: boolean }
+      receive_invoice_inventory_item: {
+        Args: { _organization_id: string; _sku: string; _name: string; _vendor_name: string; _quantity: number; _unit: string; _category: string; _unit_price: number }
+        Returns: { inventory_item_id: string; created: boolean }[]
+      }
       revoke_invitation: { Args: { _id: string }; Returns: undefined }
     }
     Enums: {
