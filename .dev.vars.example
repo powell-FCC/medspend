@@ -1,0 +1,4 @@
+# Copy to .dev.vars only if you do not use `npm run cf:preview`.
+# Never commit real values. The normal preview command loads .env.test.local.
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=

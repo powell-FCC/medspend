@@ -23,6 +23,7 @@ import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedSupplyRequestsRouteImport } from './routes/_authenticated/supply-requests'
 import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated/upload'
 import { Route as AuthenticatedVendorsRouteImport } from './routes/_authenticated/vendors'
+import { Route as AuthConfirmRouteImport } from './routes/auth_.confirm'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authenticated/staff/index'
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
@@ -99,6 +100,11 @@ const AuthenticatedVendorsRoute = AuthenticatedVendorsRouteImport.update({
   path: '/vendors',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthConfirmRoute = AuthConfirmRouteImport.update({
+  id: '/auth_/confirm',
+  path: '/auth/confirm',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
   id: '/join/$token',
   path: '/join/$token',
@@ -136,6 +142,7 @@ export interface FileRoutesByFullPath {
   '/supply-requests': typeof AuthenticatedSupplyRequestsRoute
   '/upload': typeof AuthenticatedUploadRoute
   '/vendors': typeof AuthenticatedVendorsRoute
+  '/auth/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRoute
@@ -155,6 +162,7 @@ export interface FileRoutesByTo {
   '/supply-requests': typeof AuthenticatedSupplyRequestsRoute
   '/upload': typeof AuthenticatedUploadRoute
   '/vendors': typeof AuthenticatedVendorsRoute
+  '/auth/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRoute
@@ -176,6 +184,7 @@ export interface FileRoutesById {
   '/_authenticated/supply-requests': typeof AuthenticatedSupplyRequestsRoute
   '/_authenticated/upload': typeof AuthenticatedUploadRoute
   '/_authenticated/vendors': typeof AuthenticatedVendorsRoute
+  '/auth_/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
   '/_authenticated/staff/request': typeof AuthenticatedStaffRequestRoute
   '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRoute
@@ -197,6 +206,7 @@ export interface FileRouteTypes {
     | '/supply-requests'
     | '/upload'
     | '/vendors'
+    | '/auth/confirm'
     | '/join/$token'
     | '/staff/request'
     | '/staff/requests'
@@ -216,6 +226,7 @@ export interface FileRouteTypes {
     | '/supply-requests'
     | '/upload'
     | '/vendors'
+    | '/auth/confirm'
     | '/join/$token'
     | '/staff/request'
     | '/staff/requests'
@@ -236,6 +247,7 @@ export interface FileRouteTypes {
     | '/_authenticated/supply-requests'
     | '/_authenticated/upload'
     | '/_authenticated/vendors'
+    | '/auth_/confirm'
     | '/join/$token'
     | '/_authenticated/staff/request'
     | '/_authenticated/staff/requests'
@@ -246,6 +258,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  AuthConfirmRoute: typeof AuthConfirmRoute
   JoinTokenRoute: typeof JoinTokenRoute
 }
 
@@ -349,6 +362,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedVendorsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/auth_/confirm': {
+      id: '/auth_/confirm'
+      path: '/auth/confirm'
+      fullPath: '/auth/confirm'
+      preLoaderRoute: typeof AuthConfirmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/join/$token': {
       id: '/join/$token'
       path: '/join/$token'
@@ -421,6 +441,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  AuthConfirmRoute: AuthConfirmRoute,
   JoinTokenRoute: JoinTokenRoute,
 }
 export const routeTree = rootRouteImport

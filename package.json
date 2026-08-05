@@ -8,6 +8,8 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
+    "cf:preview": "set -a; . ./.env.test.local; set +a; npm run build && npx --yes wrangler@4.118.0 dev --config wrangler.jsonc --env-file .env.test.local --local --port 8787",
+    "cf:typegen": "npx --yes wrangler@4.118.0 types worker-configuration.d.ts --config wrangler.jsonc",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
