@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/upload", label: "Upload Invoice", icon: Upload },
+  { to: "/upload", label: "Upload Invoice", icon: Upload, ownerOnly: true },
   { to: "/purchases", label: "Purchases", icon: ShoppingCart },
   { to: "/invoices", label: "Invoices", icon: FileText },
   { to: "/products", label: "Products", icon: Package },
@@ -50,7 +50,7 @@ export function AdminAppShell({ children }: { children: ReactNode }) {
           )}
         </div>
         <nav className="flex-1 py-3">
-          {nav.map(({ to, label, icon: Icon }) => {
+          {nav.filter((item) => !("ownerOnly" in item) || active?.role === "owner").map(({ to, label, icon: Icon }) => {
             const activeLink = pathname === to || pathname.startsWith(to + "/");
             return (
               <Link

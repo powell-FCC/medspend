@@ -606,6 +606,50 @@ export type Database = {
           },
         ]
       }
+      vendor_invoices: {
+        Row: {
+          created_at: string
+          file_size: number
+          id: string
+          mime_type: string
+          organization_id: string
+          original_filename: string
+          status: string
+          storage_path: string
+          uploaded_by: string
+        }
+        Insert: {
+          created_at?: string
+          file_size: number
+          id?: string
+          mime_type: string
+          organization_id: string
+          original_filename: string
+          status?: string
+          storage_path: string
+          uploaded_by: string
+        }
+        Update: {
+          created_at?: string
+          file_size?: number
+          id?: string
+          mime_type?: string
+          organization_id?: string
+          original_filename?: string
+          status?: string
+          storage_path?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_invoices_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vendors: {
         Row: {
           created_at: string
