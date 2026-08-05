@@ -20,7 +20,7 @@ export const Route = createFileRoute("/_authenticated")({
   ),
 });
 
-const ADMIN_ROUTES = ["/dashboard", "/upload", "/purchases", "/invoices", "/products", "/vendors", "/supply-requests", "/settings"];
+const ADMIN_ROUTES = ["/dashboard", "/inventory", "/upload", "/purchases", "/invoices", "/products", "/vendors", "/supply-requests", "/settings"];
 const STAFF_ROUTES = ["/staff", "/profile"];
 
 function isAdminPath(p: string) {

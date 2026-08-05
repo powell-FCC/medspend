@@ -21,15 +21,15 @@ export type Database = {
         Relationships: []
       }
       invoice_items: {
-        Row: { id: string; invoice_id: string; organization_id: string; sku: string | null; description: string; quantity: number; unit_price: number | null; total_price: number | null; unit_of_measure: string | null; created_at: string }
-        Insert: { id?: string; invoice_id: string; organization_id: string; sku?: string | null; description: string; quantity: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; created_at?: string }
-        Update: { id?: string; invoice_id?: string; organization_id?: string; sku?: string | null; description?: string; quantity?: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; created_at?: string }
+        Row: { id: string; invoice_id: string; organization_id: string; product_id: string | null; vendor_product_id: string | null; line_number: number | null; sku: string | null; description: string; manufacturer: string | null; category: string | null; quantity: number; unit_price: number | null; total_price: number | null; unit_of_measure: string | null; package_size: string | null; review_status: string; created_at: string; updated_at: string }
+        Insert: { id?: string; invoice_id: string; organization_id: string; product_id?: string | null; vendor_product_id?: string | null; line_number?: number | null; sku?: string | null; description: string; manufacturer?: string | null; category?: string | null; quantity: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; package_size?: string | null; review_status?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; invoice_id?: string; organization_id?: string; product_id?: string | null; vendor_product_id?: string | null; line_number?: number | null; sku?: string | null; description?: string; manufacturer?: string | null; category?: string | null; quantity?: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; package_size?: string | null; review_status?: string; created_at?: string; updated_at?: string }
         Relationships: []
       }
       inventory_items: {
-        Row: { id: string; organization_id: string; sku: string | null; name: string; description: string | null; category: string | null; manufacturer: string | null; unit: string; quantity: number; par_level: number | null; last_purchase_price: number | null; last_purchase_date: string | null; vendor_name: string | null; active: boolean; created_at: string; updated_at: string }
-        Insert: { id?: string; organization_id: string; sku?: string | null; name: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
-        Update: { id?: string; organization_id?: string; sku?: string | null; name?: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit?: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
+        Row: { id: string; organization_id: string; product_id: string | null; sku: string | null; name: string; description: string | null; category: string | null; manufacturer: string | null; unit: string; quantity: number; par_level: number | null; last_purchase_price: number | null; last_purchase_date: string | null; vendor_name: string | null; active: boolean; created_at: string; updated_at: string }
+        Insert: { id?: string; organization_id: string; product_id?: string | null; sku?: string | null; name: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; organization_id?: string; product_id?: string | null; sku?: string | null; name?: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit?: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
         Relationships: []
       }
       inventory_categories: {
@@ -39,9 +39,9 @@ export type Database = {
         Relationships: []
       }
       inventory_adjustments: {
-        Row: { id: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; created_at: string }
-        Insert: { id?: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; created_at?: string }
-        Update: { id?: string; organization_id?: string; inventory_item_id?: string; adjustment_amount?: number; previous_quantity?: number; new_quantity?: number; reason?: string; created_by?: string; created_at?: string }
+        Row: { id: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; source_type: string | null; source_invoice_id: string | null; source_invoice_item_id: string | null; idempotency_key: string | null; created_at: string }
+        Insert: { id?: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; source_type?: string | null; source_invoice_id?: string | null; source_invoice_item_id?: string | null; idempotency_key?: string | null; created_at?: string }
+        Update: { id?: string; organization_id?: string; inventory_item_id?: string; adjustment_amount?: number; previous_quantity?: number; new_quantity?: number; reason?: string; created_by?: string; source_type?: string | null; source_invoice_id?: string | null; source_invoice_item_id?: string | null; idempotency_key?: string | null; created_at?: string }
         Relationships: []
       }
       invoice_line_items: {
@@ -110,12 +110,22 @@ export type Database = {
           invoice_number: string | null
           invoice_total: number | null
           organization_id: string
+          payment_terms: string | null
+          posted_at: string | null
           processing_status: string
+          purchase_order_number: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          shipping_amount: number | null
           source_file_id: string | null
+          subtotal: number | null
+          tax_amount: number | null
           total: number | null
+          total_amount: number | null
           updated_at: string
           vendor_id: string | null
           vendor_name: string | null
+          currency_code: string | null
         }
         Insert: {
           created_at?: string
@@ -124,12 +134,22 @@ export type Database = {
           invoice_number?: string | null
           invoice_total?: number | null
           organization_id: string
+          payment_terms?: string | null
+          posted_at?: string | null
           processing_status?: string
+          purchase_order_number?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          shipping_amount?: number | null
           source_file_id?: string | null
+          subtotal?: number | null
+          tax_amount?: number | null
           total?: number | null
+          total_amount?: number | null
           updated_at?: string
           vendor_id?: string | null
           vendor_name?: string | null
+          currency_code?: string | null
         }
         Update: {
           created_at?: string
@@ -138,12 +158,22 @@ export type Database = {
           invoice_number?: string | null
           invoice_total?: number | null
           organization_id?: string
+          payment_terms?: string | null
+          posted_at?: string | null
           processing_status?: string
+          purchase_order_number?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          shipping_amount?: number | null
           source_file_id?: string | null
+          subtotal?: number | null
+          tax_amount?: number | null
           total?: number | null
+          total_amount?: number | null
           updated_at?: string
           vendor_id?: string | null
           vendor_name?: string | null
+          currency_code?: string | null
         }
         Relationships: [
           {
@@ -397,30 +427,63 @@ export type Database = {
       products: {
         Row: {
           approved: boolean
+          active: boolean
+          category_id: string | null
           created_at: string
+          description: string | null
           id: string
+          internal_item_code: string | null
+          manufacturer: string | null
           name: string
+          normalized_name: string
           organization_id: string
+          pack_size: string | null
+          preferred_vendor_id: string | null
+          staff_requestable: boolean
           unit: string | null
+          unit_of_measure: string | null
           updated_at: string
+          vendor_item_number: string | null
         }
         Insert: {
           approved?: boolean
+          active?: boolean
+          category_id?: string | null
           created_at?: string
+          description?: string | null
           id?: string
+          internal_item_code?: string | null
+          manufacturer?: string | null
           name: string
+          normalized_name: string
           organization_id: string
+          pack_size?: string | null
+          preferred_vendor_id?: string | null
+          staff_requestable?: boolean
           unit?: string | null
+          unit_of_measure?: string | null
           updated_at?: string
+          vendor_item_number?: string | null
         }
         Update: {
           approved?: boolean
+          active?: boolean
+          category_id?: string | null
           created_at?: string
+          description?: string | null
           id?: string
+          internal_item_code?: string | null
+          manufacturer?: string | null
           name?: string
+          normalized_name?: string
           organization_id?: string
+          pack_size?: string | null
+          preferred_vendor_id?: string | null
+          staff_requestable?: boolean
           unit?: string | null
+          unit_of_measure?: string | null
           updated_at?: string
+          vendor_item_number?: string | null
         }
         Relationships: [
           {
@@ -692,27 +755,93 @@ export type Database = {
           },
         ]
       }
-      vendors: {
+      vendor_products: {
         Row: {
+          active: boolean
           created_at: string
           id: string
-          name: string
+          manufacturer_sku: string | null
           organization_id: string
+          package_size: string | null
+          product_id: string
+          unit_of_measure: string | null
           updated_at: string
+          vendor_id: string
+          vendor_sku: string
         }
         Insert: {
+          active?: boolean
           created_at?: string
           id?: string
-          name: string
+          manufacturer_sku?: string | null
           organization_id: string
+          package_size?: string | null
+          product_id: string
+          unit_of_measure?: string | null
           updated_at?: string
+          vendor_id: string
+          vendor_sku: string
         }
         Update: {
+          active?: boolean
           created_at?: string
           id?: string
-          name?: string
+          manufacturer_sku?: string | null
           organization_id?: string
+          package_size?: string | null
+          product_id?: string
+          unit_of_measure?: string | null
           updated_at?: string
+          vendor_id?: string
+          vendor_sku?: string
+        }
+        Relationships: []
+      }
+      vendors: {
+        Row: {
+          account_number: string | null
+          active: boolean
+          contact_name: string | null
+          created_at: string
+          email: string | null
+          id: string
+          name: string
+          normalized_name: string
+          notes: string | null
+          organization_id: string
+          phone: string | null
+          updated_at: string
+          website: string | null
+        }
+        Insert: {
+          account_number?: string | null
+          active?: boolean
+          contact_name?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name: string
+          normalized_name: string
+          notes?: string | null
+          organization_id: string
+          phone?: string | null
+          updated_at?: string
+          website?: string | null
+        }
+        Update: {
+          account_number?: string | null
+          active?: boolean
+          contact_name?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string
+          normalized_name?: string
+          notes?: string | null
+          organization_id?: string
+          phone?: string | null
+          updated_at?: string
+          website?: string | null
         }
         Relationships: [
           {
@@ -763,6 +892,10 @@ export type Database = {
       }
       is_org_admin: { Args: { _org: string; _user: string }; Returns: boolean }
       is_org_member: { Args: { _org: string; _user: string }; Returns: boolean }
+      post_reviewed_invoice: {
+        Args: { _organization_id: string; _source_file_id: string }
+        Returns: Json
+      }
       receive_invoice_inventory_item: {
         Args: { _organization_id: string; _sku: string; _name: string; _vendor_name: string; _quantity: number; _unit: string; _category: string; _unit_price: number }
         Returns: { inventory_item_id: string; created: boolean }[]
