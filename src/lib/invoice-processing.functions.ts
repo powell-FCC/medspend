@@ -3,8 +3,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware';
 import type { Database, Json } from '@/integrations/supabase/types';
-import { getExtractionProviders, runExtractionPipeline } from '@/extraction/pipeline';
+import { getExtractionProviders, runDocumentTextExtraction, runExtractionPipeline } from '@/extraction/pipeline';
 import type { CanonicalInvoiceExtraction } from '@/extraction/types';
+import { EmbeddedPdfTextProvider } from '@/extraction/embedded-pdf-text-provider';
+import type { OCRProvider } from '@/extraction/providers';
 import type {
   InvoiceApprovalResult,
   InvoiceReview,
@@ -108,6 +110,37 @@ async function attemptMockExtraction(
   }
 }
 
+async function attemptEmbeddedTextExtraction(
+  db: SupabaseClient<Database>, organizationId: string, sourceFileId: string, storagePath: string,
+  provider: OCRProvider,
+) {
+  const { error: claimError } = await db.from('invoice_processing_jobs').update({
+    status: 'processing', document_text_status: 'pending', extraction_error: null,
+  }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId).eq('status', 'uploaded');
+  if (claimError) throw new Error(claimError.message);
+  try {
+    const { data: pdf, error: downloadError } = await db.storage.from('vendor-invoices').download(storagePath);
+    if (downloadError) throw new Error(downloadError.message);
+    const result = await runDocumentTextExtraction(new Uint8Array(await pdf.arrayBuffer()), provider);
+    const { error } = await db.from('invoice_processing_jobs').update({
+      status: 'review_required', document_text_status: result.status,
+      raw_extracted_text: result.status === 'success' ? result.text : null,
+      ocr_provider: result.provider, document_page_count: result.pageCount ?? null,
+      document_processing_duration_ms: result.durationMs, ocr_required: result.ocrRequired,
+      extraction_error: null,
+    }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId);
+    if (error) throw new Error(error.message);
+    return { status: result.status, error: null } as const;
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : 'Document text extraction failed';
+    await db.from('invoice_processing_jobs').update({
+      status: 'review_required', document_text_status: 'failed', raw_extracted_text: null,
+      ocr_provider: provider.name, ocr_required: false, extraction_error: message,
+    }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId);
+    return { status: 'failed', error: message } as const;
+  }
+}
+
 export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
   .inputValidator((value: unknown) => reviewKey.parse(value))
   .middleware([requireSupabaseAuth])
@@ -116,7 +149,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
     const [sourceResult, jobResult] = await Promise.all([
       context.supabase.from('vendor_invoices').select('id,organization_id,original_filename,storage_path,created_at')
         .eq('id', data.sourceFileId).eq('organization_id', data.organizationId).single(),
-      context.supabase.from('invoice_processing_jobs').select('status,extraction_result,extraction_error')
+      context.supabase.from('invoice_processing_jobs').select('status,extraction_result,extraction_error,document_text_status,ocr_provider,document_page_count,document_processing_duration_ms')
         .eq('invoice_id', data.sourceFileId).eq('organization_id', data.organizationId).single(),
     ]);
     if (sourceResult.error) throw new Error(sourceResult.error.message);
@@ -134,6 +167,10 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
     let extraction = jobResult.data.extraction_result as unknown as CanonicalInvoiceExtraction | null;
     let extractionError = jobResult.data.extraction_error;
     let extractionStatus: InvoiceReview['header']['extractionStatus'] = extraction ? 'succeeded' : jobResult.data.status === 'failed' ? 'failed' : 'not_started';
+    let documentTextStatus = jobResult.data.document_text_status as InvoiceReview['header']['documentTextStatus'];
+    let documentTextProvider = jobResult.data.ocr_provider;
+    let documentPageCount = jobResult.data.document_page_count;
+    let documentProcessingDurationMs = jobResult.data.document_processing_duration_ms;
     const providers = getExtractionProviders(context.enableMockInvoiceExtraction);
     if (!completed && jobResult.data.status === 'uploaded' && providers) {
       extractionStatus = 'processing';
@@ -143,6 +180,18 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         const failure = await context.supabase.from('invoice_processing_jobs').select('extraction_error').eq('invoice_id', data.sourceFileId).single();
         extractionError = failure.data?.extraction_error ?? 'Extraction failed. Continue with manual review.';
       }
+    } else if (!completed && jobResult.data.status === 'uploaded') {
+      const documentResult = await attemptEmbeddedTextExtraction(
+        context.supabase, data.organizationId, data.sourceFileId, sourceResult.data.storage_path,
+        new EmbeddedPdfTextProvider(),
+      );
+      documentTextStatus = documentResult.status;
+      documentTextProvider = 'unpdf-embedded-text';
+      extractionError = documentResult.error;
+      const metadata = await context.supabase.from('invoice_processing_jobs')
+        .select('document_page_count,document_processing_duration_ms').eq('invoice_id', data.sourceFileId).single();
+      documentPageCount = metadata.data?.document_page_count ?? null;
+      documentProcessingDurationMs = metadata.data?.document_processing_duration_ms ?? null;
     }
     if (!completed && extractionStatus !== 'failed') {
       const { error } = await context.supabase.from('invoice_processing_jobs').update({ status: 'review_required' })
@@ -187,6 +236,10 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         extractionStatus,
         extractionError,
         extractionConfidence: extraction ? Object.fromEntries(Object.entries(extraction.header).map(([key, field]) => [key, field.confidence])) : undefined,
+        documentTextStatus,
+        documentTextProvider,
+        documentPageCount,
+        documentProcessingDurationMs,
       },
       items: (itemsResult.data ?? []).map((item, index) => ({
         id: item.id,

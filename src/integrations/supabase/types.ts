@@ -15,9 +15,9 @@ export type Database = {
   public: {
     Tables: {
       invoice_processing_jobs: {
-        Row: { id: string; organization_id: string; invoice_id: string; status: string; extraction_result: Json | null; extraction_error: string | null; ocr_provider: string | null; extraction_provider: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; organization_id: string; invoice_id: string; status?: string; extraction_result?: Json | null; extraction_error?: string | null; ocr_provider?: string | null; extraction_provider?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; organization_id?: string; invoice_id?: string; status?: string; extraction_result?: Json | null; extraction_error?: string | null; ocr_provider?: string | null; extraction_provider?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; organization_id: string; invoice_id: string; status: string; extraction_result: Json | null; extraction_error: string | null; ocr_provider: string | null; extraction_provider: string | null; document_text_status: string; raw_extracted_text: string | null; document_page_count: number | null; document_processing_duration_ms: number | null; ocr_required: boolean; created_at: string; updated_at: string }
+        Insert: { id?: string; organization_id: string; invoice_id: string; status?: string; extraction_result?: Json | null; extraction_error?: string | null; ocr_provider?: string | null; extraction_provider?: string | null; document_text_status?: string; raw_extracted_text?: string | null; document_page_count?: number | null; document_processing_duration_ms?: number | null; ocr_required?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; organization_id?: string; invoice_id?: string; status?: string; extraction_result?: Json | null; extraction_error?: string | null; ocr_provider?: string | null; extraction_provider?: string | null; document_text_status?: string; raw_extracted_text?: string | null; document_page_count?: number | null; document_processing_duration_ms?: number | null; ocr_required?: boolean; created_at?: string; updated_at?: string }
         Relationships: []
       }
       invoice_items: {

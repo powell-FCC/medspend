@@ -27,7 +27,7 @@ test('review seeds drafts, exposes failure fallback, and approval still uses the
   assert.match(server, /invoice_items'\)\.insert/);
   assert.match(server, /Extraction is optional/);
   assert.match(page, /Automatic extraction unavailable/);
-  assert.match(page, /Automatic extraction is not configured/);
+  assert.match(page, /Ready for review/);
   assert.match(server, /rpc\('post_reviewed_invoice'/);
   assert.equal((server.match(/rpc\('post_reviewed_invoice'/g) ?? []).length, 1);
 });

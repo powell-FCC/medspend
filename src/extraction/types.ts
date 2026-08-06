@@ -37,5 +37,13 @@ export interface CanonicalInvoiceExtraction {
 export interface OCRResult {
   text: string;
   provider: string;
+  pageCount?: number;
 }
 
+export type DocumentTextStatus = 'pending' | 'success' | 'ocr_required' | 'failed';
+
+export interface DocumentTextExtractionResult extends OCRResult {
+  durationMs: number;
+  status: Exclude<DocumentTextStatus, 'pending' | 'failed'>;
+  ocrRequired: boolean;
+}
