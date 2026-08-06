@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getRuntimeEnv } from '../src/lib/runtime-env.server.ts';
+import { getRuntimeEnv, isMockInvoiceExtractionEnabled } from '../src/lib/runtime-env.server.ts';
 
 test('Cloudflare request-time binding takes precedence over process.env', () => {
   const name = 'MEDSPEND_RUNTIME_ENV_TEST';
@@ -78,4 +78,45 @@ test('unrelated names never read arbitrary Vite variables', () => {
     if (previous === undefined) delete process.env[name];
     else process.env[name] = previous;
   }
+});
+
+test('mock invoice extraction is server-only and defaults to disabled', () => {
+  const previous = process.env.ENABLE_MOCK_INVOICE_EXTRACTION;
+  delete process.env.ENABLE_MOCK_INVOICE_EXTRACTION;
+  try {
+    assert.equal(isMockInvoiceExtractionEnabled(), false);
+    assert.equal(getRuntimeEnv(undefined, 'ENABLE_MOCK_INVOICE_EXTRACTION', {
+      VITE_ENABLE_MOCK_INVOICE_EXTRACTION: 'true',
+    } as never), undefined);
+    assert.equal(isMockInvoiceExtractionEnabled(), false);
+  } finally {
+    if (previous === undefined) delete process.env.ENABLE_MOCK_INVOICE_EXTRACTION;
+    else process.env.ENABLE_MOCK_INVOICE_EXTRACTION = previous;
+  }
+});
+
+test('mock invoice extraction requires the exact explicit server value true', () => {
+  const previous = process.env.ENABLE_MOCK_INVOICE_EXTRACTION;
+  try {
+    process.env.ENABLE_MOCK_INVOICE_EXTRACTION = 'false';
+    assert.equal(isMockInvoiceExtractionEnabled(), false);
+    process.env.ENABLE_MOCK_INVOICE_EXTRACTION = 'TRUE';
+    assert.equal(isMockInvoiceExtractionEnabled(), false);
+    process.env.ENABLE_MOCK_INVOICE_EXTRACTION = 'true';
+    assert.equal(isMockInvoiceExtractionEnabled(), true);
+  } finally {
+    if (previous === undefined) delete process.env.ENABLE_MOCK_INVOICE_EXTRACTION;
+    else process.env.ENABLE_MOCK_INVOICE_EXTRACTION = previous;
+  }
+});
+
+test('production runtime cannot enable mock invoice extraction even when flagged', () => {
+  const request = new Request('https://medspend.example') as Request & {
+    runtime: { cloudflare: { env: Record<string, unknown> } };
+  };
+  request.runtime = { cloudflare: { env: {
+    NODE_ENV: 'production',
+    ENABLE_MOCK_INVOICE_EXTRACTION: 'true',
+  } } };
+  assert.equal(isMockInvoiceExtractionEnabled(request), false);
 });

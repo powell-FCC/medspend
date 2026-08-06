@@ -2,7 +2,9 @@ import { createServerFn } from '@tanstack/react-start';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware';
-import type { Database } from '@/integrations/supabase/types';
+import type { Database, Json } from '@/integrations/supabase/types';
+import { getExtractionProviders, runExtractionPipeline } from '@/extraction/pipeline';
+import type { CanonicalInvoiceExtraction } from '@/extraction/types';
 import type {
   InvoiceApprovalResult,
   InvoiceReview,
@@ -19,6 +21,10 @@ const headerInput = reviewKey.extend({
   invoiceNumber: z.string().trim().max(120),
   invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal('')),
   invoiceTotal: z.number().nonnegative().optional().nullable(),
+  purchaseOrder: z.string().trim().max(120).default(''),
+  subtotal: z.number().nonnegative().optional().nullable(),
+  tax: z.number().nonnegative().optional().nullable(),
+  shipping: z.number().nonnegative().optional().nullable(),
 });
 const itemInput = reviewKey.extend({
   id: uuid.optional(),
@@ -50,15 +56,67 @@ async function requireDraftInvoice(db: SupabaseClient<Database>, organizationId:
   return data;
 }
 
+async function attemptMockExtraction(
+  db: SupabaseClient<Database>, organizationId: string, sourceFileId: string, storagePath: string, invoiceId: string,
+  providers: NonNullable<ReturnType<typeof getExtractionProviders>>,
+) {
+  const { error: claimedError } = await db.from('invoice_processing_jobs').update({ status: 'processing', extraction_error: null })
+    .eq('invoice_id', sourceFileId).eq('organization_id', organizationId).eq('status', 'uploaded');
+  if (claimedError) throw new Error(claimedError.message);
+  try {
+    const { data: pdf, error: downloadError } = await db.storage.from('vendor-invoices').download(storagePath);
+    if (downloadError) throw new Error(downloadError.message);
+    const result = await runExtractionPipeline(new Uint8Array(await pdf.arrayBuffer()), providers);
+    const extraction = result.extraction;
+    const { error: headerError } = await db.from('invoices').update({
+      vendor_name: extraction.header.vendor.value || null,
+      invoice_number: extraction.header.invoiceNumber.value || null,
+      invoice_date: extraction.header.invoiceDate.value || null,
+      purchase_order_number: extraction.header.purchaseOrder.value || null,
+      subtotal: extraction.header.subtotal.value,
+      tax_amount: extraction.header.tax.value,
+      shipping_amount: extraction.header.shipping.value,
+      invoice_total: extraction.header.total.value,
+      total_amount: extraction.header.total.value,
+      total: extraction.header.total.value,
+      processing_status: 'review_required',
+    }).eq('id', invoiceId).eq('organization_id', organizationId);
+    if (headerError) throw new Error(headerError.message);
+    if (extraction.items.length) {
+      const { error: itemError } = await db.from('invoice_items').insert(extraction.items.map((item, index) => ({
+        invoice_id: invoiceId, organization_id: organizationId, line_number: index + 1,
+        sku: item.sku.value || null, description: item.description.value,
+        manufacturer: item.manufacturer.value || null, category: item.suggestedCategory.value || null,
+        quantity: item.quantity.value, unit_of_measure: item.unit.value || 'each',
+        unit_price: item.unitPrice.value, total_price: item.lineTotal.value,
+        review_status: 'pending_review',
+      })));
+      if (itemError) throw new Error(itemError.message);
+    }
+    const { error: completedError } = await db.from('invoice_processing_jobs').update({
+      status: 'review_required', extraction_result: extraction as unknown as Json, extraction_error: null,
+      ocr_provider: result.ocrProvider, extraction_provider: result.invoiceProvider,
+    }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId);
+    if (completedError) throw new Error(completedError.message);
+    return extraction;
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : 'Invoice extraction failed';
+    await db.from('invoice_processing_jobs').update({ status: 'failed', extraction_error: message })
+      .eq('invoice_id', sourceFileId).eq('organization_id', organizationId);
+    // Extraction is optional. The review route must remain usable for manual entry.
+    return null;
+  }
+}
+
 export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
   .inputValidator((value: unknown) => reviewKey.parse(value))
   .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }): Promise<InvoiceReview> => {
     await assertOwner(context.supabase, context.userId, data.organizationId);
     const [sourceResult, jobResult] = await Promise.all([
-      context.supabase.from('vendor_invoices').select('id,organization_id,original_filename,created_at')
+      context.supabase.from('vendor_invoices').select('id,organization_id,original_filename,storage_path,created_at')
         .eq('id', data.sourceFileId).eq('organization_id', data.organizationId).single(),
-      context.supabase.from('invoice_processing_jobs').select('status')
+      context.supabase.from('invoice_processing_jobs').select('status,extraction_result,extraction_error')
         .eq('invoice_id', data.sourceFileId).eq('organization_id', data.organizationId).single(),
     ]);
     if (sourceResult.error) throw new Error(sourceResult.error.message);
@@ -70,10 +128,23 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
       source_file_id: data.sourceFileId,
       processing_status: completed ? 'completed' : 'review_required',
     }, { onConflict: 'source_file_id' }).select(
-      'id,vendor_id,vendor_name,invoice_number,invoice_date,invoice_total,total_amount,processing_status',
+      'id,vendor_id,vendor_name,invoice_number,invoice_date,purchase_order_number,subtotal,tax_amount,shipping_amount,invoice_total,total_amount,processing_status',
     ).single();
     if (invoiceError) throw new Error(invoiceError.message);
-    if (!completed) {
+    let extraction = jobResult.data.extraction_result as unknown as CanonicalInvoiceExtraction | null;
+    let extractionError = jobResult.data.extraction_error;
+    let extractionStatus: InvoiceReview['header']['extractionStatus'] = extraction ? 'succeeded' : jobResult.data.status === 'failed' ? 'failed' : 'not_started';
+    const providers = getExtractionProviders(context.enableMockInvoiceExtraction);
+    if (!completed && jobResult.data.status === 'uploaded' && providers) {
+      extractionStatus = 'processing';
+      extraction = await attemptMockExtraction(context.supabase, data.organizationId, data.sourceFileId, sourceResult.data.storage_path, invoice.id, providers);
+      extractionStatus = extraction ? 'succeeded' : 'failed';
+      if (!extraction) {
+        const failure = await context.supabase.from('invoice_processing_jobs').select('extraction_error').eq('invoice_id', data.sourceFileId).single();
+        extractionError = failure.data?.extraction_error ?? 'Extraction failed. Continue with manual review.';
+      }
+    }
+    if (!completed && extractionStatus !== 'failed') {
       const { error } = await context.supabase.from('invoice_processing_jobs').update({ status: 'review_required' })
         .eq('invoice_id', data.sourceFileId).eq('organization_id', data.organizationId);
       if (error) throw new Error(error.message);
@@ -104,13 +175,20 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         originalFilename: sourceResult.data.original_filename,
         uploadedAt: sourceResult.data.created_at,
         vendorId: invoice.vendor_id,
-        vendorName: invoice.vendor_name ?? '',
-        invoiceNumber: invoice.invoice_number ?? '',
-        invoiceDate: invoice.invoice_date ?? '',
-        invoiceTotal: invoice.total_amount ?? invoice.invoice_total,
+        vendorName: invoice.vendor_name ?? extraction?.header.vendor.value ?? '',
+        invoiceNumber: invoice.invoice_number ?? extraction?.header.invoiceNumber.value ?? '',
+        invoiceDate: invoice.invoice_date ?? extraction?.header.invoiceDate.value ?? '',
+        invoiceTotal: invoice.total_amount ?? invoice.invoice_total ?? extraction?.header.total.value ?? null,
+        purchaseOrder: invoice.purchase_order_number ?? extraction?.header.purchaseOrder.value ?? '',
+        subtotal: invoice.subtotal ?? extraction?.header.subtotal.value ?? null,
+        tax: invoice.tax_amount ?? extraction?.header.tax.value ?? null,
+        shipping: invoice.shipping_amount ?? extraction?.header.shipping.value ?? null,
         status: (completed ? 'completed' : 'review_required') as ProcessingStatus,
+        extractionStatus,
+        extractionError,
+        extractionConfidence: extraction ? Object.fromEntries(Object.entries(extraction.header).map(([key, field]) => [key, field.confidence])) : undefined,
       },
-      items: (itemsResult.data ?? []).map((item) => ({
+      items: (itemsResult.data ?? []).map((item, index) => ({
         id: item.id,
         invoiceId: item.invoice_id,
         lineNumber: item.line_number,
@@ -125,6 +203,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         packageSize: item.package_size ?? '',
         vendorProductId: item.vendor_product_id,
         reviewStatus: item.review_status as InvoiceItemReviewStatus,
+        extractionConfidence: extraction?.items[index] ? Math.min(...Object.values(extraction.items[index]).map((field) => field.confidence)) : undefined,
       })),
       categories: (categoriesResult.data ?? []).map((category) => category.name),
       vendors: (vendorsResult.data ?? []).map((vendor) => ({ id: vendor.id, name: vendor.name })),
@@ -160,6 +239,11 @@ export const saveInvoiceHeaderFn = createServerFn({ method: 'POST' })
       invoice_date: data.invoiceDate || null,
       invoice_total: data.invoiceTotal ?? null,
       total_amount: data.invoiceTotal ?? null,
+      total: data.invoiceTotal ?? null,
+      purchase_order_number: data.purchaseOrder || null,
+      subtotal: data.subtotal ?? null,
+      tax_amount: data.tax ?? null,
+      shipping_amount: data.shipping ?? null,
       processing_status: 'review_required',
     }).eq('id', invoice.id).eq('organization_id', data.organizationId);
     if (error) throw new Error(error.message);

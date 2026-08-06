@@ -45,3 +45,8 @@ export function getRuntimeEnv(
 
   return getBuildTimeSupabaseEnv(name, buildTimeEnv);
 }
+
+export function isMockInvoiceExtractionEnabled(request?: Request): boolean {
+  if (import.meta.env?.PROD || getRuntimeEnv(request, 'NODE_ENV') === 'production') return false;
+  return getRuntimeEnv(request, 'ENABLE_MOCK_INVOICE_EXTRACTION') === 'true';
+}

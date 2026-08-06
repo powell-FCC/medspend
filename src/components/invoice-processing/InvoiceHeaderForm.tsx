@@ -10,6 +10,10 @@ type HeaderForm = {
   invoiceNumber: string;
   invoiceDate: string;
   invoiceTotal: string;
+  purchaseOrder: string;
+  subtotal: string;
+  tax: string;
+  shipping: string;
 };
 
 export function InvoiceHeaderForm({ header, vendors, disabled, onSave }: {
@@ -34,6 +38,10 @@ export function InvoiceHeaderForm({ header, vendors, disabled, onSave }: {
         invoiceNumber: form.invoiceNumber,
         invoiceDate: form.invoiceDate,
         invoiceTotal: form.invoiceTotal === '' ? null : Number(form.invoiceTotal),
+        purchaseOrder: form.purchaseOrder,
+        subtotal: numberOrNull(form.subtotal),
+        tax: numberOrNull(form.tax),
+        shipping: numberOrNull(form.shipping),
       });
       setMessage('Invoice details saved.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save invoice details.'); }
@@ -42,15 +50,19 @@ export function InvoiceHeaderForm({ header, vendors, disabled, onSave }: {
   return <form onSubmit={submit} className="rounded-xl border bg-card p-5">
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       <Field label="Existing vendor"><select disabled={disabled} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={form.vendorId} onChange={(event) => { const vendor = vendors.find((candidate) => candidate.id === event.target.value); setForm((current) => ({ ...current, vendorId: event.target.value, vendorName: vendor?.name ?? current.vendorName })); }}><option value="">New or unlinked vendor</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select></Field>
-      <Field label="Vendor"><Input disabled={disabled || Boolean(form.vendorId)} value={form.vendorName} onChange={(event) => update('vendorName', event.target.value)} required /></Field>
-      <Field label="Invoice number"><Input disabled={disabled} value={form.invoiceNumber} onChange={(event) => update('invoiceNumber', event.target.value)} /></Field>
-      <Field label="Invoice date"><Input disabled={disabled} type="date" value={form.invoiceDate} onChange={(event) => update('invoiceDate', event.target.value)} /></Field>
-      <Field label="Invoice total"><Input disabled={disabled} type="number" min="0" step="0.01" value={form.invoiceTotal} onChange={(event) => update('invoiceTotal', event.target.value)} /></Field>
+      <Field label="Vendor" confidence={header.extractionConfidence?.vendor}><Input disabled={disabled || Boolean(form.vendorId)} value={form.vendorName} onChange={(event) => update('vendorName', event.target.value)} required /></Field>
+      <Field label="Invoice number" confidence={header.extractionConfidence?.invoiceNumber}><Input disabled={disabled} value={form.invoiceNumber} onChange={(event) => update('invoiceNumber', event.target.value)} /></Field>
+      <Field label="Invoice date" confidence={header.extractionConfidence?.invoiceDate}><Input disabled={disabled} type="date" value={form.invoiceDate} onChange={(event) => update('invoiceDate', event.target.value)} /></Field>
+      <Field label="Purchase order" confidence={header.extractionConfidence?.purchaseOrder}><Input disabled={disabled} value={form.purchaseOrder} onChange={(event) => update('purchaseOrder', event.target.value)} /></Field>
+      <Field label="Subtotal" confidence={header.extractionConfidence?.subtotal}><Input disabled={disabled} type="number" min="0" step="0.01" value={form.subtotal} onChange={(event) => update('subtotal', event.target.value)} /></Field>
+      <Field label="Tax" confidence={header.extractionConfidence?.tax}><Input disabled={disabled} type="number" min="0" step="0.01" value={form.tax} onChange={(event) => update('tax', event.target.value)} /></Field>
+      <Field label="Shipping" confidence={header.extractionConfidence?.shipping}><Input disabled={disabled} type="number" min="0" step="0.01" value={form.shipping} onChange={(event) => update('shipping', event.target.value)} /></Field>
+      <Field label="Invoice total" confidence={header.extractionConfidence?.total}><Input disabled={disabled} type="number" min="0" step="0.01" value={form.invoiceTotal} onChange={(event) => update('invoiceTotal', event.target.value)} /></Field>
     </div>
     {!disabled && <div className="mt-5 flex items-center gap-3"><Button disabled={saving}>{saving ? 'Saving...' : 'Save invoice details'}</Button>{message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}</div>}
   </form>;
 }
 
-const fromHeader = (header: InvoiceReviewHeader): HeaderForm => ({ vendorId: header.vendorId ?? '', vendorName: header.vendorName, invoiceNumber: header.invoiceNumber, invoiceDate: header.invoiceDate, invoiceTotal: header.invoiceTotal?.toString() ?? '' });
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><Label className="mb-2 block">{label}</Label>{children}</div>; }
-
+const fromHeader = (header: InvoiceReviewHeader): HeaderForm => ({ vendorId: header.vendorId ?? '', vendorName: header.vendorName, invoiceNumber: header.invoiceNumber, invoiceDate: header.invoiceDate, invoiceTotal: header.invoiceTotal?.toString() ?? '', purchaseOrder: header.purchaseOrder, subtotal: header.subtotal?.toString() ?? '', tax: header.tax?.toString() ?? '', shipping: header.shipping?.toString() ?? '' });
+const numberOrNull = (value: string) => value === '' ? null : Number(value);
+function Field({ label, confidence, children }: { label: string; confidence?: number; children: React.ReactNode }) { const low = confidence !== undefined && confidence < 75; return <div className={low ? 'rounded-md border border-amber-300/70 bg-amber-50/40 p-2' : ''}><Label className="mb-2 flex items-center gap-2">{label}{low && <span className="text-xs font-normal text-amber-700" title={`Extraction confidence: ${confidence}%`}>Review suggested</span>}</Label>{children}</div>; }

@@ -16,6 +16,7 @@ export interface ReviewItem {
   packageSize: string;
   vendorProductId: string | null;
   reviewStatus: InvoiceItemReviewStatus;
+  extractionConfidence?: number;
 }
 
 export interface InvoiceReviewHeader {
@@ -29,7 +30,14 @@ export interface InvoiceReviewHeader {
   invoiceNumber: string;
   invoiceDate: string;
   invoiceTotal: number | null;
+  purchaseOrder: string;
+  subtotal: number | null;
+  tax: number | null;
+  shipping: number | null;
   status: ProcessingStatus;
+  extractionStatus: 'not_started' | 'processing' | 'succeeded' | 'failed';
+  extractionError: string | null;
+  extractionConfidence?: Record<string, number>;
 }
 
 export interface InvoiceReviewVendor {
@@ -64,6 +72,10 @@ export interface InvoiceHeaderInput {
   invoiceNumber: string;
   invoiceDate: string;
   invoiceTotal: number | null;
+  purchaseOrder: string;
+  subtotal: number | null;
+  tax: number | null;
+  shipping: number | null;
 }
 
 export interface InvoiceItemInput {
