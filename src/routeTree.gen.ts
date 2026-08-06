@@ -26,6 +26,7 @@ import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedVendorsRouteImport } from './routes/_authenticated/vendors'
 import { Route as AuthConfirmRouteImport } from './routes/auth_.confirm'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
+import { Route as AuthenticatedInvoicesIndexRouteImport } from './routes/_authenticated/invoices.index'
 import { Route as AuthenticatedInvoicesInvoiceIdRouteImport } from './routes/_authenticated/invoices.$invoiceId'
 import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authenticated/staff/index'
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
@@ -117,6 +118,12 @@ const JoinTokenRoute = JoinTokenRouteImport.update({
   path: '/join/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedInvoicesIndexRoute =
+  AuthenticatedInvoicesIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedInvoicesRoute,
+  } as any)
 const AuthenticatedInvoicesInvoiceIdRoute =
   AuthenticatedInvoicesInvoiceIdRouteImport.update({
     id: '/$invoiceId',
@@ -161,6 +168,7 @@ export interface FileRoutesByFullPath {
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRoute
+  '/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/staff/': typeof AuthenticatedStaffIndexRoute
 }
 export interface FileRoutesByTo {
@@ -168,7 +176,6 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/inventory': typeof AuthenticatedInventoryRoute
-  '/invoices': typeof AuthenticatedInvoicesRouteWithChildren
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/products': typeof AuthenticatedProductsRoute
   '/profile': typeof AuthenticatedProfileRoute
@@ -183,6 +190,7 @@ export interface FileRoutesByTo {
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRoute
+  '/invoices': typeof AuthenticatedInvoicesIndexRoute
   '/staff': typeof AuthenticatedStaffIndexRoute
 }
 export interface FileRoutesById {
@@ -207,6 +215,7 @@ export interface FileRoutesById {
   '/_authenticated/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/_authenticated/staff/request': typeof AuthenticatedStaffRequestRoute
   '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRoute
+  '/_authenticated/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/_authenticated/staff/': typeof AuthenticatedStaffIndexRoute
 }
 export interface FileRouteTypes {
@@ -231,6 +240,7 @@ export interface FileRouteTypes {
     | '/invoices/$invoiceId'
     | '/staff/request'
     | '/staff/requests'
+    | '/invoices/'
     | '/staff/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -238,7 +248,6 @@ export interface FileRouteTypes {
     | '/auth'
     | '/dashboard'
     | '/inventory'
-    | '/invoices'
     | '/onboarding'
     | '/products'
     | '/profile'
@@ -253,6 +262,7 @@ export interface FileRouteTypes {
     | '/invoices/$invoiceId'
     | '/staff/request'
     | '/staff/requests'
+    | '/invoices'
     | '/staff'
   id:
     | '__root__'
@@ -276,6 +286,7 @@ export interface FileRouteTypes {
     | '/_authenticated/invoices/$invoiceId'
     | '/_authenticated/staff/request'
     | '/_authenticated/staff/requests'
+    | '/_authenticated/invoices/'
     | '/_authenticated/staff/'
   fileRoutesById: FileRoutesById
 }
@@ -408,6 +419,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JoinTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/invoices/': {
+      id: '/_authenticated/invoices/'
+      path: '/'
+      fullPath: '/invoices/'
+      preLoaderRoute: typeof AuthenticatedInvoicesIndexRouteImport
+      parentRoute: typeof AuthenticatedInvoicesRoute
+    }
     '/_authenticated/invoices/$invoiceId': {
       id: '/_authenticated/invoices/$invoiceId'
       path: '/$invoiceId'
@@ -441,10 +459,12 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedInvoicesRouteChildren {
   AuthenticatedInvoicesInvoiceIdRoute: typeof AuthenticatedInvoicesInvoiceIdRoute
+  AuthenticatedInvoicesIndexRoute: typeof AuthenticatedInvoicesIndexRoute
 }
 
 const AuthenticatedInvoicesRouteChildren: AuthenticatedInvoicesRouteChildren = {
   AuthenticatedInvoicesInvoiceIdRoute: AuthenticatedInvoicesInvoiceIdRoute,
+  AuthenticatedInvoicesIndexRoute: AuthenticatedInvoicesIndexRoute,
 }
 
 const AuthenticatedInvoicesRouteWithChildren =

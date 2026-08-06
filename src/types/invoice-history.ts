@@ -1,7 +1,7 @@
 import type { ProcessingStatus } from './invoice-processing';
 
 export interface InvoiceHistoryRow {
-  sourceFileId: string; filename: string; vendor: string | null; uploadedAt: string;
+  vendorInvoiceId: string; filename: string; vendor: string | null; uploadedAt: string;
   status: ProcessingStatus; itemsProcessed: number; fileSize: number; storagePath: string;
 }
 

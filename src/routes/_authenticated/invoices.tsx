@@ -1,6 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { InvoiceListPage } from "@/components/invoice-history/InvoiceListPage";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 export const Route = createFileRoute("/_authenticated/invoices")({
   head: () => ({ meta: [{ title: "Invoices — MedSpend" }, { name: "robots", content: "noindex" }] }),
-  component: InvoiceListPage,
+  component: Outlet,
 });

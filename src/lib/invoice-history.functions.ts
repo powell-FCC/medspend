@@ -39,7 +39,7 @@ export const listInvoiceHistoryFn = createServerFn({ method: 'POST' }).middlewar
     const rows: InvoiceHistoryRow[] = history.sources.map((source) => {
       const structured = history.invoices.find((invoice) => invoice.source_file_id === source.id);
       const job = history.jobs.find((candidate) => candidate.invoice_id === source.id);
-      return { sourceFileId: source.id, filename: source.original_filename, vendor: structured?.vendor_name === 'Vendor pending extraction' ? null : structured?.vendor_name ?? null,
+      return { vendorInvoiceId: source.id, filename: source.original_filename, vendor: structured?.vendor_name === 'Vendor pending extraction' ? null : structured?.vendor_name ?? null,
         uploadedAt: source.created_at, status: (job?.status ?? source.status) as ProcessingStatus,
         itemsProcessed: structured ? history.items.filter((item) => item.invoice_id === structured.id).length : 0,
         fileSize: source.file_size, storagePath: source.storage_path };
