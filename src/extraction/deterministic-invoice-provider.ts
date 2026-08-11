@@ -63,6 +63,20 @@ function candidateAfterLabel(lines: string[], pattern: RegExp) {
   return null;
 }
 
+function orderNumber(lines: string[], rawText: string) {
+  const direct = rawText.match(/\byour\s+order\s+([A-Z0-9-]{4,})\b/i)?.[1]
+    ?? rawText.match(/\border\s+(?:number|no\.?|#)\s*[:#-]?\s*((?:SE)?\d{6,12})(?:\s+SE)?\b/i)?.[1];
+  if (direct) return direct.replace(/^SE/i, '');
+  for (let index = 0; index < lines.length; index++) {
+    if (!/order\s+(?:number|no\.?|#)/i.test(lines[index])) continue;
+    const nearby = lines.slice(index + 1, index + 7).join(' ');
+    const candidate = nearby.match(/\bSE(\d{6,12})\b/i)?.[1]
+      ?? nearby.match(/\b(\d{6,12})\s+SE\b/i)?.[1];
+    if (candidate) return candidate;
+  }
+  return '';
+}
+
 function findMoney(lines: string[], labels: RegExp) {
   const found = candidateAfterLabel(lines, labels);
   if (!found) return null;
@@ -238,8 +252,7 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
       : classification.type === 'INVOICE' ? candidateAfterLabel(lines, /^\s*(?:invoice\s+date|date\s+of\s+invoice)\s*[:#-]?\s*(.*)$/i) : null;
     const poCandidate = candidateAfterLabel(lines, /^\s*(?:purchase\s+order|p\.?o\.?)(?:\s*(?:number|no\.?|#))?\s*[:#-]?\s*(.*)$/i)
       ?? candidateAfterLabel(lines, /^\s*customer\s+(?:purchase\s+order|p\.?o\.?)(?:\s*(?:number|no\.?|#))?\s*[:#-]+\s*(\S.*)$/i);
-    const orderNumberText = classification.type === 'ORDER_CONFIRMATION'
-      ? rawText.match(/\byour\s+order\s+([A-Z0-9-]{4,})\b/i)?.[1] ?? rawText.match(/\border\s+(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9-]{4,})\b/i)?.[1] ?? '' : '';
+    const orderNumberText = classification.type === 'ORDER_CONFIRMATION' ? orderNumber(lines, rawText) : '';
     const orderDateIndex = classification.type === 'ORDER_CONFIRMATION' ? lines.findIndex((line) => /order\s+date/i.test(line)) : -1;
     const orderDateValue = orderDateIndex >= 0 ? lines.slice(orderDateIndex, orderDateIndex + 7).map(normalizeDate).find(Boolean) ?? '' : '';
     const acceptIdentifier = (field: string, candidate: ReturnType<typeof candidateAfterLabel>, confidence: number) => {

@@ -204,3 +204,46 @@ test(
     );
   },
 );
+
+test(
+  "production Henry Schein order confirmation keeps document and order identity despite displaced PDF text",
+  {
+    skip: !existsSync("/Users/aaronpowell/Downloads/80795763.pdf"),
+  },
+  async () => {
+    const textProvider = new EmbeddedPdfTextProvider();
+    const parser = new DeterministicInvoiceExtractionProvider();
+    const extractedText = await textProvider.extractText(
+      new Uint8Array(await readFile("/Users/aaronpowell/Downloads/80795763.pdf")),
+    );
+    const extraction = await parser.extractInvoice(extractedText.text);
+
+    assert.equal(extraction.header.documentType?.value, "ORDER_CONFIRMATION");
+    assert.equal(extraction.header.orderNumber?.value, "80795763");
+    assert.equal(extraction.header.orderDate?.value, "2026-08-10");
+    assert.equal(extraction.header.invoiceNumber.value, "");
+    assert.equal(extraction.header.invoiceDate.value, "");
+    assert.equal(extraction.header.tax.value, 10.15);
+    assert.equal(extraction.header.shipping.value, 20.45);
+    assert.equal(extraction.header.total.value, 160.56);
+    assert.equal(extraction.items.length, 1);
+    assert.equal(extraction.items[0].sku.value, "1507575");
+    assert.equal(extraction.items[0].lineTotal.value, 129.96);
+    assert.equal(
+      resolveVendor(
+        "org-a",
+        extraction.vendorEvidence ?? [],
+        [
+          {
+            id: "henry",
+            organizationId: "org-a",
+            name: "Henry Schein",
+            normalizedName: "henry schein",
+          },
+        ],
+        [],
+      ).vendorId,
+      "henry",
+    );
+  },
+);

@@ -25,6 +25,14 @@ test("automatic vendor identification invokes existing product rematching and pr
   assert.match(server, /vendor_identity_reviewed/);
   assert.match(server, /remember_invoice_vendor_signatures/);
 });
+test("the initial review response refreshes persisted document identity without a reload", () => {
+  assert.match(
+    server,
+    /invoice\.document_type === 'UNKNOWN'[\s\S]*extraction\.header\.documentType/,
+  );
+  assert.match(server, /invoice\.order_number \?\?= extraction\.header\.orderNumber/);
+  assert.match(server, /invoice\.order_date \?\?= extraction\.header\.orderDate/);
+});
 test("migration does not backfill or alter completed historical documents", () => {
   assert.doesNotMatch(migration, /UPDATE public\.invoices\s+SET document_type/);
   assert.match(migration, /processing_status <> 'completed' AND posted_at IS NULL/);

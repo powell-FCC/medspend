@@ -282,6 +282,11 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         extraction = structured.extraction;
         extractionStatus = extraction ? 'succeeded' : 'failed';
         extractionError = structured.error;
+        if (extraction) {
+          if (invoice.document_type === 'UNKNOWN') invoice.document_type = extraction.header.documentType?.value ?? 'UNKNOWN';
+          invoice.order_number ??= extraction.header.orderNumber?.value || null;
+          invoice.order_date ??= extraction.header.orderDate?.value || null;
+        }
       }
       const metadata = await context.supabase.from('invoice_processing_jobs').select('document_page_count,document_processing_duration_ms').eq('invoice_id', data.sourceFileId).single();
       documentPageCount = metadata.data?.document_page_count ?? null;
