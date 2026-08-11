@@ -15,7 +15,8 @@ export interface DeterministicExtractionDiagnostics {
   lines: string[];
   headerCandidates: ExtractionCandidateDiagnostic[];
   tableRegions: Array<{ startLine: number; endLine: number; headings: string[] }>;
-  lineItemCandidates: Array<{ line: number; accepted: boolean; reason: string; value: string }>;
+  lineItemCandidates: Array<{ line: number; accepted: boolean; reason: string; value: string; quantity?: number; unitPrice?: number; expectedExtension?: number; matchedExtensionLine?: number }>;
+  extensionCandidates: Array<{ line: number; value: number; usedBySku?: string }>;
   summary: { lineCount: number; detectedHeaderFields: number; detectedLineItems: number; reasonCodes: string[] };
   extraction: CanonicalInvoiceExtraction;
 }
@@ -117,10 +118,18 @@ function tableRegions(lines: string[]) {
   return regions;
 }
 
-function parseItems(lines: string[], regions: DeterministicExtractionDiagnostics['tableRegions'], diagnostics: DeterministicExtractionDiagnostics['lineItemCandidates']) {
+function parseItems(
+  lines: string[], regions: DeterministicExtractionDiagnostics['tableRegions'],
+  diagnostics: DeterministicExtractionDiagnostics['lineItemCandidates'],
+  extensionCandidates: DeterministicExtractionDiagnostics['extensionCandidates'],
+) {
   if (!regions.length) return [];
   const items: CanonicalInvoiceExtraction['items'] = [];
   const start = regions[0].startLine;
+  const firstProductLine = lines.findIndex((line, index) => index >= start && /^\d+\s+[A-Za-z0-9-]{3,}\s+\S+\s+/.test(line));
+  for (let index = Math.max(start, firstProductLine + 1); index < lines.length; index++) {
+    if (/^\$?[\d,]+\.\d{2}$/.test(lines[index])) extensionCandidates.push({ line: index, value: amount(lines[index]) });
+  }
   for (let index = start; index < lines.length; index++) {
     const line = lines[index];
     const combined = `${line} ${lines[index + 1] ?? ''}`;
@@ -129,24 +138,25 @@ function parseItems(lines: string[], regions: DeterministicExtractionDiagnostics
     if (standard && !/^(?:item|sku|code)$/i.test(standard[1])) {
       const quantity = Number(standard[3]); const unitPrice = amount(standard[5]); const lineTotal = amount(standard[6]);
       const plausible = Math.abs(quantity * unitPrice - lineTotal) <= Math.max(0.02, lineTotal * 0.01);
-      diagnostics.push({ line: index, accepted: plausible, reason: plausible ? 'COMPLETE_ROW_ARITHMETIC_MATCH' : 'ROW_ARITHMETIC_MISMATCH', value: line });
+      diagnostics.push({ line: index, accepted: plausible, reason: plausible ? 'COMPLETE_ROW_ARITHMETIC_MATCH' : 'ROW_ARITHMETIC_MISMATCH', value: line, quantity, unitPrice, expectedExtension: Math.round(quantity * unitPrice * 100) / 100 });
       if (!plausible) continue;
       items.push({ sku: parsed(standard[1], 92), description: parsed(standard[2], 90), manufacturer: parsed('', 0), quantity: parsed(quantity, 96), unit: parsed(standard[4], 86), unitPrice: parsed(unitPrice, 96), lineTotal: parsed(lineTotal, 98), suggestedCategory: parsed('', 0) });
       if (!line.match(/\d+\.\d{2}\s+\$?[\d,]+\.\d{2}$/)) index++;
       continue;
     }
-    const split = line.match(/^\d+\s+([A-Za-z0-9-]{3,})\s+(\S+)\s+(.+?)\s+(\d+(?:\.\d+)?)\s+(.+?)\s+([\d,]+\.\d{2})$/);
+    const split = line.match(/^\d+\s+([A-Za-z0-9-]{3,})\s+(\S+)\s+(.+)\s+(\d+(?:\.\d+)?)\s+((?:drop\s+ship|shipping|shipped|backordered?|pending)(?:\s+\S+)*)\s+([\d,]+\.\d{2})$/i);
     if (!split) continue;
     const [, sku, packageUnit, description, quantityText, , unitPriceText] = split;
     const quantity = Number(quantityText); const unitPrice = amount(unitPriceText);
     const expected = Math.round(quantity * unitPrice * 100) / 100;
-    const extension = lines.slice(index + 1).flatMap((candidate) => candidate.match(/\b[\d,]+\.\d{2}\b/g) ?? [])
-      .map(amount).find((candidate) => Math.abs(candidate - expected) <= 0.02);
+    const matches = extensionCandidates.filter((candidate) => candidate.usedBySku === undefined && candidate.line > index && Math.abs(candidate.value - expected) <= 0.02);
+    const extension = matches.length === 1 ? matches[0] : undefined;
     const accepted = extension !== undefined && description.length >= 3;
-    diagnostics.push({ line: index, accepted, reason: accepted ? 'SPLIT_ROW_ARITHMETIC_RECONSTRUCTION' : 'MISSING_CORROBORATING_EXTENSION', value: line });
+    diagnostics.push({ line: index, accepted, reason: accepted ? 'SPLIT_ROW_ARITHMETIC_RECONSTRUCTION' : matches.length > 1 ? 'AMBIGUOUS_CORROBORATING_EXTENSION' : 'MISSING_CORROBORATING_EXTENSION', value: line, quantity, unitPrice, expectedExtension: expected, matchedExtensionLine: extension?.line });
     if (!accepted) continue;
+    extension.usedBySku = sku;
     const unit = packageUnit.includes('/') ? packageUnit.split('/').at(-1) ?? '' : packageUnit;
-    items.push({ sku: parsed(sku, 90), description: parsed(description, 78), manufacturer: parsed('', 0), quantity: parsed(quantity, 94), unit: parsed(unit, 70), unitPrice: parsed(unitPrice, 94), lineTotal: parsed(extension, 98), suggestedCategory: parsed('', 0) });
+    items.push({ sku: parsed(sku, 90), description: parsed(description, 78), manufacturer: parsed('', 0), quantity: parsed(quantity, 94), unit: parsed(unit, 70), unitPrice: parsed(unitPrice, 94), lineTotal: parsed(extension.value, 98), suggestedCategory: parsed('', 0) });
   }
   return items;
 }
@@ -182,7 +192,8 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
       return parsed(found ? amount(found.value) : null, found ? confidence : 0);
     };
     const regions = tableRegions(lines); const lineItemCandidates: DeterministicExtractionDiagnostics['lineItemCandidates'] = [];
-    const items = parseItems(lines, regions, lineItemCandidates);
+    const extensionCandidates: DeterministicExtractionDiagnostics['extensionCandidates'] = [];
+    const items = parseItems(lines, regions, lineItemCandidates, extensionCandidates);
     const shippingFallback = findNumberedCharge(lines, /^(?:shipping|freight)(?:\s+and\/or\s+handling)?$/i);
     const taxFallback = findNumberedCharge(lines, /^(?:sales\s+)?tax$/i);
     const itemSum = items.reduce((sum, item) => sum + item.lineTotal.value, 0);
@@ -202,7 +213,7 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
     const recognizable = Object.values(extraction.header).some((field) => field.value !== '' && field.value !== null) || extraction.items.length;
     if (!recognizable) throw new Error('Document text does not contain a recognizable invoice structure');
     return {
-      normalizedText: lines.join('\n'), lines, headerCandidates, tableRegions: regions, lineItemCandidates,
+      normalizedText: lines.join('\n'), lines, headerCandidates, tableRegions: regions, lineItemCandidates, extensionCandidates,
       summary: { lineCount: lines.length, detectedHeaderFields: Object.values(extraction.header).filter((field) => field.value !== '' && field.value !== null).length, detectedLineItems: extraction.items.length, reasonCodes: [] },
       extraction,
     };

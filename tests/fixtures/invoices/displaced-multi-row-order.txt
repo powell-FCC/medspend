@@ -1,0 +1,33 @@
+customer-contact@example.test
+Order Confirmation
+SHIP TO:
+Synthetic Sports Club
+LINE NO ITEM CODE UNIT SIZE DESCRIPTION QTY. ORD SHIPPING DETAILS UNIT PRICE EXTENSION
+1 AX1001 20/Bx Standard Needle .25x80MM 2 SHIPPING 12.00
+08/01/26 1.000 2 8-1-26
+* promotional price annotation *
+2 BX2002 10/Bx Safety Needle 0.40 x 120mm 3 SHIPPING 11.25
+08/01/26 2.000 3 8-1-26
+* promotional price annotation *
+3 CX3003 Rl Cohesive Wrap 1-1/2" 5 SHIPPING 6.20
+08/01/26 3.000 5 8-1-26
+** contract annotation **
+4 DX4004 24/Bx Athletic Tape 750 Porous 2" x 10 Yd 4 SHIPPING 18.75
+08/01/26 4.000 4 8-1-26
+** contract annotation **
+5 SHIPPING AND/OR HANDLING 4.25
+6 TAX 10.00
+This order will ship in multiple packages.
+= = = = = = = = = = = = = = = =
+24.00
+33.75
+31.00
+75.00
+4.25
+10.00
+TOTAL AMOUNT
+178.00
+ORDER NUMBER
+SYNTHETIC-ORDER
+ORDER DATE
+08/01/26

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { DeterministicInvoiceExtractionProvider } from '../src/extraction/deterministic-invoice-provider.ts';
 import { validateExtraction } from '../src/extraction/validation.ts';
 
@@ -73,4 +74,22 @@ test('malformed text fails safely', async () => {
     () => new DeterministicInvoiceExtractionProvider().extractInvoice('unstructured words with no recognizable fields'),
     /recognizable invoice structure/,
   );
+});
+
+test('reconstructs every displaced-extension row from right-boundary and arithmetic evidence', async () => {
+  const text = await readFile(new URL('fixtures/invoices/displaced-multi-row-order.txt', import.meta.url), 'utf8');
+  const diagnostics = await new DeterministicInvoiceExtractionProvider().extractInvoiceWithDiagnostics(text);
+  const extraction = validateExtraction(diagnostics.extraction);
+  assert.equal(diagnostics.lineItemCandidates.length, 4);
+  assert.equal(diagnostics.lineItemCandidates.filter((candidate) => candidate.accepted).length, 4);
+  assert.equal(diagnostics.extensionCandidates.length, 7);
+  assert.deepEqual(extraction.items.map((item) => [item.sku.value, item.quantity.value, item.unitPrice.value, item.lineTotal.value]), [
+    ['AX1001', 2, 12, 24], ['BX2002', 3, 11.25, 33.75], ['CX3003', 5, 6.2, 31], ['DX4004', 4, 18.75, 75],
+  ]);
+  assert.equal(extraction.header.shipping.value, 4.25);
+  assert.equal(extraction.header.tax.value, 10);
+  assert.equal(extraction.header.total.value, 178);
+  assert.equal(extraction.header.invoiceNumber.value, '');
+  assert.equal(extraction.header.invoiceDate.value, '');
+  assert.ok(extraction.items.every((item) => !/shipping|tax|total amount/i.test(item.description.value)));
 });

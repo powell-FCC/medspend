@@ -11,17 +11,24 @@ const cases = [
   { name: 'wrapped-description', headers: ['Acme Healthcare, LLC', 'INV-22', '2026-08-09', '', 25, 0, null, 25], items: [['G100', 2, 12.5, 25]] },
   { name: 'no-po-zero-tax', headers: ['Central Clinical Supply Corp.', 'C-500', '2026-08-08', '', 30, 0, null, 30], items: [['C500', 2, 15, 30]] },
   { name: 'freight', headers: ['Regional Medical Company', 'R-77', '2026-08-07', 'P-19', 30, null, 5, 35], items: [['R100', 3, 10, 30]] },
+  { name: 'displaced-multi-row-order', headers: ['', '', '', '', null, 10, 4.25, 178], items: [['AX1001', 2, 12, 24], ['BX2002', 3, 11.25, 33.75], ['CX3003', 5, 6.2, 31], ['DX4004', 4, 18.75, 75]] },
 ] as const;
 
 test('fixture benchmark reports exact header and line-item accuracy with no false positives', async (t) => {
-  let headerCorrect = 0; let headerExpected = 0; let expectedItems = 0; let extractedItems = 0;
+  let headerCorrect = 0; let headerExpected = 0; let populatedHeaders = 0; let expectedPopulatedHeaders = 0; let headerFalsePositives = 0;
+  let expectedItems = 0; let extractedItems = 0; let correctRows = 0;
   let skuCorrect = 0; let quantityCorrect = 0; let unitPriceCorrect = 0; let lineTotalCorrect = 0;
   for (const scenario of cases) {
     const extraction = validateExtraction(await new DeterministicInvoiceExtractionProvider().extractInvoice(await fixture(scenario.name)));
     const actualHeaders = [extraction.header.vendor.value, extraction.header.invoiceNumber.value, extraction.header.invoiceDate.value,
       extraction.header.purchaseOrder.value, extraction.header.subtotal.value, extraction.header.tax.value,
       extraction.header.shipping.value, extraction.header.total.value];
-    scenario.headers.forEach((expected, index) => { headerExpected++; if (actualHeaders[index] === expected) headerCorrect++; });
+    scenario.headers.forEach((expected, index) => {
+      const actual = actualHeaders[index]; const expectedPresent = expected !== '' && expected !== null; const actualPresent = actual !== '' && actual !== null;
+      headerExpected++; if (actual === expected) headerCorrect++;
+      if (expectedPresent) expectedPopulatedHeaders++; if (actualPresent) populatedHeaders++;
+      if (actualPresent && actual !== expected) headerFalsePositives++;
+    });
     expectedItems += scenario.items.length; extractedItems += extraction.items.length;
     scenario.items.forEach((expected, index) => {
       const actual = extraction.items[index];
@@ -29,11 +36,20 @@ test('fixture benchmark reports exact header and line-item accuracy with no fals
       if (actual?.quantity.value === expected[1]) quantityCorrect++;
       if (actual?.unitPrice.value === expected[2]) unitPriceCorrect++;
       if (actual?.lineTotal.value === expected[3]) lineTotalCorrect++;
+      if (actual?.sku.value === expected[0] && actual.quantity.value === expected[1] && actual.unitPrice.value === expected[2] && actual.lineTotal.value === expected[3]) correctRows++;
     });
   }
-  const report = { headerCorrect, headerExpected, expectedItems, extractedItems, skuCorrect, quantityCorrect, unitPriceCorrect, lineTotalCorrect, falsePositives: Math.max(0, extractedItems - expectedItems) };
+  const fabricatedRows = Math.max(0, extractedItems - correctRows); const missedRows = Math.max(0, expectedItems - correctRows);
+  const correctPopulatedHeaders = populatedHeaders - headerFalsePositives;
+  const report = {
+    headerCorrect, headerExpected,
+    headerPrecision: correctPopulatedHeaders / populatedHeaders, headerRecall: correctPopulatedHeaders / expectedPopulatedHeaders,
+    expectedItems, extractedItems, correctRows, missedRows, fabricatedRows,
+    lineItemPrecision: correctRows / extractedItems, lineItemRecall: correctRows / expectedItems,
+    skuCorrect, quantityCorrect, unitPriceCorrect, lineTotalCorrect, falsePositives: headerFalsePositives + fabricatedRows,
+  };
   t.diagnostic(`extraction benchmark ${JSON.stringify(report)}`);
-  assert.deepEqual(report, { headerCorrect: 32, headerExpected: 32, expectedItems: 5, extractedItems: 5, skuCorrect: 5, quantityCorrect: 5, unitPriceCorrect: 5, lineTotalCorrect: 5, falsePositives: 0 });
+  assert.deepEqual(report, { headerCorrect: 40, headerExpected: 40, headerPrecision: 1, headerRecall: 1, expectedItems: 9, extractedItems: 9, correctRows: 9, missedRows: 0, fabricatedRows: 0, lineItemPrecision: 1, lineItemRecall: 1, skuCorrect: 9, quantityCorrect: 9, unitPriceCorrect: 9, lineTotalCorrect: 9, falsePositives: 0 });
 });
 
 test('sanitized email-header regression cannot populate identity fields and is partial, not full success', async () => {
