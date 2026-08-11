@@ -16,7 +16,8 @@ export function validateExtraction(extraction: CanonicalInvoiceExtraction): Cano
     if (!item.description.value.trim()) throw new Error(`Item ${index + 1} requires a description`);
     if (!(item.quantity.value > 0)) throw new Error(`Item ${index + 1} requires a positive quantity`);
     if (item.unitPrice.value < 0 || item.lineTotal.value < 0) throw new Error(`Item ${index + 1} has a negative price`);
-    const expected = item.quantity.value * item.unitPrice.value;
+    const gross = item.quantity.value * item.unitPrice.value;
+    const expected = item.discountPercent ? gross * (1 - item.discountPercent.value / 100) : gross;
     if (Math.abs(expected - item.lineTotal.value) > Math.max(0.02, expected * 0.01)) {
       item.lineTotal.confidence = Math.min(item.lineTotal.confidence, 60);
     }

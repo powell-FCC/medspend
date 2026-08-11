@@ -1,0 +1,21 @@
+Item No. Description Lot # Shipment Date Quantity Unit Unit Price Disc. % Line Amount
+ZX-2026 August 5, 2026
+AB12 VITAMIN
+COMPLEX
+LOT101 08/05/26 5 EA 20.00 5.0 95.00
+CD34 COLLAGEN BLEND LOT102 08/05/26 3 EA 40.00 5.0 114.00
+EF56NC OMEGA FORMULA [90] LOT103 08/05/26 10 EA 15.00 5.0 142.50
+GH78 MINERAL
+COMPLEX [120]
+LOT104 08/05/26 8 EA 25.00 5.0 190.00
+Subtotal 541.50
+Total Tax 37.91
+Total USD 579.41
+Total Applied 0.00
+Balance 579.41
+Customer PO No. Order No. Due Date Payment Method
+SYNTHETIC-ORDER August 20, 2026 CARD
+August 5, 2026
+Invoice: ZX-2026-0042
+August 5, 2026
+Page 1 / 1

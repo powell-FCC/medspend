@@ -35,7 +35,12 @@ const invalidIdentifier = (value: string) => !value || EMAIL.test(value) || valu
 
 function normalizeDate(value: string) {
   const match = value.match(/\b(\d{1,4})[\/-](\d{1,2})[\/-](\d{1,4})\b/);
-  if (!match) return '';
+  if (!match) {
+    const named = value.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(\d{4})\b/i);
+    if (!named) return '';
+    const parsedDate = new Date(`${named[1]} ${named[2]}, ${named[3]} 00:00:00 UTC`);
+    return Number.isNaN(parsedDate.valueOf()) ? '' : parsedDate.toISOString().slice(0, 10);
+  }
   const [, first, second, last] = match;
   let year = last; let month = first; let day = second;
   if (first.length === 4) { year = first; month = second; day = last; }
@@ -118,6 +123,54 @@ function tableRegions(lines: string[]) {
   return regions;
 }
 
+function parseColumnarInvoiceItems(
+  lines: string[], region: DeterministicExtractionDiagnostics['tableRegions'][number],
+  diagnostics: DeterministicExtractionDiagnostics['lineItemCandidates'],
+) {
+  const heading = lines[region.startLine].toLowerCase();
+  const recognized = /\b(?:item|sku|product|catalog)\b/.test(heading) && /\b(?:quantity|qty)\b/.test(heading)
+    && /\bunit\s+price\b/.test(heading) && /\b(?:line\s+amount|extension|extended|amount)\b/.test(heading);
+  if (!recognized) return [];
+  const end = lines.findIndex((line, index) => index > region.startLine && /^\s*subtotal\b/i.test(line));
+  const rows: CanonicalInvoiceExtraction['items'] = [];
+  const full = /^([A-Za-z0-9][A-Za-z0-9-]{2,})\s+(.+?)\s+(\S+)\s+(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\s+(\d+(?:\.\d+)?)\s+([A-Za-z][A-Za-z0-9/-]*)\s+([\d,]+\.\d{2})\s+(\d+(?:\.\d+)?)\s+([\d,]+\.\d{2})$/;
+  const detail = /^(\S+)\s+(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\s+(\d+(?:\.\d+)?)\s+([A-Za-z][A-Za-z0-9/-]*)\s+([\d,]+\.\d{2})\s+(\d+(?:\.\d+)?)\s+([\d,]+\.\d{2})$/;
+  for (let index = region.startLine + 1; index < (end >= 0 ? end : region.endLine + 1); index++) {
+    let match = lines[index].match(full);
+    let sku = ''; let description = ''; let quantity = 0; let unit = ''; let unitPrice = 0; let discount = 0; let lineTotal = 0;
+    if (match) {
+      sku = match[1]; description = match[2]; quantity = Number(match[5]); unit = match[6];
+      unitPrice = amount(match[7]); discount = Number(match[8]); lineTotal = amount(match[9]);
+    } else {
+      const start = lines[index].match(/^([A-Za-z0-9][A-Za-z0-9-]{2,})\s+(.+)$/);
+      if (!start) continue;
+      sku = start[1]; let descriptionParts = [start[2]];
+      let detailMatch: RegExpMatchArray | null = null; let detailIndex = index + 1;
+      for (; detailIndex <= Math.min(index + 3, (end >= 0 ? end : region.endLine)); detailIndex++) {
+        detailMatch = lines[detailIndex].match(detail);
+        if (detailMatch) break;
+        const nestedStart = lines[detailIndex].match(/^([A-Za-z0-9-]*[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*)\s+(.+)$/);
+        if (nestedStart) { sku = nestedStart[1]; descriptionParts = [nestedStart[2]]; continue; }
+        descriptionParts.push(lines[detailIndex]);
+      }
+      if (!detailMatch) { diagnostics.push({ line: index, accepted: false, reason: 'INCOMPLETE_COLUMNAR_ROW', value: lines[index] }); continue; }
+      description = descriptionParts.join(' ');
+      quantity = Number(detailMatch[3]); unit = detailMatch[4]; unitPrice = amount(detailMatch[5]);
+      discount = Number(detailMatch[6]); lineTotal = amount(detailMatch[7]); index = detailIndex;
+    }
+    const expected = Math.round(quantity * unitPrice * (1 - discount / 100) * 100) / 100;
+    const accepted = quantity > 0 && discount >= 0 && discount <= 100 && Math.abs(expected - lineTotal) <= 0.02;
+    diagnostics.push({ line: index, accepted, reason: accepted ? 'DISCOUNTED_COLUMNAR_ROW_ARITHMETIC_MATCH' : 'DISCOUNTED_ROW_ARITHMETIC_MISMATCH', value: lines[index], quantity, unitPrice, expectedExtension: expected });
+    if (!accepted) continue;
+    rows.push({
+      sku: parsed(sku, 94), description: parsed(description, 88), manufacturer: parsed('', 0), quantity: parsed(quantity, 96),
+      unit: parsed(unit, 94), unitPrice: parsed(unitPrice, 96), lineTotal: parsed(lineTotal, 98), suggestedCategory: parsed('', 0),
+      discountPercent: parsed(discount, 94),
+    });
+  }
+  return rows;
+}
+
 function parseItems(
   lines: string[], regions: DeterministicExtractionDiagnostics['tableRegions'],
   diagnostics: DeterministicExtractionDiagnostics['lineItemCandidates'],
@@ -126,6 +179,8 @@ function parseItems(
   if (!regions.length) return [];
   const items: CanonicalInvoiceExtraction['items'] = [];
   const start = regions[0].startLine;
+  const columnar = parseColumnarInvoiceItems(lines, regions[0], diagnostics);
+  if (columnar.length) return columnar;
   const firstProductLine = lines.findIndex((line, index) => index >= start && /^\d+\s+[A-Za-z0-9-]{3,}\s+\S+\s+/.test(line));
   for (let index = Math.max(start, firstProductLine + 1); index < lines.length; index++) {
     if (/^\$?[\d,]+\.\d{2}$/.test(lines[index])) extensionCandidates.push({ line: index, value: amount(lines[index]) });
@@ -184,8 +239,14 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
       headerCandidates.push({ field, value: candidate.value, accepted: valid, reason: valid ? `EXPLICIT_LABEL_${candidate.relationship.toUpperCase()}` : 'INVALID_IDENTIFIER_VALUE', confidence: valid ? confidence : 0, line: candidate.line });
       return parsed(valid ? candidate.value : '', valid ? confidence : 0);
     };
-    const invoiceDateValue = invoiceDateCandidate ? normalizeDate(invoiceDateCandidate.value) : '';
-    if (invoiceDateCandidate) headerCandidates.push({ field: 'invoiceDate', value: invoiceDateCandidate.value, accepted: Boolean(invoiceDateValue), reason: invoiceDateValue ? 'EXPLICIT_INVOICE_DATE' : 'INVALID_DATE', confidence: invoiceDateValue ? 92 : 0, line: invoiceDateCandidate.line });
+    const contextualDate = !invoiceDateCandidate && invoiceNumberCandidate
+      ? lines.slice(Math.max(0, invoiceNumberCandidate.line - 2), invoiceNumberCandidate.line + 3)
+        .map((value, offset) => ({ value, line: Math.max(0, invoiceNumberCandidate.line - 2) + offset }))
+        .filter((candidate) => Boolean(normalizeDate(candidate.value)))
+        .sort((left, right) => Math.abs(left.line - invoiceNumberCandidate.line) - Math.abs(right.line - invoiceNumberCandidate.line))[0] ?? null : null;
+    const selectedDate = invoiceDateCandidate ?? (contextualDate ? { ...contextualDate, relationship: 'invoice-context' as const } : null);
+    const invoiceDateValue = selectedDate ? normalizeDate(selectedDate.value) : '';
+    if (selectedDate) headerCandidates.push({ field: 'invoiceDate', value: selectedDate.value, accepted: Boolean(invoiceDateValue), reason: invoiceDateValue ? (invoiceDateCandidate ? 'EXPLICIT_INVOICE_DATE' : 'DATE_ADJACENT_TO_INVOICE_IDENTITY') : 'INVALID_DATE', confidence: invoiceDateValue ? (invoiceDateCandidate ? 92 : 88) : 0, line: selectedDate.line });
     const monetary = (field: string, labels: RegExp, confidence: number, fallback?: { value: string; line: number; relationship: string } | null) => {
       const found = findMoney(lines, labels) ?? fallback ?? null;
       if (found) headerCandidates.push({ field, value: found.value, accepted: true, reason: 'EXPLICIT_MONETARY_LABEL', confidence, line: found.line });
@@ -204,9 +265,9 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
         vendor: detectVendor(lines, headerCandidates), invoiceNumber: acceptIdentifier('invoiceNumber', invoiceNumberCandidate, 94),
         invoiceDate: parsed(invoiceDateValue, invoiceDateValue ? 92 : 0), purchaseOrder: acceptIdentifier('purchaseOrder', poCandidate, 90),
         subtotal: monetary('subtotal', /^\s*subtotal\s*[:#-]?\s*(.*)$/i, 94),
-        tax: monetary('tax', /^\s*(?:sales\s+)?tax\s*[:#-]?\s*(.*)$/i, 92, taxFallback),
+        tax: monetary('tax', /^\s*(?:(?:total|sales)\s+tax|tax)\s*[:#-]?\s*(.*)$/i, 92, taxFallback),
         shipping: monetary('shipping', /^\s*(?:shipping|freight)(?:\s+(?:and\/or\s+)?handling)?\s*[:#-]?\s*(.*)$/i, 88, shippingFallback),
-        total: monetary('total', /^\s*(?:invoice\s+total|total|amount\s+due)\s*[:#-]?\s*(.*)$/i, 94, totalFallback),
+        total: monetary('total', /^\s*(?:grand\s+total|invoice\s+total|total\s+(?:amount|usd)|amount\s+due|total(?!\s+(?:tax|applied)))\s*[:#-]?\s*(.*)$/i, 94, totalFallback),
       },
       items,
     };

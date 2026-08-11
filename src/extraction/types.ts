@@ -27,6 +27,7 @@ export interface ExtractedInvoiceItem {
   unitPrice: ExtractedField<number>;
   lineTotal: ExtractedField<number>;
   suggestedCategory: ExtractedField<string>;
+  discountPercent?: ExtractedField<number>;
 }
 
 export interface ExtractionReconciliation {

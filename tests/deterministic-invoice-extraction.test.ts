@@ -93,3 +93,41 @@ test('reconstructs every displaced-extension row from right-boundary and arithme
   assert.equal(extraction.header.invoiceDate.value, '');
   assert.ok(extraction.items.every((item) => !/shipping|tax|total amount/i.test(item.description.value)));
 });
+
+test('parses discounted columnar sales-invoice rows and exact monetary semantics', async () => {
+  const text = await readFile(new URL('fixtures/invoices/discounted-columnar-sales-invoice.txt', import.meta.url), 'utf8');
+  const diagnostics = await new DeterministicInvoiceExtractionProvider().extractInvoiceWithDiagnostics(text);
+  const extraction = validateExtraction(diagnostics.extraction);
+  assert.deepEqual(extraction.items.map((item) => [item.sku.value, item.quantity.value, item.unit.value, item.unitPrice.value, item.discountPercent?.value, item.lineTotal.value]), [
+    ['AB12', 5, 'EA', 20, 5, 95], ['CD34', 3, 'EA', 40, 5, 114], ['EF56NC', 10, 'EA', 15, 5, 142.5], ['GH78', 8, 'EA', 25, 5, 190],
+  ]);
+  assert.equal(extraction.header.invoiceNumber.value, 'ZX-2026-0042');
+  assert.equal(extraction.header.invoiceDate.value, '2026-08-05');
+  assert.equal(extraction.header.subtotal.value, 541.5);
+  assert.equal(extraction.header.tax.value, 37.91);
+  assert.equal(extraction.header.total.value, 579.41);
+  assert.equal(extraction.header.shipping.value, null);
+  assert.equal(extraction.reconciliation?.needsReview, false);
+  assert.equal(extraction.quality?.state, 'STRUCTURED_SUCCESS');
+  assert.ok(diagnostics.lineItemCandidates.every((candidate) => candidate.reason === 'DISCOUNTED_COLUMNAR_ROW_ARITHMETIC_MATCH'));
+});
+
+test('never fabricates a discounted line amount when its source amount is absent', async () => {
+  const text = (await readFile(new URL('fixtures/invoices/discounted-columnar-sales-invoice.txt', import.meta.url), 'utf8'))
+    .replace('LOT104 08/05/26 8 EA 25.00 5.0 190.00', 'LOT104 08/05/26 8 EA 25.00 5.0');
+  const diagnostics = await new DeterministicInvoiceExtractionProvider().extractInvoiceWithDiagnostics(text);
+  assert.equal(diagnostics.extraction.items.length, 3);
+  assert.ok(diagnostics.lineItemCandidates.some((candidate) => !candidate.accepted));
+  assert.ok(diagnostics.extraction.items.every((item) => item.sku.value !== 'GH78'));
+});
+
+test('Total Tax and Total Applied cannot become invoice total', async () => {
+  const provider = new DeterministicInvoiceExtractionProvider();
+  const base = `Example Medical Company\nInvoice: INV-1\nInvoice Date: 08/05/2026\nSubtotal 100.00\nTotal Tax 7.00\nTotal Applied 0.00`;
+  const withoutTrueTotal = validateExtraction(await provider.extractInvoice(base));
+  assert.equal(withoutTrueTotal.header.tax.value, 7);
+  assert.equal(withoutTrueTotal.header.total.value, null);
+  const withTrueTotal = validateExtraction(await provider.extractInvoice(`${base}\nTotal USD 107.00`));
+  assert.equal(withTrueTotal.header.tax.value, 7);
+  assert.equal(withTrueTotal.header.total.value, 107);
+});
