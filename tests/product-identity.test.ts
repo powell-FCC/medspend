@@ -42,6 +42,21 @@ test("remembered organization + vendor + SKU mapping is exact", () => {
   assert.equal(result.vendorProductId, "vp1");
 });
 
+test("created line identity persists across invoices without duplicate products or mappings", () => {
+  const products = [product({ name: 'Athletic Tape 950 Porous 1.5 inch x 15 yd', description: 'Athletic Tape 950 Porous 1.5 inch x 15 yd' })];
+  const mappings = [{ organizationId: org, id: 'vp1', vendorId: vendor, productId: 'p1', vendorSku: '1348646', unitOfMeasure: 'roll' }];
+  const observation = line({ sku: '1348646', description: 'Athletic Tape 950 Porous 1.5" x 15 Yd', unitOfMeasure: 'Rl', packageSize: '' });
+  const invoiceB = matchInvoiceProduct(observation, org, vendor, products, mappings);
+  assert.equal(invoiceB.state, 'EXACT');
+  assert.equal(invoiceB.productId, 'p1');
+  assert.equal(invoiceB.vendorProductId, 'vp1');
+  assert.notEqual(matchInvoiceProduct(observation, org, 'vendor-c', products, mappings).state, 'EXACT');
+  assert.notEqual(matchInvoiceProduct(observation, 'org-c', vendor, products, mappings).state, 'EXACT');
+  assert.equal(products.length, 1);
+  assert.equal(mappings.length, 1);
+  assert.deepEqual(matchInvoiceProduct(observation, org, vendor, products, mappings), invoiceB);
+});
+
 test("same SKU from another vendor or organization cannot auto-match", () => {
   const mappings = [
     { organizationId: org, id: "vp1", vendorId: "vendor-b", productId: "p1", vendorSku: "ABC-123" },

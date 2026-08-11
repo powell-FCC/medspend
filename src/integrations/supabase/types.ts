@@ -904,6 +904,10 @@ export type Database = {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: Json
       }
+      rematch_invoice_vendor_products: {
+        Args: { _organization_id: string; _source_file_id: string }
+        Returns: number
+      }
       seed_structured_invoice_draft: {
         Args: { _organization_id: string; _source_file_id: string; _extraction: Json; _provider: string }
         Returns: boolean

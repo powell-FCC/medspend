@@ -477,6 +477,11 @@ export const saveInvoiceHeaderFn = createServerFn({ method: 'POST' })
       .eq('id', invoice.id)
       .eq('organization_id', data.organizationId);
     if (error) throw new Error(error.message);
+    const { error: rematchError } = await context.supabase.rpc('rematch_invoice_vendor_products', {
+      _organization_id: data.organizationId,
+      _source_file_id: data.sourceFileId,
+    });
+    if (rematchError) throw new Error(rematchError.message);
     await markExtractionReviewed(context.supabase, data.organizationId, data.sourceFileId, {
       header: true,
     });
@@ -633,5 +638,14 @@ export const createProductFromInvoiceItemFn = createServerFn({ method: 'POST' })
       _invoice_item_id: data.itemId,
     });
     if (error) throw new Error(error.message);
+    if (!result || typeof result !== 'object' || Array.isArray(result) || !result.productId) throw new Error('Product creation returned an invalid result.');
+    const { error: mappingError } = await context.supabase.rpc('confirm_invoice_item_product', {
+      _organization_id: data.organizationId,
+      _source_file_id: data.sourceFileId,
+      _invoice_item_id: data.itemId,
+      _product_id: String(result.productId),
+      _remember_vendor_sku: true,
+    });
+    if (mappingError) throw new Error(mappingError.message);
     return result;
   });

@@ -97,7 +97,7 @@ const normalizeWords = (value: string) =>
     .replace(/\s+/g, " ");
 const tokens = (value: string) => new Set(normalizeDescription(value).split(" ").filter(Boolean));
 const dimensions = (value: string) =>
-  normalizeDescription(value).match(/\b\d+(?:\.\d+)?\s*(?:inch|yd|mm|cm|gauge|ga)\b/g) ?? [];
+  [...new Set(normalizeDescription(value).match(/\b\d+(?:\.\d+)?\s*(?:inch|yd|mm|cm|gauge|ga)\b/g) ?? [])];
 const sameOptional = (left?: string | null, right?: string | null, normalizer = normalizeWords) =>
   !left || !right || normalizer(left) === normalizer(right);
 
@@ -145,12 +145,7 @@ export function matchInvoiceProduct(
         mapping.vendorId === vendorId &&
         normalizeIdentifier(mapping.vendorSku) === sku,
     );
-    const rememberedProduct =
-      remembered &&
-      products.find(
-        (product) =>
-          product.organizationId === organizationId && product.id === remembered.productId,
-      );
+    const rememberedProduct = remembered && products.find((product) => product.organizationId === organizationId && product.id === remembered.productId);
     const mappingCompatible =
       remembered &&
       sameOptional(line.unitOfMeasure, remembered.unitOfMeasure, normalizeUom) &&
@@ -158,8 +153,7 @@ export function matchInvoiceProduct(
     if (
       remembered &&
       rememberedProduct &&
-      mappingCompatible &&
-      compatible(line, rememberedProduct)
+      mappingCompatible
     ) {
       return {
         state: "EXACT",
