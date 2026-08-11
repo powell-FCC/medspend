@@ -1,5 +1,6 @@
 import type { InvoiceExtractionProvider } from './providers.ts';
 import type { CanonicalInvoiceExtraction, ExtractedField } from './types.ts';
+import { classifyDocument, extractVendorEvidence } from './document-identity.ts';
 
 export interface ExtractionCandidateDiagnostic {
   field: string;
@@ -31,7 +32,7 @@ const normalize = (value: string) => value.normalize('NFKC').replace(/\u00a0/g, 
   .split('\n').map((line) => line.replace(/\t/g, ' ').replace(/ {3,}/g, '  ').trim()).filter(Boolean);
 const amount = (value: string) => Number(value.replace(/[$,\s]/g, ''));
 const invalidIdentity = (value: string) => !value || EMAIL.test(value) || URL.test(value) || PHONE.test(value) || /^\d+$/.test(value);
-const invalidIdentifier = (value: string) => !value || EMAIL.test(value) || value.includes('@') || URL.test(value) || PHONE.test(value);
+const invalidIdentifier = (value: string) => !value || EMAIL.test(value) || value.includes('@') || URL.test(value) || PHONE.test(value) || /^(?:total|subtotal|tax|shipping|freight|invoice|order|ship|due)\b/i.test(value);
 
 function normalizeDate(value: string) {
   const match = value.match(/\b(\d{1,4})[\/-](\d{1,2})[\/-](\d{1,4})\b/);
@@ -103,7 +104,7 @@ function detectVendor(lines: string[], diagnostics: ExtractionCandidateDiagnosti
     }
     const companySignal = /\b(?:inc\.?|llc|ltd\.?|corp(?:oration)?|company|medical|supply|supplies)\b/i.test(value);
     const excluded = /^(?:invoice|order confirmation|statement|ship to|bill to|purchase order)\b/i.test(value);
-    const customerSection = lines.slice(0, index + 1).some((line) => /^(?:ship|bill)\s+to:/i.test(line));
+    const customerSection = lines.slice(0, index + 1).some((line) => /\b(?:ship|bill)[ -]?to\b/i.test(line));
     if (companySignal && !excluded && !customerSection) {
       diagnostics.push({ field: 'vendor', value, accepted: true, reason: 'TOP_COMPANY_IDENTITY', confidence: 76, line: index });
       return parsed(value, 76);
@@ -224,15 +225,23 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
     const lines = normalize(rawText);
     if (!lines.length) throw new Error('No document text is available to structure');
     const headerCandidates: ExtractionCandidateDiagnostic[] = [];
+    const classification = classifyDocument(lines.join('\n'));
+    headerCandidates.push({ field: 'documentType', value: classification.type, accepted: classification.type !== 'UNKNOWN', reason: classification.evidence || 'NO_EXPLICIT_DOCUMENT_LABEL', confidence: classification.confidence, line: 0 });
     const pairedIndex = lines.findIndex((line) => /invoice\s*(?:number|no\.?|#)/i.test(line) && /invoice\s+date/i.test(line));
     const pairedValues = pairedIndex >= 0 ? lines[pairedIndex + 1]?.split(/\s{2,}/) : undefined;
-    const invoiceNumberCandidate = pairedValues?.[0]
+    const invoiceNumberCandidate = classification.type === 'INVOICE' && pairedValues?.[0]
       ? { value: pairedValues[0], line: pairedIndex + 1, relationship: 'next-line' as const }
-      : candidateAfterLabel(lines, /^\s*(?:invoice|inv)(?:\s*(?:number|no\.?|#))?\s*[:#-]?\s*(.*)$/i);
-    const invoiceDateCandidate = pairedValues?.[1]
+      : classification.type === 'INVOICE' ? (candidateAfterLabel(lines, /^\s*(?:sales\s+)?(?:invoice|inv)\s+(?:number|no\.?)\s*[:#-]?\s*(\S.*)$/i)
+        ?? candidateAfterLabel(lines, /^\s*(?:sales\s+)?(?:invoice|inv)\s*(?:#|:|-)\s*(\S.*)$/i)) : null;
+    const invoiceDateCandidate = classification.type === 'INVOICE' && pairedValues?.[1]
       ? { value: pairedValues[1], line: pairedIndex + 1, relationship: 'next-line' as const }
-      : candidateAfterLabel(lines, /^\s*(?:invoice\s+date|date\s+of\s+invoice)\s*[:#-]?\s*(.*)$/i);
-    const poCandidate = candidateAfterLabel(lines, /^\s*(?:purchase\s+order|p\.?o\.?\b)\s*(?:number|no\.?|#)?\s*[:#-]?\s*(.*)$/i);
+      : classification.type === 'INVOICE' ? candidateAfterLabel(lines, /^\s*(?:invoice\s+date|date\s+of\s+invoice)\s*[:#-]?\s*(.*)$/i) : null;
+    const poCandidate = candidateAfterLabel(lines, /^\s*(?:purchase\s+order|p\.?o\.?)(?:\s*(?:number|no\.?|#))?\s*[:#-]?\s*(.*)$/i)
+      ?? candidateAfterLabel(lines, /^\s*customer\s+(?:purchase\s+order|p\.?o\.?)(?:\s*(?:number|no\.?|#))?\s*[:#-]+\s*(\S.*)$/i);
+    const orderNumberText = classification.type === 'ORDER_CONFIRMATION'
+      ? rawText.match(/\byour\s+order\s+([A-Z0-9-]{4,})\b/i)?.[1] ?? rawText.match(/\border\s+(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9-]{4,})\b/i)?.[1] ?? '' : '';
+    const orderDateIndex = classification.type === 'ORDER_CONFIRMATION' ? lines.findIndex((line) => /order\s+date/i.test(line)) : -1;
+    const orderDateValue = orderDateIndex >= 0 ? lines.slice(orderDateIndex, orderDateIndex + 7).map(normalizeDate).find(Boolean) ?? '' : '';
     const acceptIdentifier = (field: string, candidate: ReturnType<typeof candidateAfterLabel>, confidence: number) => {
       if (!candidate) return parsed('', 0);
       const valid = !invalidIdentifier(candidate.value);
@@ -262,16 +271,19 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
     const totalFallback = expectedTotal > 0 ? findCorroboratedTotal(lines, expectedTotal) : null;
     const extraction: CanonicalInvoiceExtraction = {
       header: {
+        documentType: parsed(classification.type, classification.confidence),
         vendor: detectVendor(lines, headerCandidates), invoiceNumber: acceptIdentifier('invoiceNumber', invoiceNumberCandidate, 94),
-        invoiceDate: parsed(invoiceDateValue, invoiceDateValue ? 92 : 0), purchaseOrder: acceptIdentifier('purchaseOrder', poCandidate, 90),
+        invoiceDate: parsed(invoiceDateValue, invoiceDateValue ? 92 : 0), orderNumber: parsed(orderNumberText, orderNumberText ? 94 : 0),
+        orderDate: parsed(orderDateValue, orderDateValue ? 92 : 0), purchaseOrder: acceptIdentifier('purchaseOrder', poCandidate, 90),
         subtotal: monetary('subtotal', /^\s*subtotal\s*[:#-]?\s*(.*)$/i, 94),
         tax: monetary('tax', /^\s*(?:(?:total|sales)\s+tax|tax)\s*[:#-]?\s*(.*)$/i, 92, taxFallback),
         shipping: monetary('shipping', /^\s*(?:shipping|freight)(?:\s+(?:and\/or\s+)?handling)?\s*[:#-]?\s*(.*)$/i, 88, shippingFallback),
         total: monetary('total', /^\s*(?:grand\s+total|invoice\s+total|total\s+(?:amount|usd)|amount\s+due|total(?!\s+(?:tax|applied)))\s*[:#-]?\s*(.*)$/i, 94, totalFallback),
       },
+      vendorEvidence: extractVendorEvidence(rawText),
       items,
     };
-    const recognizable = Object.values(extraction.header).some((field) => field.value !== '' && field.value !== null) || extraction.items.length;
+    const recognizable = Object.entries(extraction.header).some(([name, field]) => name !== 'documentType' && field.value !== '' && field.value !== null) || extraction.items.length;
     if (!recognizable) throw new Error('Document text does not contain a recognizable invoice structure');
     return {
       normalizedText: lines.join('\n'), lines, headerCandidates, tableRegions: regions, lineItemCandidates, extensionCandidates,

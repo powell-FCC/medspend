@@ -35,6 +35,12 @@ export interface InvoiceReviewHeader {
   uploadedAt: string;
   vendorId: string | null;
   vendorName: string;
+  vendorMatchState: 'MATCHED' | 'SUGGESTED' | 'UNRESOLVED' | 'CONFIRMED';
+  suggestedVendorId: string | null;
+  suggestedVendorName: string;
+  documentType: 'INVOICE' | 'ORDER_CONFIRMATION' | 'PURCHASE_ORDER' | 'CREDIT_MEMO' | 'STATEMENT' | 'UNKNOWN';
+  orderNumber: string;
+  orderDate: string;
   invoiceNumber: string;
   invoiceDate: string;
   invoiceTotal: number | null;
@@ -95,6 +101,9 @@ export interface InvoiceHeaderInput {
   sourceFileId: string;
   vendorId?: string | null;
   vendorName: string;
+  documentType: InvoiceReviewHeader['documentType'];
+  orderNumber: string;
+  orderDate: string;
   invoiceNumber: string;
   invoiceDate: string;
   invoiceTotal: number | null;

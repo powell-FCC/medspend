@@ -1,4 +1,5 @@
 export type ExtractionSource = 'OCR' | 'Parser' | 'LLM' | 'User';
+import type { DocumentType, VendorEvidence } from './document-identity.ts';
 
 export interface ExtractedField<T> {
   value: T;
@@ -8,9 +9,12 @@ export interface ExtractedField<T> {
 }
 
 export interface ExtractedInvoiceHeader {
+  documentType?: ExtractedField<DocumentType>;
   vendor: ExtractedField<string>;
   invoiceNumber: ExtractedField<string>;
   invoiceDate: ExtractedField<string>;
+  orderNumber?: ExtractedField<string>;
+  orderDate?: ExtractedField<string>;
   purchaseOrder: ExtractedField<string>;
   subtotal: ExtractedField<number | null>;
   tax: ExtractedField<number | null>;
@@ -48,6 +52,7 @@ export interface ExtractionQuality {
 
 export interface CanonicalInvoiceExtraction {
   header: ExtractedInvoiceHeader;
+  vendorEvidence?: VendorEvidence[];
   items: ExtractedInvoiceItem[];
   reconciliation?: ExtractionReconciliation;
   quality?: ExtractionQuality;

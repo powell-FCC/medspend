@@ -8,6 +8,7 @@ import type { CanonicalInvoiceExtraction } from '@/extraction/types';
 import { EmbeddedPdfTextProvider } from '@/extraction/embedded-pdf-text-provider';
 import { DeterministicInvoiceExtractionProvider } from '@/extraction/deterministic-invoice-provider';
 import { assessExtractionQuality, validateExtraction } from '@/extraction/validation';
+import { resolveVendor } from '@/extraction/document-identity';
 import { matchInvoiceProduct } from '@/product-identity/matcher';
 import type { OCRProvider } from '@/extraction/providers';
 import type { InvoiceApprovalResult, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
@@ -18,6 +19,9 @@ const optionalText = z.string().trim().max(500).default('');
 const headerInput = reviewKey.extend({
   vendorId: uuid.optional().nullable(),
   vendorName: z.string().trim().min(1).max(200),
+  documentType: z.enum(['INVOICE', 'ORDER_CONFIRMATION', 'PURCHASE_ORDER', 'CREDIT_MEMO', 'STATEMENT', 'UNKNOWN']),
+  orderNumber: z.string().trim().max(120).default(''),
+  orderDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal('')),
   invoiceNumber: z.string().trim().max(120),
   invoiceDate: z
     .string()
@@ -196,13 +200,22 @@ async function attemptStructuredExtraction(db: SupabaseClient<Database>, organiz
   const provider = new DeterministicInvoiceExtractionProvider();
   try {
     const extraction = validateExtraction(await provider.extractInvoice(rawText));
-    const { error } = await db.rpc('seed_structured_invoice_draft', {
+    const { data: seeded, error } = await db.rpc('seed_structured_invoice_draft', {
       _organization_id: organizationId,
       _source_file_id: sourceFileId,
       _extraction: extraction as unknown as Json,
       _provider: provider.name,
     });
     if (error) throw new Error(error.message);
+    if (seeded) {
+      const { error: identityError } = await db.rpc('persist_invoice_document_identity', {
+        _organization_id: organizationId, _source_file_id: sourceFileId,
+        _document_type: extraction.header.documentType?.value ?? 'UNKNOWN',
+        _order_number: extraction.header.orderNumber?.value ?? '',
+        _order_date: extraction.header.orderDate?.value || null,
+      });
+      if (identityError) throw new Error(identityError.message);
+    }
     return { extraction, error: null };
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : 'Structured invoice extraction failed';
@@ -239,7 +252,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         },
         { onConflict: 'source_file_id' },
       )
-      .select('id,vendor_id,vendor_name,invoice_number,invoice_date,purchase_order_number,subtotal,tax_amount,shipping_amount,invoice_total,total_amount,processing_status')
+      .select('id,vendor_id,vendor_name,vendor_identity_reviewed,document_type,order_number,order_date,invoice_number,invoice_date,purchase_order_number,subtotal,tax_amount,shipping_amount,invoice_total,total_amount,processing_status')
       .single();
     if (invoiceError) throw new Error(invoiceError.message);
     let extraction = jobResult.data.extraction_result as unknown as CanonicalInvoiceExtraction | null;
@@ -279,7 +292,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
       if (error) throw new Error(error.message);
     }
 
-    const [itemsResult, categoriesResult, vendorsResult, mappingsResult, productsResult] = await Promise.all([
+    const [itemsResult, categoriesResult, vendorsResult, mappingsResult, productsResult, signaturesResult] = await Promise.all([
       context.supabase
         .from('invoice_items')
         .select('id,invoice_id,line_number,sku,description,manufacturer,category,quantity,unit_of_measure,unit_price,total_price,package_size,product_id,vendor_product_id,review_status')
@@ -288,7 +301,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         .order('line_number', { ascending: true })
         .order('created_at', { ascending: true }),
       context.supabase.from('inventory_categories').select('name').eq('organization_id', data.organizationId).order('name'),
-      context.supabase.from('vendors').select('id,name').eq('organization_id', data.organizationId).eq('active', true).order('name'),
+      context.supabase.from('vendors').select('id,organization_id,name,normalized_name,email,phone,website').eq('organization_id', data.organizationId).eq('active', true).order('name'),
       context.supabase.from('vendor_products').select('id,organization_id,vendor_id,product_id,vendor_sku,manufacturer_sku,package_size,unit_of_measure').eq('organization_id', data.organizationId).eq('active', true).order('vendor_sku'),
       context.supabase
         .from('products')
@@ -296,12 +309,25 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         .eq('organization_id', data.organizationId)
         .eq('active', true)
         .order('name'),
+      context.supabase.from('vendor_identity_signatures').select('id,organization_id,vendor_id,signature_type,normalized_value').eq('organization_id', data.organizationId).eq('active', true),
     ]);
-    for (const result of [itemsResult, categoriesResult, vendorsResult, mappingsResult, productsResult]) {
+    for (const result of [itemsResult, categoriesResult, vendorsResult, mappingsResult, productsResult, signaturesResult]) {
       if (result.error) throw new Error(result.error.message);
     }
     const vendorNames = new Map((vendorsResult.data ?? []).map((vendor) => [vendor.id, vendor.name]));
     const productNames = new Map((productsResult.data ?? []).map((product) => [product.id, product.name]));
+    const vendorMatch = invoice.vendor_identity_reviewed ? { state: 'CONFIRMED' as const, vendorId: invoice.vendor_id, confidence: 100, reason: 'OWNER_CONFIRMED', evidence: extraction?.vendorEvidence ?? [] }
+      : resolveVendor(data.organizationId, extraction?.vendorEvidence ?? [], (vendorsResult.data ?? []).map((vendor) => ({ id: vendor.id, organizationId: vendor.organization_id, name: vendor.name, normalizedName: vendor.normalized_name, email: vendor.email, phone: vendor.phone, website: vendor.website })), (signaturesResult.data ?? []).map((signature) => ({ id: signature.id, organizationId: signature.organization_id, vendorId: signature.vendor_id, signatureType: signature.signature_type as never, normalizedValue: signature.normalized_value })));
+    if (!invoice.vendor_identity_reviewed && !invoice.vendor_id && vendorMatch.state === 'MATCHED' && vendorMatch.vendorId) {
+      const matchedVendor = (vendorsResult.data ?? []).find((vendor) => vendor.id === vendorMatch.vendorId);
+      if (matchedVendor) {
+        const { error: vendorError } = await context.supabase.from('invoices').update({ vendor_id: matchedVendor.id, vendor_name: matchedVendor.name }).eq('id', invoice.id).eq('organization_id', data.organizationId).is('vendor_id', null);
+        if (vendorError) throw new Error(vendorError.message);
+        invoice.vendor_id = matchedVendor.id; invoice.vendor_name = matchedVendor.name;
+        const { error: rematchError } = await context.supabase.rpc('rematch_invoice_vendor_products', { _organization_id: data.organizationId, _source_file_id: data.sourceFileId });
+        if (rematchError) throw new Error(rematchError.message);
+      }
+    }
     const identityProducts = (productsResult.data ?? []).map((product) => ({
       organizationId: product.organization_id,
       id: product.id,
@@ -368,6 +394,12 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         uploadedAt: sourceResult.data.created_at,
         vendorId: invoice.vendor_id,
         vendorName: invoice.vendor_name ?? extraction?.header.vendor.value ?? '',
+        vendorMatchState: vendorMatch.state,
+        suggestedVendorId: vendorMatch.state === 'SUGGESTED' ? vendorMatch.vendorId : null,
+        suggestedVendorName: vendorMatch.state === 'SUGGESTED' && vendorMatch.vendorId ? vendorNames.get(vendorMatch.vendorId) ?? '' : '',
+        documentType: (invoice.document_type || extraction?.header.documentType?.value || 'UNKNOWN') as InvoiceReview['header']['documentType'],
+        orderNumber: invoice.order_number ?? extraction?.header.orderNumber?.value ?? '',
+        orderDate: invoice.order_date ?? extraction?.header.orderDate?.value ?? '',
         invoiceNumber: invoice.invoice_number ?? extraction?.header.invoiceNumber.value ?? '',
         invoiceDate: invoice.invoice_date ?? extraction?.header.invoiceDate.value ?? '',
         invoiceTotal: invoice.total_amount ?? invoice.invoice_total ?? extraction?.header.total.value ?? null,
@@ -463,6 +495,10 @@ export const saveInvoiceHeaderFn = createServerFn({ method: 'POST' })
       .update({
         vendor_id: data.vendorId ?? null,
         vendor_name: vendorName,
+        vendor_identity_reviewed: true,
+        document_type: data.documentType,
+        order_number: data.orderNumber || null,
+        order_date: data.orderDate || null,
         invoice_number: data.invoiceNumber || null,
       invoice_date: data.invoiceDate || null,
       invoice_total: data.invoiceTotal ?? null,
@@ -477,6 +513,18 @@ export const saveInvoiceHeaderFn = createServerFn({ method: 'POST' })
       .eq('id', invoice.id)
       .eq('organization_id', data.organizationId);
     if (error) throw new Error(error.message);
+    if (data.vendorId) {
+      const { data: job } = await context.supabase.from('invoice_processing_jobs').select('extraction_result').eq('invoice_id', data.sourceFileId).eq('organization_id', data.organizationId).maybeSingle();
+      const rememberedExtraction = job?.extraction_result as unknown as CanonicalInvoiceExtraction | null;
+      const { error: signatureError } = await context.supabase.rpc('remember_invoice_vendor_signatures', {
+        _organization_id: data.organizationId, _source_file_id: data.sourceFileId,
+        _vendor_id: data.vendorId, _evidence: (rememberedExtraction?.vendorEvidence ?? []) as unknown as Json,
+      });
+      if (signatureError) throw new Error(signatureError.message);
+    } else {
+      const { error: forgetError } = await context.supabase.rpc('forget_invoice_vendor_signatures', { _organization_id: data.organizationId, _source_file_id: data.sourceFileId });
+      if (forgetError) throw new Error(forgetError.message);
+    }
     const { error: rematchError } = await context.supabase.rpc('rematch_invoice_vendor_products', {
       _organization_id: data.organizationId,
       _source_file_id: data.sourceFileId,

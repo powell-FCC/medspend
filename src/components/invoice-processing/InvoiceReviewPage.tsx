@@ -153,6 +153,13 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
           <AlertDescription>The line items or subtotal, tax, shipping, and total do not reconcile within rounding tolerance.</AlertDescription>
         </Alert>
       )}
+      {data.header.documentType === 'UNKNOWN' && (
+        <Alert className="mb-5 border-amber-200 bg-amber-50/50">
+          <AlertCircle className="text-amber-700" />
+          <AlertTitle>Document type uncertain.</AlertTitle>
+          <AlertDescription>Choose the document type so invoice and order fields keep their correct meaning.</AlertDescription>
+        </Alert>
+      )}
       {data.header.documentTextStatus === 'ocr_required' && (
         <Alert className="mb-5">
           <FileText />

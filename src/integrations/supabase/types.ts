@@ -109,6 +109,9 @@ export type Database = {
           invoice_date: string | null
           invoice_number: string | null
           invoice_total: number | null
+          document_type: string
+          order_number: string | null
+          order_date: string | null
           organization_id: string
           payment_terms: string | null
           posted_at: string | null
@@ -125,6 +128,7 @@ export type Database = {
           updated_at: string
           vendor_id: string | null
           vendor_name: string | null
+          vendor_identity_reviewed: boolean
           currency_code: string | null
         }
         Insert: {
@@ -133,6 +137,9 @@ export type Database = {
           invoice_date?: string | null
           invoice_number?: string | null
           invoice_total?: number | null
+          document_type?: string
+          order_number?: string | null
+          order_date?: string | null
           organization_id: string
           payment_terms?: string | null
           posted_at?: string | null
@@ -149,6 +156,7 @@ export type Database = {
           updated_at?: string
           vendor_id?: string | null
           vendor_name?: string | null
+          vendor_identity_reviewed?: boolean
           currency_code?: string | null
         }
         Update: {
@@ -157,6 +165,9 @@ export type Database = {
           invoice_date?: string | null
           invoice_number?: string | null
           invoice_total?: number | null
+          document_type?: string
+          order_number?: string | null
+          order_date?: string | null
           organization_id?: string
           payment_terms?: string | null
           posted_at?: string | null
@@ -173,6 +184,7 @@ export type Database = {
           updated_at?: string
           vendor_id?: string | null
           vendor_name?: string | null
+          vendor_identity_reviewed?: boolean
           currency_code?: string | null
         }
         Relationships: [
@@ -797,6 +809,12 @@ export type Database = {
         }
         Relationships: []
       }
+      vendor_identity_signatures: {
+        Row: { id: string; organization_id: string; vendor_id: string; signature_type: string; normalized_value: string; active: boolean; created_at: string; updated_at: string }
+        Insert: { id?: string; organization_id: string; vendor_id: string; signature_type: string; normalized_value: string; active?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; organization_id?: string; vendor_id?: string; signature_type?: string; normalized_value?: string; active?: boolean; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
       vendors: {
         Row: {
           account_number: string | null
@@ -898,11 +916,23 @@ export type Database = {
         }
         Returns: boolean
       }
+      forget_invoice_vendor_signatures: {
+        Args: { _organization_id: string; _source_file_id: string }
+        Returns: number
+      }
       is_org_admin: { Args: { _org: string; _user: string }; Returns: boolean }
       is_org_member: { Args: { _org: string; _user: string }; Returns: boolean }
       post_reviewed_invoice: {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: Json
+      }
+      persist_invoice_document_identity: {
+        Args: { _organization_id: string; _source_file_id: string; _document_type: string; _order_number: string; _order_date: string | null }
+        Returns: undefined
+      }
+      remember_invoice_vendor_signatures: {
+        Args: { _organization_id: string; _source_file_id: string; _vendor_id: string; _evidence: Json }
+        Returns: number
       }
       rematch_invoice_vendor_products: {
         Args: { _organization_id: string; _source_file_id: string }

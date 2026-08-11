@@ -22,8 +22,9 @@ export function validateExtraction(extraction: CanonicalInvoiceExtraction): Cano
       item.lineTotal.confidence = Math.min(item.lineTotal.confidence, 60);
     }
   });
-  const { invoiceDate, subtotal, tax, shipping, total } = extraction.header;
+  const { invoiceDate, orderDate, subtotal, tax, shipping, total } = extraction.header;
   if (invoiceDate.value && !/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate.value)) throw new Error('Invoice date is invalid');
+  if (orderDate?.value && !/^\d{4}-\d{2}-\d{2}$/.test(orderDate.value)) throw new Error('Order date is invalid');
   for (const [name, field] of Object.entries({ subtotal, tax, shipping, total })) {
     if (field.value !== null && (!Number.isFinite(field.value) || field.value < 0)) throw new Error(`${name} must be a non-negative amount`);
   }
@@ -44,11 +45,12 @@ export function validateExtraction(extraction: CanonicalInvoiceExtraction): Cano
 
 export function assessExtractionQuality(extraction: CanonicalInvoiceExtraction): ExtractionQuality {
   const header = extraction.header;
-  const meaningful = [header.vendor, header.invoiceNumber, header.invoiceDate, header.purchaseOrder,
+  const meaningful = [header.documentType, header.vendor, header.invoiceNumber, header.invoiceDate, header.orderNumber, header.orderDate, header.purchaseOrder,
     header.subtotal, header.tax, header.shipping, header.total]
-    .filter((field) => field.value !== '' && field.value !== null && field.confidence >= 60);
-  const core = [header.vendor, header.invoiceNumber, header.invoiceDate, header.total]
-    .filter((field) => field.value !== '' && field.value !== null && field.confidence >= 70).length;
+    .filter((field) => field && field.value !== '' && field.value !== null && field.confidence >= 60);
+  const identityFields = header.documentType?.value === 'ORDER_CONFIRMATION' ? [header.orderNumber, header.orderDate] : [header.invoiceNumber, header.invoiceDate];
+  const core = [header.vendor, ...identityFields, header.total]
+    .reduce((count, field) => count + (field && field.value !== '' && field.value !== null && field.confidence >= 70 ? 1 : 0), 0);
   const itemCount = extraction.items.length;
   const reasons: string[] = [];
   if (!itemCount) reasons.push('NO_LINE_ITEMS');
