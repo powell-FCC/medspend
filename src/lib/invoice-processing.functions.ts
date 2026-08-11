@@ -7,7 +7,7 @@ import { getExtractionProviders, runDocumentTextExtraction, runExtractionPipelin
 import type { CanonicalInvoiceExtraction } from '@/extraction/types';
 import { EmbeddedPdfTextProvider } from '@/extraction/embedded-pdf-text-provider';
 import { DeterministicInvoiceExtractionProvider } from '@/extraction/deterministic-invoice-provider';
-import { validateExtraction } from '@/extraction/validation';
+import { assessExtractionQuality, validateExtraction } from '@/extraction/validation';
 import type { OCRProvider } from '@/extraction/providers';
 import type {
   InvoiceApprovalResult,
@@ -284,6 +284,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         extractionConfidence: extraction ? Object.fromEntries(Object.entries(extraction.header)
           .filter(([, field]) => !field.reviewed).map(([key, field]) => [key, field.confidence])) : undefined,
         totalsNeedReview: extraction?.reconciliation?.needsReview ?? false,
+        structuredExtractionState: extraction ? (extraction.quality ?? assessExtractionQuality(extraction)).state : null,
         documentTextStatus,
         documentTextProvider,
         documentPageCount,

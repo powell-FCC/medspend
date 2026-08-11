@@ -58,6 +58,5 @@ test('usable-text validation rejects short and binary-looking output determinist
   assert.equal(validateUsableDocumentText('Invoice 1').usable, false);
   assert.equal(validateUsableDocumentText(`Invoice Total ${'\u0000'.repeat(100)}`).usable, false);
   const normalized = normalizeDocumentText(' Invoice\u00a0Number   123 \r\n Total  42.00 ');
-  assert.equal(normalized, 'Invoice Number 123\nTotal 42.00');
+  assert.equal(normalized, 'Invoice Number  123\nTotal  42.00');
 });
-

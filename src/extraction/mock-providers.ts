@@ -22,6 +22,7 @@ export const HENRY_SCHEIN_MOCK_EXTRACTION: CanonicalInvoiceExtraction = {
     { sku: field('100-9867', 91), description: field('Surface Disinfectant Wipes, 160 Count', 90), manufacturer: field('CaviCide', 63), quantity: field(1, 99), unit: field('canister', 87), unitPrice: field(1, 45), lineTotal: field(1, 45), suggestedCategory: field('Infection Control', 71, 'LLM') },
   ],
   reconciliation: { lineItemsMatchSubtotal: true, componentsMatchTotal: true, needsReview: false },
+  quality: { state: 'STRUCTURED_SUCCESS', score: 100, detectedHeaderFields: 8, detectedLineItems: 4, reasonCodes: [] },
 };
 
 export class MockOCRProvider implements OCRProvider {

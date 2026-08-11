@@ -1,0 +1,9 @@
+Regional Medical Company
+Invoice: R-77
+Invoice Date: 08/07/2026
+PO #: P-19
+SKU Product Quantity UOM Unit Price Amount
+R100 Exam Paper 3 roll 10.00 30.00
+Subtotal: 30.00
+Freight: 5.00
+Total: 35.00

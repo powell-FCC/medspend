@@ -39,6 +39,7 @@ export interface InvoiceReviewHeader {
   extractionError: string | null;
   extractionConfidence?: Record<string, number>;
   totalsNeedReview: boolean;
+  structuredExtractionState: 'STRUCTURED_SUCCESS' | 'STRUCTURED_PARTIAL' | 'MANUAL_REVIEW_REQUIRED' | 'STRUCTURED_FAILED' | null;
   documentTextStatus: 'pending' | 'success' | 'ocr_required' | 'failed';
   documentTextProvider: string | null;
   documentPageCount: number | null;

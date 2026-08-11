@@ -35,10 +35,21 @@ export interface ExtractionReconciliation {
   needsReview: boolean;
 }
 
+export type StructuredExtractionState = 'STRUCTURED_SUCCESS' | 'STRUCTURED_PARTIAL' | 'MANUAL_REVIEW_REQUIRED' | 'STRUCTURED_FAILED';
+
+export interface ExtractionQuality {
+  state: StructuredExtractionState;
+  score: number;
+  detectedHeaderFields: number;
+  detectedLineItems: number;
+  reasonCodes: string[];
+}
+
 export interface CanonicalInvoiceExtraction {
   header: ExtractedInvoiceHeader;
   items: ExtractedInvoiceItem[];
   reconciliation?: ExtractionReconciliation;
+  quality?: ExtractionQuality;
 }
 
 export interface OCRResult {

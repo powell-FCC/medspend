@@ -1,0 +1,11 @@
+Northstar Medical Supply, Inc.
+Invoice Number: INV-1042
+Invoice Date: 08/10/2026
+Purchase Order: PO-88
+SKU Description Qty Unit Unit Price Amount
+A100 Athletic Tape 4 case 87.00 348.00
+B200 Cohesive Wrap 12 each 4.86 58.32
+Subtotal: 406.32
+Tax: 28.44
+Shipping: 10.00
+Total: 444.76

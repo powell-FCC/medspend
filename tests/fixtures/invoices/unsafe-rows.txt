@@ -1,0 +1,7 @@
+Example Medical Supply Inc.
+Invoice # SAFE-8
+Invoice Date 08/06/2026
+SKU Description Qty Unit Price Amount
+Possibly a product row with missing columns 25.00
+Subtotal 25.00
+Total 25.00

@@ -12,7 +12,7 @@ const INVOICE_TOKENS = /\b(invoice|subtotal|total|tax|shipping|amount due|purcha
 
 export function normalizeDocumentText(value: string): string {
   return value.normalize('NFKC').replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n')
-    .split('\n').map((line) => line.replace(/[\t ]+/g, ' ').trim()).join('\n')
+    .split('\n').map((line) => line.replace(/\t/g, ' ').replace(/ {3,}/g, '  ').trim()).join('\n')
     .replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -30,4 +30,3 @@ export function validateUsableDocumentText(value: string): UsableTextValidation 
   else if (lineCount < 3 && invoiceTokenCount < 2) reason = 'Extracted text lacks sufficient document structure.';
   return { usable: !reason, normalizedText: reason ? '' : normalizedText, characterCount, printableRatio, lineCount, invoiceTokenCount, reason };
 }
-

@@ -1,0 +1,9 @@
+Acme Healthcare, LLC
+Invoice # INV-22
+Invoice Date 08/09/2026
+SKU Description Quantity Unit Price Amount
+G100 Sterile Gauze Sponges
+4 x 4 twelve ply 2 box 12.50 25.00
+Subtotal 25.00
+Tax 0.00
+Total 25.00

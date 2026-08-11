@@ -1,4 +1,4 @@
-import type { CanonicalInvoiceExtraction, ExtractedField } from './types.ts';
+import type { CanonicalInvoiceExtraction, ExtractedField, ExtractionQuality } from './types.ts';
 
 function assertField(field: ExtractedField<unknown>, name: string) {
   if (!field || typeof field !== 'object') throw new Error(`Missing extracted field: ${name}`);
@@ -37,5 +37,27 @@ export function validateExtraction(extraction: CanonicalInvoiceExtraction): Cano
     componentsMatchTotal,
     needsReview: lineItemsMatchSubtotal === false || componentsMatchTotal === false,
   };
+  extraction.quality = assessExtractionQuality(extraction);
   return extraction;
+}
+
+export function assessExtractionQuality(extraction: CanonicalInvoiceExtraction): ExtractionQuality {
+  const header = extraction.header;
+  const meaningful = [header.vendor, header.invoiceNumber, header.invoiceDate, header.purchaseOrder,
+    header.subtotal, header.tax, header.shipping, header.total]
+    .filter((field) => field.value !== '' && field.value !== null && field.confidence >= 60);
+  const core = [header.vendor, header.invoiceNumber, header.invoiceDate, header.total]
+    .filter((field) => field.value !== '' && field.value !== null && field.confidence >= 70).length;
+  const itemCount = extraction.items.length;
+  const reasons: string[] = [];
+  if (!itemCount) reasons.push('NO_LINE_ITEMS');
+  if (core < 2) reasons.push('INSUFFICIENT_CORE_HEADERS');
+  if (extraction.reconciliation?.needsReview) reasons.push('FINANCIAL_MISMATCH');
+  let state: ExtractionQuality['state'];
+  if (itemCount > 0 && core >= 3 && meaningful.length >= 5) state = 'STRUCTURED_SUCCESS';
+  else if (itemCount > 0 || meaningful.length >= 3) state = 'STRUCTURED_PARTIAL';
+  else state = 'MANUAL_REVIEW_REQUIRED';
+  const score = Math.min(100, Math.round(core * 15 + Math.min(itemCount, 3) * 12 + meaningful.length * 4
+    - (extraction.reconciliation?.needsReview ? 15 : 0)));
+  return { state, score: Math.max(0, score), detectedHeaderFields: meaningful.length, detectedLineItems: itemCount, reasonCodes: reasons };
 }

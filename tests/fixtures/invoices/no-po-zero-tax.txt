@@ -1,0 +1,8 @@
+Central Clinical Supply Corp.
+Invoice No. C-500
+Invoice Date: 2026-08-08
+Item Description Qty Unit Price Total
+C500 Masks 2 box 15.00 30.00
+Subtotal: 30.00
+Tax: 0.00
+Total: 30.00
