@@ -1,4 +1,4 @@
-export type ExtractionSource = 'OCR' | 'LLM' | 'User';
+export type ExtractionSource = 'OCR' | 'Parser' | 'LLM' | 'User';
 
 export interface ExtractedField<T> {
   value: T;
@@ -29,9 +29,16 @@ export interface ExtractedInvoiceItem {
   suggestedCategory: ExtractedField<string>;
 }
 
+export interface ExtractionReconciliation {
+  lineItemsMatchSubtotal: boolean | null;
+  componentsMatchTotal: boolean | null;
+  needsReview: boolean;
+}
+
 export interface CanonicalInvoiceExtraction {
   header: ExtractedInvoiceHeader;
   items: ExtractedInvoiceItem[];
+  reconciliation?: ExtractionReconciliation;
 }
 
 export interface OCRResult {

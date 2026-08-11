@@ -21,6 +21,7 @@ export const HENRY_SCHEIN_MOCK_EXTRACTION: CanonicalInvoiceExtraction = {
     { sku: field('900-4682', 96), description: field('Disposable Prophy Angles, Soft Cup, Box/100', 93), manufacturer: field('Pac-Dent', 72), quantity: field(3, 98), unit: field('box', 90), unitPrice: field(62.5, 97), lineTotal: field(187.5, 98), suggestedCategory: field('Dental Supplies', 69, 'LLM') },
     { sku: field('100-9867', 91), description: field('Surface Disinfectant Wipes, 160 Count', 90), manufacturer: field('CaviCide', 63), quantity: field(1, 99), unit: field('canister', 87), unitPrice: field(1, 45), lineTotal: field(1, 45), suggestedCategory: field('Infection Control', 71, 'LLM') },
   ],
+  reconciliation: { lineItemsMatchSubtotal: true, componentsMatchTotal: true, needsReview: false },
 };
 
 export class MockOCRProvider implements OCRProvider {

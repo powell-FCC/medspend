@@ -6,6 +6,8 @@ import type { Database, Json } from '@/integrations/supabase/types';
 import { getExtractionProviders, runDocumentTextExtraction, runExtractionPipeline } from '@/extraction/pipeline';
 import type { CanonicalInvoiceExtraction } from '@/extraction/types';
 import { EmbeddedPdfTextProvider } from '@/extraction/embedded-pdf-text-provider';
+import { DeterministicInvoiceExtractionProvider } from '@/extraction/deterministic-invoice-provider';
+import { validateExtraction } from '@/extraction/validation';
 import type { OCRProvider } from '@/extraction/providers';
 import type {
   InvoiceApprovalResult,
@@ -56,6 +58,20 @@ async function requireDraftInvoice(db: SupabaseClient<Database>, organizationId:
   if (error) throw new Error(error.message);
   if (data.processing_status === 'completed' || data.posted_at) throw new Error('Completed invoices cannot be edited.');
   return data;
+}
+
+async function markExtractionReviewed(
+  db: SupabaseClient<Database>, organizationId: string, sourceFileId: string,
+  target: { header: true } | { itemIndex: number },
+) {
+  const { data } = await db.from('invoice_processing_jobs').select('extraction_result')
+    .eq('invoice_id', sourceFileId).eq('organization_id', organizationId).maybeSingle();
+  if (!data?.extraction_result) return;
+  const extraction = structuredClone(data.extraction_result) as unknown as CanonicalInvoiceExtraction;
+  const fields = 'header' in target ? Object.values(extraction.header) : Object.values(extraction.items[target.itemIndex] ?? {});
+  for (const field of fields) field.reviewed = true;
+  await db.from('invoice_processing_jobs').update({ extraction_result: extraction as unknown as Json })
+    .eq('invoice_id', sourceFileId).eq('organization_id', organizationId);
 }
 
 async function attemptMockExtraction(
@@ -114,10 +130,11 @@ async function attemptEmbeddedTextExtraction(
   db: SupabaseClient<Database>, organizationId: string, sourceFileId: string, storagePath: string,
   provider: OCRProvider,
 ) {
-  const { error: claimError } = await db.from('invoice_processing_jobs').update({
+  const { data: claimed, error: claimError } = await db.from('invoice_processing_jobs').update({
     status: 'processing', document_text_status: 'pending', extraction_error: null,
-  }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId).eq('status', 'uploaded');
+  }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId).eq('status', 'uploaded').select('id').maybeSingle();
   if (claimError) throw new Error(claimError.message);
+  if (!claimed) return { status: 'pending', error: null, text: null } as const;
   try {
     const { data: pdf, error: downloadError } = await db.storage.from('vendor-invoices').download(storagePath);
     if (downloadError) throw new Error(downloadError.message);
@@ -130,14 +147,34 @@ async function attemptEmbeddedTextExtraction(
       extraction_error: null,
     }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId);
     if (error) throw new Error(error.message);
-    return { status: result.status, error: null } as const;
+    return { status: result.status, error: null, text: result.status === 'success' ? result.text : null } as const;
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : 'Document text extraction failed';
     await db.from('invoice_processing_jobs').update({
       status: 'review_required', document_text_status: 'failed', raw_extracted_text: null,
       ocr_provider: provider.name, ocr_required: false, extraction_error: message,
     }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId);
-    return { status: 'failed', error: message } as const;
+    return { status: 'failed', error: message, text: null } as const;
+  }
+}
+
+async function attemptStructuredExtraction(
+  db: SupabaseClient<Database>, organizationId: string, sourceFileId: string, rawText: string,
+) {
+  const provider = new DeterministicInvoiceExtractionProvider();
+  try {
+    const extraction = validateExtraction(await provider.extractInvoice(rawText));
+    const { error } = await db.rpc('seed_structured_invoice_draft', {
+      _organization_id: organizationId, _source_file_id: sourceFileId,
+      _extraction: extraction as unknown as Json, _provider: provider.name,
+    });
+    if (error) throw new Error(error.message);
+    return { extraction, error: null };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : 'Structured invoice extraction failed';
+    await db.from('invoice_processing_jobs').update({ extraction_error: message, status: 'review_required' })
+      .eq('invoice_id', sourceFileId).eq('organization_id', organizationId).is('extraction_result', null);
+    return { extraction: null, error: message };
   }
 }
 
@@ -188,6 +225,15 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
       documentTextStatus = documentResult.status;
       documentTextProvider = 'unpdf-embedded-text';
       extractionError = documentResult.error;
+      if (documentResult.text) {
+        extractionStatus = 'processing';
+        const structured = await attemptStructuredExtraction(
+          context.supabase, data.organizationId, data.sourceFileId, documentResult.text,
+        );
+        extraction = structured.extraction;
+        extractionStatus = extraction ? 'succeeded' : 'failed';
+        extractionError = structured.error;
+      }
       const metadata = await context.supabase.from('invoice_processing_jobs')
         .select('document_page_count,document_processing_duration_ms').eq('invoice_id', data.sourceFileId).single();
       documentPageCount = metadata.data?.document_page_count ?? null;
@@ -235,7 +281,9 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         status: (completed ? 'completed' : 'review_required') as ProcessingStatus,
         extractionStatus,
         extractionError,
-        extractionConfidence: extraction ? Object.fromEntries(Object.entries(extraction.header).map(([key, field]) => [key, field.confidence])) : undefined,
+        extractionConfidence: extraction ? Object.fromEntries(Object.entries(extraction.header)
+          .filter(([, field]) => !field.reviewed).map(([key, field]) => [key, field.confidence])) : undefined,
+        totalsNeedReview: extraction?.reconciliation?.needsReview ?? false,
         documentTextStatus,
         documentTextProvider,
         documentPageCount,
@@ -256,7 +304,8 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         packageSize: item.package_size ?? '',
         vendorProductId: item.vendor_product_id,
         reviewStatus: item.review_status as InvoiceItemReviewStatus,
-        extractionConfidence: extraction?.items[index] ? Math.min(...Object.values(extraction.items[index]).map((field) => field.confidence)) : undefined,
+        extractionConfidence: extraction?.items[index] && Object.values(extraction.items[index]).some((field) => !field.reviewed)
+          ? Math.min(...Object.values(extraction.items[index]).filter((field) => !field.reviewed).map((field) => field.confidence)) : undefined,
       })),
       categories: (categoriesResult.data ?? []).map((category) => category.name),
       vendors: (vendorsResult.data ?? []).map((vendor) => ({ id: vendor.id, name: vendor.name })),
@@ -300,6 +349,7 @@ export const saveInvoiceHeaderFn = createServerFn({ method: 'POST' })
       processing_status: 'review_required',
     }).eq('id', invoice.id).eq('organization_id', data.organizationId);
     if (error) throw new Error(error.message);
+    await markExtractionReviewed(context.supabase, data.organizationId, data.sourceFileId, { header: true });
     return { ok: true };
   });
 
@@ -322,9 +372,14 @@ export const saveInvoiceItemFn = createServerFn({ method: 'POST' })
       review_status: 'pending_review',
     };
     if (data.id) {
+      const { data: existing } = await context.supabase.from('invoice_items').select('line_number')
+        .eq('id', data.id).eq('invoice_id', invoice.id).eq('organization_id', data.organizationId).maybeSingle();
       const { error } = await context.supabase.from('invoice_items').update(payload)
         .eq('id', data.id).eq('invoice_id', invoice.id).eq('organization_id', data.organizationId);
       if (error) throw new Error(error.message);
+      if (existing?.line_number) await markExtractionReviewed(
+        context.supabase, data.organizationId, data.sourceFileId, { itemIndex: existing.line_number - 1 },
+      );
       return { id: data.id };
     }
     const { count, error: countError } = await context.supabase.from('invoice_items')

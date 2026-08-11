@@ -22,7 +22,7 @@ test('all canonical fields carry bounded confidence, source, and reviewed metada
   assert.ok(fields.length > 0);
   for (const field of fields) {
     assert.ok(field.confidence >= 0 && field.confidence <= 100);
-    assert.ok(['OCR', 'LLM', 'User'].includes(field.source));
+    assert.ok(['OCR', 'Parser', 'LLM', 'User'].includes(field.source));
     assert.equal(field.reviewed, false);
   }
 });

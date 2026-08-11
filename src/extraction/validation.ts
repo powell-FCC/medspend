@@ -5,7 +5,7 @@ function assertField(field: ExtractedField<unknown>, name: string) {
   if (!Number.isFinite(field.confidence) || field.confidence < 0 || field.confidence > 100) {
     throw new Error(`Invalid confidence for ${name}`);
   }
-  if (!['OCR', 'LLM', 'User'].includes(field.source)) throw new Error(`Invalid source for ${name}`);
+  if (!['OCR', 'Parser', 'LLM', 'User'].includes(field.source)) throw new Error(`Invalid source for ${name}`);
   if (typeof field.reviewed !== 'boolean') throw new Error(`Invalid reviewed flag for ${name}`);
 }
 
@@ -16,6 +16,26 @@ export function validateExtraction(extraction: CanonicalInvoiceExtraction): Cano
     if (!item.description.value.trim()) throw new Error(`Item ${index + 1} requires a description`);
     if (!(item.quantity.value > 0)) throw new Error(`Item ${index + 1} requires a positive quantity`);
     if (item.unitPrice.value < 0 || item.lineTotal.value < 0) throw new Error(`Item ${index + 1} has a negative price`);
+    const expected = item.quantity.value * item.unitPrice.value;
+    if (Math.abs(expected - item.lineTotal.value) > Math.max(0.02, expected * 0.01)) {
+      item.lineTotal.confidence = Math.min(item.lineTotal.confidence, 60);
+    }
   });
+  const { invoiceDate, subtotal, tax, shipping, total } = extraction.header;
+  if (invoiceDate.value && !/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate.value)) throw new Error('Invoice date is invalid');
+  for (const [name, field] of Object.entries({ subtotal, tax, shipping, total })) {
+    if (field.value !== null && (!Number.isFinite(field.value) || field.value < 0)) throw new Error(`${name} must be a non-negative amount`);
+  }
+  const tolerance = 0.02;
+  const itemSum = extraction.items.reduce((sum, item) => sum + item.lineTotal.value, 0);
+  const lineItemsMatchSubtotal = subtotal.value === null || !extraction.items.length
+    ? null : Math.abs(itemSum - subtotal.value) <= tolerance;
+  const componentsMatchTotal = subtotal.value === null || total.value === null
+    ? null : Math.abs(subtotal.value + (tax.value ?? 0) + (shipping.value ?? 0) - total.value) <= tolerance;
+  extraction.reconciliation = {
+    lineItemsMatchSubtotal,
+    componentsMatchTotal,
+    needsReview: lineItemsMatchSubtotal === false || componentsMatchTotal === false,
+  };
   return extraction;
 }

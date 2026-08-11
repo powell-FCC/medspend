@@ -896,6 +896,10 @@ export type Database = {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: Json
       }
+      seed_structured_invoice_draft: {
+        Args: { _organization_id: string; _source_file_id: string; _extraction: Json; _provider: string }
+        Returns: boolean
+      }
       receive_invoice_inventory_item: {
         Args: { _organization_id: string; _sku: string; _name: string; _vendor_name: string; _quantity: number; _unit: string; _category: string; _unit_price: number }
         Returns: { inventory_item_id: string; created: boolean }[]
