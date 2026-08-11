@@ -882,6 +882,14 @@ export type Database = {
         Returns: string
       }
       create_organization: { Args: { _name: string }; Returns: string }
+      confirm_invoice_item_product: {
+        Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string; _product_id: string; _remember_vendor_sku?: boolean }
+        Returns: Json
+      }
+      create_product_from_invoice_item: {
+        Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string }
+        Returns: Json
+      }
       has_org_role: {
         Args: {
           _org: string
@@ -899,6 +907,10 @@ export type Database = {
       seed_structured_invoice_draft: {
         Args: { _organization_id: string; _source_file_id: string; _extraction: Json; _provider: string }
         Returns: boolean
+      }
+      unlink_invoice_item_product: {
+        Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string; _forget_mapping?: boolean }
+        Returns: undefined
       }
       receive_invoice_inventory_item: {
         Args: { _organization_id: string; _sku: string; _name: string; _vendor_name: string; _quantity: number; _unit: string; _category: string; _unit_price: number }

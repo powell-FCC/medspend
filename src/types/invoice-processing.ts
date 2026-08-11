@@ -15,6 +15,14 @@ export interface ReviewItem {
   totalPrice: number;
   packageSize: string;
   vendorProductId: string | null;
+  productId: string | null;
+  productMatch: {
+    state: 'EXACT' | 'SUGGESTED' | 'UNRESOLVED' | 'CONFIRMED';
+    productId: string | null;
+    productName: string;
+    score?: number;
+    reasons: string[];
+  };
   reviewStatus: InvoiceItemReviewStatus;
   extractionConfidence?: number;
 }
@@ -62,12 +70,24 @@ export interface InvoiceReviewVendorProduct {
   unitOfMeasure: string;
 }
 
+export interface InvoiceReviewProduct {
+  id: string;
+  name: string;
+  description: string;
+  manufacturer: string;
+  internalItemCode: string;
+  vendorItemNumber: string;
+  unitOfMeasure: string;
+  packSize: string;
+}
+
 export interface InvoiceReview {
   header: InvoiceReviewHeader;
   items: ReviewItem[];
   categories: string[];
   vendors: InvoiceReviewVendor[];
   vendorProducts: InvoiceReviewVendorProduct[];
+  products: InvoiceReviewProduct[];
 }
 
 export interface InvoiceHeaderInput {
