@@ -1,9 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ClipboardList } from "lucide-react";
+import { ArrowRight, CheckCircle2, ClipboardCheck, PackageCheck, Truck } from "lucide-react";
 import { useActiveOrg } from "@/hooks/use-active-org";
-import { listOrgRequestsFn } from "@/lib/supply-requests.functions";
+import { getAdminSupplyRequestDashboardFn } from "@/lib/supply-requests.functions";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — MedSpend" }, { name: "robots", content: "noindex" }] }),
@@ -12,51 +12,40 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 function Dashboard() {
   const { active } = useActiveOrg();
-  const fetcher = useServerFn(listOrgRequestsFn);
-  const q = useQuery({
+  const fetcher = useServerFn(getAdminSupplyRequestDashboardFn);
+  const queue = useQuery({
     queryKey: ["org", active?.organizationId, "requests"],
     queryFn: () => fetcher({ data: { organizationId: active!.organizationId } }),
     enabled: !!active,
   });
 
-  const openCount = (q.data ?? []).filter((r) =>
-    ["submitted", "under_review", "approved", "ordered"].includes(r.status),
-  ).length;
-
+  const summary = queue.data?.summary;
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
-      <div className="text-sm text-muted-foreground">Overview</div>
-      <h1 className="mt-1 text-2xl font-semibold">{active?.organizationName}</h1>
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
-        <Stat label="Open requests" value={openCount} />
-        <Stat label="Total requests" value={q.data?.length ?? 0} />
-        <Stat label="Your role" value={active?.role ?? "—"} />
-      </div>
-      <div className="mt-8">
-        {q.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading requests...</p>}
-        {q.isError && (
-          <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 px-5 py-4">
-            <p className="font-medium text-destructive">Could not load supply requests</p>
-            <p className="mt-1 text-sm text-muted-foreground">{q.error instanceof Error ? q.error.message : "An unexpected error occurred."}</p>
+    <div className="min-h-screen bg-[#f5f7f9] px-4 py-8 sm:px-6 lg:px-10">
+      <div className="mx-auto max-w-6xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#718092]">Overview</p>
+        <h1 className="mt-1 text-3xl font-semibold tracking-tight text-[#102a49]">{active?.organizationName}</h1>
+
+        <section className="mt-8 rounded-2xl border border-[#dfe5eb] bg-white p-5 shadow-[0_5px_20px_rgba(16,42,73,0.04)] sm:p-6" aria-labelledby="supply-operations-title">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 id="supply-operations-title" className="text-lg font-semibold text-[#102a49]">Supply Operations</h2><p className="mt-1 text-sm text-[#697687]">Current request workload by next operational step.</p></div>
+            <Link to="/supply-requests" className="inline-flex min-h-11 items-center gap-2 self-start rounded-lg bg-[#102a49] px-4 text-sm font-semibold text-white hover:bg-[#193b61]">View Supply Requests <ArrowRight className="size-4" /></Link>
           </div>
-        )}
-        {q.isSuccess && q.data.length === 0 && (
-          <div className="rounded-xl border border-dashed bg-card px-6 py-12 text-center">
-            <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-muted"><ClipboardList className="h-5 w-5 text-muted-foreground" /></span>
-            <p className="mt-4 font-medium">No supply requests yet.</p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">New supply requests for this organization will appear here.</p>
+          {queue.isLoading && <p className="mt-6 text-sm text-[#697687]">Loading supply operations…</p>}
+          {queue.isError && <p role="alert" className="mt-6 rounded-lg bg-[#fff0f1] p-3 text-sm text-[#a83340]">Could not load supply operations.</p>}
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <OperationMetric label="Needs Review" value={summary?.needsReview ?? 0} icon={<ClipboardCheck className="size-4" />} />
+            <OperationMetric label="Awaiting Order" value={summary?.awaitingOrder ?? 0} icon={<PackageCheck className="size-4" />} />
+            <OperationMetric label="Awaiting Delivery" value={summary?.awaitingDelivery ?? 0} icon={<Truck className="size-4" />} />
+            <OperationMetric label="Ready for Staff" value={summary?.readyForStaff ?? 0} icon={<CheckCircle2 className="size-4" />} />
           </div>
-        )}
+          <p className="mt-4 text-xs text-[#7a8592]">Completed requests: {summary?.completed ?? 0}</p>
+        </section>
       </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 text-2xl font-semibold">{value}</div>
-    </div>
-  );
+function OperationMetric({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
+  return <div className="rounded-xl border border-[#e2e7ec] bg-[#fafbfc] p-4"><div className="flex items-center justify-between text-sm font-medium text-[#5e6d7e]"><span>{label}</span>{icon}</div><div className="mt-4 text-3xl font-semibold tabular-nums text-[#102a49]">{value}</div></div>;
 }

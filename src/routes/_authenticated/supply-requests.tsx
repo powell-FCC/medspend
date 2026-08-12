@@ -1,10 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { ClipboardList, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { AdminQueueTabs, adminQueueLabel, type AdminQueueKey } from "@/components/admin/supply-requests/AdminQueueTabs";
+import { AdminRequestCard } from "@/components/admin/supply-requests/AdminRequestCard";
+import { AdminRequestDetail } from "@/components/admin/supply-requests/AdminRequestDetail";
 import { useActiveOrg } from "@/hooks/use-active-org";
-import { listOrgRequestsFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
-import { allowedNextSupplyRequestStatuses } from "@/supply-requests/lifecycle";
+import { getAdminSupplyRequestDashboardFn, listRequestUpdatesFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
+import type { AdminSupplyRequestViewModel } from "@/supply-requests/admin-dashboard";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 
 export const Route = createFileRoute("/_authenticated/supply-requests")({
@@ -12,165 +16,85 @@ export const Route = createFileRoute("/_authenticated/supply-requests")({
   component: Page,
 });
 
-type TabKey = "open" | "urgent" | "new" | "oos" | "total";
-
 function Page() {
   const { active } = useActiveOrg();
-  const fetcher = useServerFn(listOrgRequestsFn);
-  const update = useServerFn(updateRequestStatusFn);
-  const qc = useQueryClient();
-  const [tab, setTab] = useState<TabKey>("open");
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [note, setNote] = useState("");
+  const fetchDashboard = useServerFn(getAdminSupplyRequestDashboardFn);
+  const fetchUpdates = useServerFn(listRequestUpdatesFn);
+  const updateStatus = useServerFn(updateRequestStatusFn);
+  const queryClient = useQueryClient();
+  const [queue, setQueue] = useState<AdminQueueKey>("needsReview");
+  const [selected, setSelected] = useState<AdminSupplyRequestViewModel | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  const q = useQuery({
+  const dashboard = useQuery({
     queryKey: ["org", active?.organizationId, "requests"],
-    queryFn: () => fetcher({ data: { organizationId: active!.organizationId } }),
+    queryFn: () => fetchDashboard({ data: { organizationId: active!.organizationId } }),
     enabled: !!active,
   });
-
-  const all = q.data ?? [];
-  const filtered = all.filter((r) => {
-    if (tab === "open") return !["completed", "denied"].includes(r.status);
-    if (tab === "urgent") return r.requestType === "out_of_stock" && !["completed", "denied"].includes(r.status);
-    if (tab === "new") return r.requestType === "new_item";
-    if (tab === "oos") return r.requestType === "out_of_stock";
-    return true;
+  const updates = useQuery({
+    queryKey: ["org", active?.organizationId, "requests", selected?.id, "updates"],
+    queryFn: () => fetchUpdates({ data: { requestId: selected!.id } }),
+    enabled: !!selected,
   });
 
-  const counts = {
-    open: all.filter((r) => !["completed", "denied"].includes(r.status)).length,
-    urgent: all.filter((r) => r.requestType === "out_of_stock" && !["completed", "denied"].includes(r.status)).length,
-    new: all.filter((r) => r.requestType === "new_item").length,
-    oos: all.filter((r) => r.requestType === "out_of_stock").length,
-    total: all.length,
-  };
-
-  const openRow = all.find((r) => r.id === openId) ?? null;
-
-  async function setStatus(id: string, status: SupplyRequestStatus) {
+  async function transition(status: SupplyRequestStatus, staffMessage: string, internalNote: string) {
+    if (!selected || !active) return;
     setBusy(true);
+    setMutationError(null);
     try {
-      await update({
-        data: {
-          organizationId: active!.organizationId,
-          id,
-          status,
-          staffVisibleNote: note.trim() || null,
-        },
-      });
-      setNote("");
-      await qc.invalidateQueries({ queryKey: ["org", active?.organizationId, "requests"] });
+      await updateStatus({ data: {
+        organizationId: active.organizationId,
+        id: selected.id,
+        status,
+        staffVisibleNote: staffMessage.trim() || null,
+        internalNote: internalNote.trim() || null,
+      } });
+      await queryClient.invalidateQueries({ queryKey: ["org", active.organizationId, "requests"] });
+      setSelected(null);
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : "The request could not be updated.");
     } finally {
       setBusy(false);
     }
   }
 
+  const requests = dashboard.data?.queues[queue] ?? [];
+
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
-      <h1 className="text-2xl font-semibold">Supply Requests</h1>
-      <div className="mt-4 flex gap-2 flex-wrap">
-        {(["open", "urgent", "new", "oos", "total"] as TabKey[]).map((k) => (
-          <button
-            key={k}
-            onClick={() => setTab(k)}
-            className={
-              "rounded-full border px-3 py-1 text-xs " +
-              (tab === k ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted")
-            }
-          >
-            {labelFor(k)} <span className="opacity-70">· {counts[k]}</span>
+    <div className="min-h-screen bg-[#f5f7f9] px-4 py-8 sm:px-6 lg:px-10">
+      <div className="mx-auto max-w-7xl">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#718092]">Operations</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight text-[#102a49]">Supply Requests</h1>
+            <p className="mt-2 text-sm text-[#657284]">Review requests, coordinate next steps, and keep staff informed.</p>
+          </div>
+          <button type="button" onClick={() => dashboard.refetch()} disabled={dashboard.isFetching} className="inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-lg border border-[#d9e0e7] bg-white px-4 text-sm font-semibold text-[#3c4f65] hover:bg-[#f9fafb] disabled:opacity-60">
+            <RefreshCw className={`size-4 ${dashboard.isFetching ? "animate-spin" : ""}`} /> Refresh
           </button>
-        ))}
-      </div>
-      <div className="mt-4 rounded-xl border bg-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-xs uppercase tracking-wider text-muted-foreground">
-            <tr>
-              <th className="text-left px-3 py-2">Item</th>
-              <th className="text-left px-3 py-2">Type</th>
-              <th className="text-left px-3 py-2">Qty</th>
-              <th className="text-left px-3 py-2">Requester</th>
-              <th className="text-left px-3 py-2">Status</th>
-              <th className="text-left px-3 py-2">Submitted</th>
-              <th className="px-3 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((r) => (
-              <tr key={r.id} className="border-t">
-                <td className="px-3 py-2">{r.itemName}</td>
-                <td className="px-3 py-2 text-xs">{r.requestType}</td>
-                <td className="px-3 py-2">{r.quantity ?? "—"}</td>
-                <td className="px-3 py-2 text-xs">{r.requestedBy}</td>
-                <td className="px-3 py-2 text-xs">{r.status}</td>
-                <td className="px-3 py-2 text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</td>
-                <td className="px-3 py-2">
-                  <button onClick={() => setOpenId(r.id)} className="text-xs underline">
-                    Review
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  No requests.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        </header>
+
+        <div className="mt-8">
+          {dashboard.data && <AdminQueueTabs active={queue} summary={dashboard.data.summary} onChange={setQueue} />}
+        </div>
+
+        <section className="mt-8" aria-labelledby="active-queue-heading">
+          <div className="flex items-center justify-between">
+            <h2 id="active-queue-heading" className="text-lg font-semibold text-[#223850]">{adminQueueLabel(queue)}</h2>
+            <span className="text-sm text-[#75808e]">{requests.length} request{requests.length === 1 ? "" : "s"}</span>
+          </div>
+
+          {dashboard.isLoading && <div className="mt-4 rounded-2xl border border-[#dfe5eb] bg-white p-8 text-center text-sm text-[#697687]">Loading request queue…</div>}
+          {dashboard.isError && <div role="alert" className="mt-4 rounded-2xl border border-[#efc8cd] bg-[#fff4f5] p-5"><div className="font-semibold text-[#a83340]">Could not load supply requests</div><p className="mt-1 text-sm text-[#76545a]">{dashboard.error instanceof Error ? dashboard.error.message : "Please try again."}</p></div>}
+          {dashboard.isSuccess && requests.length === 0 && <div className="mt-4 rounded-2xl border border-dashed border-[#ccd5de] bg-white px-6 py-14 text-center"><span className="mx-auto flex size-12 items-center justify-center rounded-full bg-[#eef2f6] text-[#687789]"><ClipboardList className="size-5" /></span><p className="mt-4 font-semibold text-[#263c54]">This queue is clear</p><p className="mt-1 text-sm text-[#75808e]">Requests will appear here when they reach this stage.</p></div>}
+          <div className="mt-4 grid gap-3">
+            {requests.map((request) => <AdminRequestCard key={request.id} request={request} onOpen={(item) => { setMutationError(null); setSelected(item); }} />)}
+          </div>
+        </section>
       </div>
 
-      {openRow && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-end md:items-center justify-center p-4"
-          onClick={() => setOpenId(null)}
-        >
-          <div className="bg-card rounded-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-            <div className="text-xs text-muted-foreground">Request</div>
-            <div className="text-lg font-semibold">{openRow.itemName}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {openRow.requestType} · qty {openRow.quantity ?? "—"} · by {openRow.requestedBy}
-            </div>
-            {openRow.notes && <div className="mt-3 text-sm">{openRow.notes}</div>}
-            <label className="mt-4 block text-xs text-muted-foreground">Staff-visible note (optional)</label>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1 text-sm"
-              rows={3}
-            />
-            <div className="mt-3 flex flex-wrap gap-2">
-              {allowedNextSupplyRequestStatuses(openRow.status as SupplyRequestStatus).map((s) => (
-                <button
-                  key={s}
-                  disabled={busy}
-                  onClick={() => setStatus(openRow.id, s)}
-                  className={
-                    "rounded-md border px-2 py-1 text-xs " +
-                    "hover:bg-muted"
-                  }
-                >
-                  {s}
-                </button>
-              ))}
-              {allowedNextSupplyRequestStatuses(openRow.status as SupplyRequestStatus).length === 0 && (
-                <span className="text-xs text-muted-foreground">This request is closed.</span>
-              )}
-            </div>
-            <button onClick={() => setOpenId(null)} className="mt-4 text-xs text-muted-foreground">
-              Close
-            </button>
-          </div>
-        </div>
-      )}
+      {selected && <AdminRequestDetail request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} busy={busy} error={mutationError} onClose={() => setSelected(null)} onTransition={transition} />}
     </div>
   );
-}
-
-function labelFor(k: TabKey) {
-  return { open: "Open", urgent: "Urgent", new: "New Items", oos: "Out of Stock", total: "Total" }[k];
 }

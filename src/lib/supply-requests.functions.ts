@@ -10,6 +10,13 @@ import {
   type StaffRequestViewModel,
   type StaffRequestDetailViewModel,
 } from "@/supply-requests/staff-dashboard";
+import {
+  buildAdminRequestDashboard,
+  requestAgeInDays,
+  translateAdminRequestStatus,
+  translateAdminRequestType,
+  type AdminSupplyRequestViewModel,
+} from "@/supply-requests/admin-dashboard";
 
 const statusEnum = z.enum(SUPPLY_REQUEST_STATUSES);
 
@@ -273,6 +280,99 @@ export const listOrgRequestsFn = createServerFn({ method: "POST" })
       receivedAt: r.received_at,
       createdAt: r.created_at,
     }));
+  });
+
+export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ organizationId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    const { data: rows, error } = await context.supabase
+      .from("supply_requests")
+      .select(
+        "id,request_type,quantity,status,notes,free_text_item,requested_by,product_id,created_at,updated_at,products(name,unit_of_measure),teams(name),locations(name)",
+      )
+      .eq("organization_id", data.organizationId)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+
+    const requestIds = (rows ?? []).map((row) => row.id);
+    const requesterIds = Array.from(new Set((rows ?? []).map((row) => row.requested_by)));
+    const [profilesResult, updatesResult] = await Promise.all([
+      requesterIds.length
+        ? context.supabase.from("profiles").select("id,full_name,email").in("id", requesterIds)
+        : Promise.resolve({ data: [], error: null }),
+      requestIds.length
+        ? context.supabase.from("supply_request_updates")
+          .select("supply_request_id,internal_note,staff_visible_note,created_at")
+          .eq("organization_id", data.organizationId)
+          .in("supply_request_id", requestIds)
+          .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (profilesResult.error) throw new Error(profilesResult.error.message);
+    if (updatesResult.error) throw new Error(updatesResult.error.message);
+
+    const profiles = new Map(
+      (profilesResult.data ?? []).map((profile) => [
+        profile.id,
+        profile.full_name ?? profile.email ?? "Unknown requester",
+      ]),
+    );
+    const updateInfo = new Map<string, {
+      latestStaffMessage: string | null;
+      latestInternalNote: string | null;
+      latestUpdateAt: string | null;
+    }>();
+    for (const update of updatesResult.data ?? []) {
+      const current = updateInfo.get(update.supply_request_id) ?? {
+        latestStaffMessage: null,
+        latestInternalNote: null,
+        latestUpdateAt: null,
+      };
+      if (!current.latestUpdateAt) current.latestUpdateAt = update.created_at;
+      if (!current.latestStaffMessage && update.staff_visible_note) {
+        current.latestStaffMessage = update.staff_visible_note;
+      }
+      if (!current.latestInternalNote && update.internal_note) {
+        current.latestInternalNote = update.internal_note;
+      }
+      updateInfo.set(update.supply_request_id, current);
+    }
+
+    const now = new Date();
+    const requests: AdminSupplyRequestViewModel[] = (rows ?? []).map((row) => {
+      const lifecycleStatus = row.status as SupplyRequestStatus;
+      const translation = translateAdminRequestStatus(lifecycleStatus);
+      const product = row.products as { name: string; unit_of_measure: string | null } | null;
+      const team = row.teams as { name: string } | null;
+      const location = row.locations as { name: string } | null;
+      const updates = updateInfo.get(row.id);
+      return {
+        id: row.id,
+        itemName: product?.name ?? row.free_text_item ?? "Requested item",
+        quantity: row.quantity,
+        unit: product?.unit_of_measure ?? null,
+        requesterName: profiles.get(row.requested_by) ?? "Unknown requester",
+        team: team?.name ?? null,
+        location: location?.name ?? null,
+        requestTypeLabel: translateAdminRequestType(row.request_type),
+        queueGroup: translation.queueGroup,
+        statusLabel: translation.statusLabel,
+        nextAction: translation.nextAction,
+        lifecycleStatus,
+        submittedAt: row.created_at,
+        updatedAt: row.updated_at,
+        ageInDays: requestAgeInDays(row.created_at, now),
+        staffNote: row.notes,
+        latestStaffMessage: updates?.latestStaffMessage ?? null,
+        latestInternalNote: updates?.latestInternalNote ?? null,
+        latestUpdateAt: updates?.latestUpdateAt ?? row.updated_at,
+        hasExistingProduct: !!row.product_id,
+        isNewItem: row.request_type === "new_item" || !row.product_id,
+      };
+    });
+    return buildAdminRequestDashboard(requests);
   });
 
 export const updateRequestStatusFn = createServerFn({ method: "POST" })
