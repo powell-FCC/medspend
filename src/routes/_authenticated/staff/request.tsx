@@ -5,6 +5,7 @@ import { Check, Minus, Plus, Search, X } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
 import { useActiveOrg } from "@/hooks/use-active-org";
+import { listOrgStructureFn } from "@/lib/org-structure.functions";
 import { searchProductsFn, submitSupplyRequestFn } from "@/lib/supply-requests.functions";
 
 const search = z.object({
@@ -25,17 +26,27 @@ function RequestPage() {
   const [customItem, setCustomItem] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
+  const [teamId, setTeamId] = useState("");
+  const [locationId, setLocationId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const searchFn = useServerFn(searchProductsFn);
   const submitFn = useServerFn(submitSupplyRequestFn);
+  const listStructure = useServerFn(listOrgStructureFn);
   const queryClient = useQueryClient();
   const products = useQuery({
     queryKey: ["products", active?.organizationId, query],
     queryFn: () => searchFn({ data: { organizationId: active!.organizationId, q: query } }),
     enabled: !!active && query.trim().length >= 2 && !selected,
   });
+  const structure = useQuery({
+    queryKey: ["org", active?.organizationId, "request-context"],
+    queryFn: () => listStructure({ data: { organizationId: active!.organizationId, includeArchived: false } }),
+    enabled: !!active,
+  });
+  const hasActiveDefaultTeam = !!active?.defaultTeamId && structure.data?.teams.some((team) => team.id === active.defaultTeamId);
+  const hasActiveDefaultLocation = !!active?.defaultLocationId && structure.data?.locations.some((location) => location.id === active.defaultLocationId);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -48,8 +59,8 @@ function RequestPage() {
         productId: selected?.id ?? null,
         freeTextItem: selected ? null : customItem.trim() || null,
         quantity,
-        teamId: active!.defaultTeamId ?? null,
-        locationId: active!.defaultLocationId ?? null,
+        teamId: hasActiveDefaultTeam ? active!.defaultTeamId : teamId || null,
+        locationId: hasActiveDefaultLocation ? active!.defaultLocationId : locationId || null,
         notes: notes.trim() || null,
       } });
       await queryClient.invalidateQueries({ queryKey: ["me", active?.organizationId, "requests"] });
@@ -79,6 +90,20 @@ function RequestPage() {
         <h1 className="mt-1 text-[1.7rem] font-semibold tracking-tight">What do you need?</h1>
       </header>
       <form onSubmit={submit} className="mt-7 space-y-7">
+        {(!hasActiveDefaultTeam || !hasActiveDefaultLocation) && <section className="grid gap-4">
+          {!hasActiveDefaultTeam && <label className="text-sm font-semibold">Team
+            <select aria-label="Team" required value={teamId} onChange={(event) => setTeamId(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-[#dce2e8] bg-white px-3 font-normal">
+              <option value="">Select team</option>
+              {structure.data?.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+            </select>
+          </label>}
+          {!hasActiveDefaultLocation && <label className="text-sm font-semibold">Location
+            <select aria-label="Location" required value={locationId} onChange={(event) => setLocationId(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-[#dce2e8] bg-white px-3 font-normal">
+              <option value="">Select location</option>
+              {structure.data?.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+            </select>
+          </label>}
+        </section>}
         <section>
           <label htmlFor="supply-search" className="text-sm font-semibold">Search supplies</label>
           {!selected ? <>

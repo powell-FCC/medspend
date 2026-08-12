@@ -94,6 +94,7 @@ export function AdminRequestDetail({
 
           <section className="grid gap-4 rounded-xl border border-[#e1e6eb] p-4 text-sm sm:grid-cols-2">
             <Detail label="Requested by" value={request.requesterName} />
+            {request.requesterEmail && <Detail label="Requester email" value={request.requesterEmail} />}
             <Detail label="Request type" value={request.requestTypeLabel} />
             <Detail label="Team" value={request.team ?? "Not specified"} />
             <Detail label="Location" value={request.location ?? "Not specified"} />

@@ -922,6 +922,10 @@ export type Database = {
       }
       is_org_admin: { Args: { _org: string; _user: string }; Returns: boolean }
       is_org_member: { Args: { _org: string; _user: string }; Returns: boolean }
+      list_organization_member_identities: {
+        Args: { _organization_id: string }
+        Returns: { user_id: string; display_name: string; email: string | null; default_team_name: string | null; default_location_name: string | null }[]
+      }
       post_reviewed_invoice: {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: Json

@@ -21,11 +21,14 @@ function Page() {
   const listMembers = useServerFn(listOrgMembersFn);
   const create = useServerFn(createInvitationFn);
   const revoke = useServerFn(revokeInvitationFn);
+  const listStructure = useServerFn(listOrgStructureFn);
   const qc = useQueryClient();
 
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState<"staff" | "admin">("staff");
+  const [defaultTeamId, setDefaultTeamId] = useState("");
+  const [defaultLocationId, setDefaultLocationId] = useState("");
   const [lastLink, setLastLink] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -39,18 +42,32 @@ function Page() {
     queryFn: () => listMembers({ data: { organizationId: active!.organizationId } }),
     enabled: !!active,
   });
+  const structureQ = useQuery({
+    queryKey: ["org", active?.organizationId, "structure"],
+    queryFn: () => listStructure({ data: { organizationId: active!.organizationId, includeArchived: false } }),
+    enabled: !!active,
+  });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     try {
       const res = await create({
-        data: { organizationId: active!.organizationId, email, name, role },
+        data: {
+          organizationId: active!.organizationId,
+          email,
+          name,
+          role,
+          defaultTeamId: defaultTeamId || null,
+          defaultLocationId: defaultLocationId || null,
+        },
       });
       const link = `${window.location.origin}/join/${res.token}`;
       setLastLink(link);
       setEmail("");
       setName("");
+      setDefaultTeamId("");
+      setDefaultLocationId("");
       await qc.invalidateQueries({ queryKey: ["org", active?.organizationId, "invites"] });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to create invitation");
@@ -68,7 +85,7 @@ function Page() {
 
       <section className="rounded-xl border bg-card p-5">
         <h2 className="font-medium">Invite staff</h2>
-        <form onSubmit={submit} className="mt-3 grid gap-2 md:grid-cols-4">
+        <form onSubmit={submit} className="mt-3 grid gap-2 md:grid-cols-2">
           <input
             className="rounded-md border bg-background px-3 py-2 text-sm"
             placeholder="Email"
@@ -90,6 +107,14 @@ function Page() {
           >
             <option value="staff">Staff</option>
             <option value="admin">Admin</option>
+          </select>
+          <select aria-label="Default team" className="rounded-md border bg-background px-3 py-2 text-sm" value={defaultTeamId} onChange={(event) => setDefaultTeamId(event.target.value)}>
+            <option value="">No default team</option>
+            {structureQ.data?.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+          </select>
+          <select aria-label="Default location" className="rounded-md border bg-background px-3 py-2 text-sm" value={defaultLocationId} onChange={(event) => setDefaultLocationId(event.target.value)}>
+            <option value="">No default location</option>
+            {structureQ.data?.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
           <button className="rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm">Create invite</button>
         </form>
@@ -140,7 +165,7 @@ function Page() {
           {(membersQ.data ?? []).map((m) => (
             <li key={m.id} className="py-2 flex items-center justify-between text-sm">
               <div>
-                <div>{m.fullName ?? m.email ?? m.userId}</div>
+                <div>{m.fullName}</div>
                 <div className="text-xs text-muted-foreground">{m.email}</div>
               </div>
               <div className="text-xs uppercase tracking-wider text-primary">{m.role}</div>

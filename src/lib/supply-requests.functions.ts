@@ -22,11 +22,11 @@ const statusEnum = z.enum(SUPPLY_REQUEST_STATUSES);
 
 async function requireMembership(context: { supabase: any; userId: string }, organizationId: string) {
   const { data, error } = await context.supabase.from("organization_memberships")
-    .select("organization_id, role").eq("user_id", context.userId)
+    .select("organization_id, role, default_team_id, default_location_id").eq("user_id", context.userId)
     .eq("organization_id", organizationId).eq("active", true).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Not a member of this organization");
-  return data as { organization_id: string; role: "owner" | "admin" | "staff" };
+  return data as { organization_id: string; role: "owner" | "admin" | "staff"; default_team_id: string | null; default_location_id: string | null };
 }
 
 async function requireAdmin(context: { supabase: any; userId: string }, organizationId: string) {
@@ -56,14 +56,18 @@ export const submitSupplyRequestFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const mem = await requireMembership(context, data.organizationId);
+    const teamId = data.teamId ?? mem.default_team_id;
+    const locationId = data.locationId ?? mem.default_location_id;
 
     if (!data.productId && !data.freeTextItem?.trim()) {
       throw new Error("Product or free-text item required");
     }
+    if (!teamId) throw new Error("Select a team for this request");
+    if (!locationId) throw new Error("Select a location for this request");
     await Promise.all([
       requireRelatedRecord(context, "products", data.productId, mem.organization_id),
-      requireRelatedRecord(context, "teams", data.teamId, mem.organization_id),
-      requireRelatedRecord(context, "locations", data.locationId, mem.organization_id),
+      requireRelatedRecord(context, "teams", teamId, mem.organization_id),
+      requireRelatedRecord(context, "locations", locationId, mem.organization_id),
     ]);
 
     const { data: row, error } = await context.supabase
@@ -75,8 +79,8 @@ export const submitSupplyRequestFn = createServerFn({ method: "POST" })
         product_id: data.productId ?? null,
         free_text_item: data.productId ? null : data.freeTextItem?.trim() || null,
         quantity: data.quantity ?? null,
-        team_id: data.teamId ?? null,
-        location_id: data.locationId ?? null,
+        team_id: teamId,
+        location_id: locationId,
         notes: data.notes ?? null,
         status: "submitted",
       })
@@ -298,9 +302,9 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
 
     const requestIds = (rows ?? []).map((row) => row.id);
     const requesterIds = Array.from(new Set((rows ?? []).map((row) => row.requested_by)));
-    const [profilesResult, updatesResult] = await Promise.all([
+    const [identitiesResult, updatesResult] = await Promise.all([
       requesterIds.length
-        ? context.supabase.from("profiles").select("id,full_name,email").in("id", requesterIds)
+        ? context.supabase.rpc("list_organization_member_identities", { _organization_id: data.organizationId })
         : Promise.resolve({ data: [], error: null }),
       requestIds.length
         ? context.supabase.from("supply_request_updates")
@@ -310,14 +314,11 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
           .order("created_at", { ascending: false })
         : Promise.resolve({ data: [], error: null }),
     ]);
-    if (profilesResult.error) throw new Error(profilesResult.error.message);
+    if (identitiesResult.error) throw new Error(identitiesResult.error.message);
     if (updatesResult.error) throw new Error(updatesResult.error.message);
 
-    const profiles = new Map(
-      (profilesResult.data ?? []).map((profile) => [
-        profile.id,
-        profile.full_name ?? profile.email ?? "Unknown requester",
-      ]),
+    const identities = new Map(
+      (identitiesResult.data ?? []).map((identity) => [identity.user_id, identity]),
     );
     const updateInfo = new Map<string, {
       latestStaffMessage: string | null;
@@ -348,14 +349,16 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
       const team = row.teams as { name: string } | null;
       const location = row.locations as { name: string } | null;
       const updates = updateInfo.get(row.id);
+      const requesterIdentity = identities.get(row.requested_by);
       return {
         id: row.id,
         itemName: product?.name ?? row.free_text_item ?? "Requested item",
         quantity: row.quantity,
         unit: product?.unit_of_measure ?? null,
-        requesterName: profiles.get(row.requested_by) ?? "Unknown requester",
-        team: team?.name ?? null,
-        location: location?.name ?? null,
+        requesterName: requesterIdentity?.display_name ?? `Member ${row.requested_by.slice(0, 8)}`,
+        requesterEmail: requesterIdentity?.email ?? null,
+        team: team?.name ?? requesterIdentity?.default_team_name ?? null,
+        location: location?.name ?? requesterIdentity?.default_location_name ?? null,
         requestTypeLabel: translateAdminRequestType(row.request_type),
         queueGroup: translation.queueGroup,
         statusLabel: translation.statusLabel,

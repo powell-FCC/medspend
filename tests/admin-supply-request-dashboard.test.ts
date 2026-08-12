@@ -30,7 +30,7 @@ function request(status: SupplyRequestStatus): AdminSupplyRequestViewModel {
   const translated = translateAdminRequestStatus(status);
   return {
     id: status, itemName: "Athletic Tape", quantity: 2, unit: "box",
-    requesterName: "Staff Member", team: "Medical", location: "Training Room",
+    requesterName: "Staff Member", requesterEmail: "staff@example.com", team: "Medical", location: "Training Room",
     requestTypeLabel: "Supply Request", ...translated, lifecycleStatus: status,
     submittedAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z",
     ageInDays: 1, staffNote: null, latestStaffMessage: null, latestInternalNote: null,

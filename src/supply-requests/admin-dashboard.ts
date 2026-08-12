@@ -22,6 +22,7 @@ export type AdminSupplyRequestViewModel = {
   quantity: number | null;
   unit: string | null;
   requesterName: string;
+  requesterEmail: string | null;
   team: string | null;
   location: string | null;
   requestTypeLabel: string;

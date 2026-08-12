@@ -106,20 +106,17 @@ export const listOrgMembersFn = createServerFn({ method: "POST" })
       .select("id, user_id, role, active, joined_at")
       .eq("organization_id", data.organizationId);
     if (error) throw new Error(error.message);
-    // Enrich with profiles
-    const ids = (rows ?? []).map((r) => r.user_id);
-    let profiles: Record<string, { full_name: string | null; email: string | null }> = {};
-    if (ids.length) {
-      const { data: p } = await context.supabase.from("profiles").select("id, full_name, email").in("id", ids);
-      profiles = Object.fromEntries((p ?? []).map((x) => [x.id, { full_name: x.full_name, email: x.email }]));
-    }
+    const { data: identities, error: identityError } = await context.supabase
+      .rpc("list_organization_member_identities", { _organization_id: data.organizationId });
+    if (identityError) throw new Error(identityError.message);
+    const identityByUser = new Map((identities ?? []).map((identity) => [identity.user_id, identity]));
     return (rows ?? []).map((r) => ({
       id: r.id,
       userId: r.user_id,
       role: r.role,
       active: r.active,
       joinedAt: r.joined_at,
-      fullName: profiles[r.user_id]?.full_name ?? null,
-      email: profiles[r.user_id]?.email ?? null,
+      fullName: identityByUser.get(r.user_id)?.display_name ?? `Member ${r.user_id.slice(0, 8)}`,
+      email: identityByUser.get(r.user_id)?.email ?? null,
     }));
   });
