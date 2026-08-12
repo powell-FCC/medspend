@@ -942,6 +942,16 @@ export type Database = {
         Args: { _organization_id: string; _source_file_id: string; _extraction: Json; _provider: string }
         Returns: boolean
       }
+      transition_supply_request: {
+        Args: {
+          _organization_id: string
+          _request_id: string
+          _status: Database["public"]["Enums"]["supply_request_status"]
+          _internal_note?: string | null
+          _staff_visible_note?: string | null
+        }
+        Returns: Json
+      }
       unlink_invoice_item_product: {
         Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string; _forget_mapping?: boolean }
         Returns: undefined

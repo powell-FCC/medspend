@@ -4,6 +4,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { listOrgRequestsFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
+import { allowedNextSupplyRequestStatuses } from "@/supply-requests/lifecycle";
+import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 
 export const Route = createFileRoute("/_authenticated/supply-requests")({
   head: () => ({ meta: [{ title: "Supply Requests — MedSpend" }, { name: "robots", content: "noindex" }] }),
@@ -11,8 +13,6 @@ export const Route = createFileRoute("/_authenticated/supply-requests")({
 });
 
 type TabKey = "open" | "urgent" | "new" | "oos" | "total";
-
-const STATUSES = ["submitted", "under_review", "approved", "ordered", "received", "completed", "denied"] as const;
 
 function Page() {
   const { active } = useActiveOrg();
@@ -32,7 +32,7 @@ function Page() {
 
   const all = q.data ?? [];
   const filtered = all.filter((r) => {
-    if (tab === "open") return !["completed", "denied", "received"].includes(r.status);
+    if (tab === "open") return !["completed", "denied"].includes(r.status);
     if (tab === "urgent") return r.requestType === "out_of_stock" && !["completed", "denied"].includes(r.status);
     if (tab === "new") return r.requestType === "new_item";
     if (tab === "oos") return r.requestType === "out_of_stock";
@@ -40,7 +40,7 @@ function Page() {
   });
 
   const counts = {
-    open: all.filter((r) => !["completed", "denied", "received"].includes(r.status)).length,
+    open: all.filter((r) => !["completed", "denied"].includes(r.status)).length,
     urgent: all.filter((r) => r.requestType === "out_of_stock" && !["completed", "denied"].includes(r.status)).length,
     new: all.filter((r) => r.requestType === "new_item").length,
     oos: all.filter((r) => r.requestType === "out_of_stock").length,
@@ -49,16 +49,15 @@ function Page() {
 
   const openRow = all.find((r) => r.id === openId) ?? null;
 
-  async function setStatus(id: string, status: (typeof STATUSES)[number]) {
+  async function setStatus(id: string, status: SupplyRequestStatus) {
     setBusy(true);
     try {
       await update({
         data: {
+          organizationId: active!.organizationId,
           id,
           status,
           staffVisibleNote: note.trim() || null,
-          orderedAt: status === "ordered" ? new Date().toISOString() : null,
-          receivedAt: status === "received" ? new Date().toISOString() : null,
         },
       });
       setNote("");
@@ -145,19 +144,22 @@ function Page() {
               rows={3}
             />
             <div className="mt-3 flex flex-wrap gap-2">
-              {STATUSES.map((s) => (
+              {allowedNextSupplyRequestStatuses(openRow.status as SupplyRequestStatus).map((s) => (
                 <button
                   key={s}
                   disabled={busy}
                   onClick={() => setStatus(openRow.id, s)}
                   className={
                     "rounded-md border px-2 py-1 text-xs " +
-                    (openRow.status === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted")
+                    "hover:bg-muted"
                   }
                 >
                   {s}
                 </button>
               ))}
+              {allowedNextSupplyRequestStatuses(openRow.status as SupplyRequestStatus).length === 0 && (
+                <span className="text-xs text-muted-foreground">This request is closed.</span>
+              )}
             </div>
             <button onClick={() => setOpenId(null)} className="mt-4 text-xs text-muted-foreground">
               Close

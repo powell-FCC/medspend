@@ -1,50 +1,57 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { SUPPLY_REQUEST_STATUSES } from "@/supply-requests/lifecycle";
+import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
+import { supplyRequestInputSchema } from "@/supply-requests/validation";
 
-const requestTypeEnum = z.enum(["reorder", "low_stock", "out_of_stock", "new_item"]);
-const statusEnum = z.enum([
-  "submitted",
-  "under_review",
-  "approved",
-  "ordered",
-  "received",
-  "completed",
-  "denied",
-]);
+const statusEnum = z.enum(SUPPLY_REQUEST_STATUSES);
+
+async function requireMembership(context: { supabase: any; userId: string }, organizationId: string) {
+  const { data, error } = await context.supabase.from("organization_memberships")
+    .select("organization_id, role").eq("user_id", context.userId)
+    .eq("organization_id", organizationId).eq("active", true).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Not a member of this organization");
+  return data as { organization_id: string; role: "owner" | "admin" | "staff" };
+}
+
+async function requireAdmin(context: { supabase: any; userId: string }, organizationId: string) {
+  const membership = await requireMembership(context, organizationId);
+  if (!["owner", "admin"].includes(membership.role)) throw new Error("Forbidden: administrator access required");
+  return membership;
+}
+
+async function requireRelatedRecord(
+  context: { supabase: any }, table: "products" | "teams" | "locations",
+  id: string | null | undefined, organizationId: string,
+) {
+  if (!id) return;
+  let query = context.supabase.from(table).select("id").eq("id", id)
+    .eq("organization_id", organizationId).eq("active", true);
+  if (table === "products") query = query.eq("staff_requestable", true);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`Selected ${table.slice(0, -1)} is unavailable for this organization`);
+}
 
 // Staff submit: organization_id is DERIVED server-side from the caller's active membership.
 export const submitSupplyRequestFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
-        organizationId: z.string().uuid(), // asserted, then re-verified server side
-        requestType: requestTypeEnum,
-        productId: z.string().uuid().optional().nullable(),
-        freeTextItem: z.string().optional().nullable(),
-        quantity: z.number().positive().optional().nullable(),
-        teamId: z.string().uuid().optional().nullable(),
-        locationId: z.string().uuid().optional().nullable(),
-        notes: z.string().optional().nullable(),
-      })
-      .parse(d),
+    supplyRequestInputSchema.parse(d),
   )
   .handler(async ({ data, context }) => {
-    // Verify caller has an active membership in the claimed org.
-    const { data: mem, error: memErr } = await context.supabase
-      .from("organization_memberships")
-      .select("organization_id, role")
-      .eq("user_id", context.userId)
-      .eq("organization_id", data.organizationId)
-      .eq("active", true)
-      .maybeSingle();
-    if (memErr) throw new Error(memErr.message);
-    if (!mem) throw new Error("Not a member of this organization");
+    const mem = await requireMembership(context, data.organizationId);
 
     if (!data.productId && !data.freeTextItem?.trim()) {
       throw new Error("Product or free-text item required");
     }
+    await Promise.all([
+      requireRelatedRecord(context, "products", data.productId, mem.organization_id),
+      requireRelatedRecord(context, "teams", data.teamId, mem.organization_id),
+      requireRelatedRecord(context, "locations", data.locationId, mem.organization_id),
+    ]);
 
     const { data: row, error } = await context.supabase
       .from("supply_requests")
@@ -53,7 +60,7 @@ export const submitSupplyRequestFn = createServerFn({ method: "POST" })
         requested_by: context.userId,
         request_type: data.requestType,
         product_id: data.productId ?? null,
-        free_text_item: data.freeTextItem ?? null,
+        free_text_item: data.productId ? null : data.freeTextItem?.trim() || null,
         quantity: data.quantity ?? null,
         team_id: data.teamId ?? null,
         location_id: data.locationId ?? null,
@@ -70,15 +77,34 @@ export const listMyRequestsFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ organizationId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
+    await requireMembership(context, data.organizationId);
     const { data: rows, error } = await context.supabase
       .from("supply_requests")
       .select(
-        "id, request_type, quantity, status, notes, free_text_item, product_id, ordered_at, received_at, created_at, products(name)",
+        "id, request_type, quantity, status, notes, free_text_item, product_id, ordered_at, received_at, created_at, updated_at, products(name)",
       )
       .eq("organization_id", data.organizationId)
       .eq("requested_by", context.userId)
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
+    const ids = (rows ?? []).map((row) => row.id);
+    const latestVisibleUpdates = new Map<string, { note: string; status: SupplyRequestStatus | null; createdAt: string }>();
+    if (ids.length) {
+      const { data: updates, error: updatesError } = await context.supabase.from("supply_request_updates")
+        .select("supply_request_id,status_to,staff_visible_note,created_at")
+        .in("supply_request_id", ids).not("staff_visible_note", "is", null)
+        .order("created_at", { ascending: false });
+      if (updatesError) throw new Error(updatesError.message);
+      for (const update of updates ?? []) {
+        if (!latestVisibleUpdates.has(update.supply_request_id) && update.staff_visible_note) {
+          latestVisibleUpdates.set(update.supply_request_id, {
+            note: update.staff_visible_note,
+            status: update.status_to as SupplyRequestStatus | null,
+            createdAt: update.created_at,
+          });
+        }
+      }
+    }
     return (rows ?? []).map((r) => ({
       id: r.id,
       requestType: r.request_type,
@@ -89,6 +115,9 @@ export const listMyRequestsFn = createServerFn({ method: "POST" })
       orderedAt: r.ordered_at,
       receivedAt: r.received_at,
       createdAt: r.created_at,
+      latestStaffVisibleNote: latestVisibleUpdates.get(r.id)?.note ?? null,
+      latestStatusChange: r.status,
+      latestUpdateAt: r.updated_at,
     }));
   });
 
@@ -96,6 +125,7 @@ export const listOrgRequestsFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ organizationId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
     const { data: rows, error } = await context.supabase
       .from("supply_requests")
       .select(
@@ -130,64 +160,52 @@ export const updateRequestStatusFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z
       .object({
+        organizationId: z.string().uuid(),
         id: z.string().uuid(),
         status: statusEnum,
         internalNote: z.string().optional().nullable(),
         staffVisibleNote: z.string().optional().nullable(),
-        orderedAt: z.string().datetime().optional().nullable(),
-        receivedAt: z.string().datetime().optional().nullable(),
       })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    // Get current for org + status
-    const { data: cur, error: getErr } = await context.supabase
-      .from("supply_requests")
-      .select("organization_id, status")
-      .eq("id", data.id)
-      .single();
-    if (getErr) throw new Error(getErr.message);
-
-    const patch: {
-      status: typeof data.status;
-      ordered_at?: string | null;
-      received_at?: string | null;
-    } = { status: data.status };
-    if (data.orderedAt !== undefined) patch.ordered_at = data.orderedAt;
-    if (data.receivedAt !== undefined) patch.received_at = data.receivedAt;
-
-    const { error: upErr } = await context.supabase
-      .from("supply_requests")
-      .update(patch)
-      .eq("id", data.id);
-    if (upErr) throw new Error(upErr.message);
-
-    if (data.internalNote || data.staffVisibleNote || cur.status !== data.status) {
-      const { error: insErr } = await context.supabase.from("supply_request_updates").insert({
-        organization_id: cur.organization_id,
-        supply_request_id: data.id,
-        author_id: context.userId,
-        status_from: cur.status,
-        status_to: data.status,
-        internal_note: data.internalNote ?? null,
-        staff_visible_note: data.staffVisibleNote ?? null,
-      });
-      if (insErr) throw new Error(insErr.message);
-    }
-    return { ok: true };
+    await requireAdmin(context, data.organizationId);
+    const { data: result, error } = await context.supabase.rpc("transition_supply_request", {
+      _organization_id: data.organizationId,
+      _request_id: data.id,
+      _status: data.status,
+      _internal_note: data.internalNote?.trim() || null,
+      _staff_visible_note: data.staffVisibleNote?.trim() || null,
+    });
+    if (error) throw new Error(error.message);
+    return result;
   });
 
 export const listRequestUpdatesFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ requestId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
-    const { data: rows, error } = await context.supabase
-      .from("supply_request_updates")
-      .select("id, status_from, status_to, internal_note, staff_visible_note, created_at")
-      .eq("supply_request_id", data.requestId)
+    const { data: request, error: requestError } = await context.supabase.from("supply_requests")
+      .select("organization_id,requested_by").eq("id", data.requestId).single();
+    if (requestError) throw new Error(requestError.message);
+    const membership = await requireMembership(context, request.organization_id);
+    const isAdmin = membership.role === "owner" || membership.role === "admin";
+    if (!isAdmin && request.requested_by !== context.userId) throw new Error("Forbidden");
+    let query = context.supabase.from("supply_request_updates")
+      .select("id,status_from,status_to,internal_note,staff_visible_note,created_at")
+      .eq("organization_id", request.organization_id).eq("supply_request_id", data.requestId)
       .order("created_at", { ascending: true });
+    if (!isAdmin) query = query.not("staff_visible_note", "is", null);
+    const { data: rows, error } = await query;
     if (error) throw new Error(error.message);
-    return rows ?? [];
+    return (rows ?? []).map((row) => ({
+      id: row.id,
+      statusFrom: row.status_from,
+      statusTo: row.status_to,
+      staffVisibleNote: row.staff_visible_note,
+      internalNote: isAdmin ? row.internal_note : undefined,
+      createdAt: row.created_at,
+    }));
   });
 
 export const searchProductsFn = createServerFn({ method: "POST" })

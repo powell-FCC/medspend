@@ -32,6 +32,7 @@ function MyRequests() {
               {r.requestType} · qty {r.quantity ?? "—"} · submitted {new Date(r.createdAt).toLocaleDateString()}
             </div>
             {r.notes && <div className="mt-2 text-sm">{r.notes}</div>}
+            {r.latestStaffVisibleNote && <div className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">{r.latestStaffVisibleNote}</div>}
             {r.orderedAt && <div className="mt-1 text-xs text-muted-foreground">Ordered {new Date(r.orderedAt).toLocaleDateString()}</div>}
             {r.receivedAt && <div className="mt-1 text-xs text-muted-foreground">Received {new Date(r.receivedAt).toLocaleDateString()}</div>}
           </li>

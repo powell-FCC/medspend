@@ -162,7 +162,8 @@ function RequestPage() {
           <label className="text-xs text-muted-foreground">Quantity</label>
           <input
             type="number"
-            min={0}
+            min={1}
+            step={1}
             className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
             value={qty}
             onChange={(e) => setQty(e.target.value)}

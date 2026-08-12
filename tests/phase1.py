@@ -268,6 +268,8 @@ async def main():
         await owner_page.get_by_role("button", name="Review").click()
         await owner_page.wait_for_selector('textarea')
         await owner_page.fill('textarea', "Ordered from McKesson, ETA 3 days")
+        await owner_page.get_by_role("button", name="under_review", exact=True).click()
+        await owner_page.get_by_role("button", name="approved", exact=True).click()
         await owner_page.get_by_role("button", name="ordered", exact=True).click()
         await owner_page.wait_for_timeout(1500)
         await owner_page.screenshot(path=str(SHOTS/"04_owner_review.png"))

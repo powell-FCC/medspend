@@ -66,6 +66,7 @@ function StaffHome() {
                 <div className="text-xs text-muted-foreground">
                   {r.requestType} · qty {r.quantity ?? "—"}
                 </div>
+                {r.latestStaffVisibleNote && <div className="mt-1 text-xs text-muted-foreground">{r.latestStaffVisibleNote}</div>}
               </div>
               <span className="text-xs uppercase tracking-wider text-primary">{r.status}</span>
             </li>
