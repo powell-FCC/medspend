@@ -25,6 +25,7 @@ function RequestPage() {
   const [selected, setSelected] = useState<{ id: string; name: string; unit: string | null } | null>(null);
   const [customItem, setCustomItem] = useState("");
   const [quantity, setQuantity] = useState(1);
+  const [items, setItems] = useState<Array<{ key: string; productId: string | null; name: string; unit: string | null; quantity: number }>>([]);
   const [notes, setNotes] = useState("");
   const [teamId, setTeamId] = useState("");
   const [locationId, setLocationId] = useState("");
@@ -48,6 +49,13 @@ function RequestPage() {
   const hasActiveDefaultTeam = !!active?.defaultTeamId && structure.data?.teams.some((team) => team.id === active.defaultTeamId);
   const hasActiveDefaultLocation = !!active?.defaultLocationId && structure.data?.locations.some((location) => location.id === active.defaultLocationId);
 
+  function addItem() {
+    const name = selected?.name ?? customItem.trim();
+    if (!name || !Number.isInteger(quantity) || quantity <= 0) return;
+    setItems((current) => [...current, { key: crypto.randomUUID(), productId: selected?.id ?? null, name, unit: selected?.unit ?? null, quantity }]);
+    setSelected(null); setCustomItem(""); setQuery(""); setQuantity(1);
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
@@ -55,10 +63,8 @@ function RequestPage() {
     try {
       await submitFn({ data: {
         organizationId: active!.organizationId,
-        requestType: routeSearch.type ?? (selected ? "reorder" : "new_item"),
-        productId: selected?.id ?? null,
-        freeTextItem: selected ? null : customItem.trim() || null,
-        quantity,
+        requestType: routeSearch.type ?? (items.some((item) => !item.productId) ? "new_item" : "reorder"),
+        items: items.map((item) => ({ productId: item.productId, freeTextItem: item.productId ? null : item.name, quantity: item.quantity })),
         teamId: hasActiveDefaultTeam ? active!.defaultTeamId : teamId || null,
         locationId: hasActiveDefaultLocation ? active!.defaultLocationId : locationId || null,
         notes: notes.trim() || null,
@@ -78,7 +84,7 @@ function RequestPage() {
       <h1 className="mt-6 text-2xl font-semibold tracking-tight">Request Submitted</h1>
       <p className="mt-2 max-w-xs text-sm leading-6 text-[#667384]">We'll update you when it is ready.</p>
       <Link to="/staff/requests" className="mt-8 flex min-h-12 w-full items-center justify-center rounded-xl bg-[#071d38] px-5 font-semibold text-white">View My Requests</Link>
-      <button type="button" onClick={() => { setSubmitted(false); setSelected(null); setCustomItem(""); setQuery(""); setQuantity(1); setNotes(""); }} className="mt-3 min-h-12 w-full text-sm font-semibold text-[#d95700]">Request another item</button>
+      <button type="button" onClick={() => { setSubmitted(false); setSelected(null); setItems([]); setCustomItem(""); setQuery(""); setQuantity(1); setNotes(""); }} className="mt-3 min-h-12 w-full text-sm font-semibold text-[#d95700]">Request another item</button>
     </div>
   );
 
@@ -134,6 +140,21 @@ function RequestPage() {
               <button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))} className="flex size-12 items-center justify-center rounded-xl bg-[#eef1f4]" aria-label="Decrease quantity"><Minus className="size-5" /></button>
               <span className="text-xl font-semibold tabular-nums" aria-live="polite">{quantity}</span>
               <button type="button" onClick={() => setQuantity((value) => value + 1)} className="flex size-12 items-center justify-center rounded-xl bg-[#071d38] text-white" aria-label="Increase quantity"><Plus className="size-5" /></button>
+            </div>
+          </section>
+          <button type="button" onClick={addItem} className="min-h-12 w-full rounded-xl border border-[#f56600] font-semibold text-[#d95700]">Add to Request</button>
+        </>}
+
+        {items.length > 0 && <>
+          <section className="rounded-2xl border border-[#dce2e8] bg-white p-4">
+            <h2 className="font-semibold text-[#071d38]">Your Request</h2>
+            <div className="mt-3 divide-y divide-[#edf0f3]">
+              {items.map((item) => <div key={item.key} className="flex items-center gap-3 py-3">
+                <div className="min-w-0 flex-1"><div className="truncate font-medium">{item.name}</div><div className="mt-1 text-sm text-[#697687]">{item.quantity}{item.unit ? ` ${item.unit}` : ""}</div></div>
+                <button type="button" onClick={() => setItems((current) => current.map((candidate) => candidate.key === item.key ? { ...candidate, quantity: Math.max(1, candidate.quantity - 1) } : candidate))} aria-label={`Decrease ${item.name}`} className="flex size-10 items-center justify-center rounded-lg bg-[#eef1f4]"><Minus className="size-4" /></button>
+                <button type="button" onClick={() => setItems((current) => current.map((candidate) => candidate.key === item.key ? { ...candidate, quantity: candidate.quantity + 1 } : candidate))} aria-label={`Increase ${item.name}`} className="flex size-10 items-center justify-center rounded-lg bg-[#071d38] text-white"><Plus className="size-4" /></button>
+                <button type="button" onClick={() => setItems((current) => current.filter((candidate) => candidate.key !== item.key))} aria-label={`Remove ${item.name}`} className="flex size-10 items-center justify-center rounded-lg text-[#a83340]"><X className="size-4" /></button>
+              </div>)}
             </div>
           </section>
           <section>

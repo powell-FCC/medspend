@@ -102,6 +102,11 @@ export function AdminRequestDetail({
             <Detail label="Product" value={request.hasExistingProduct ? "Existing product" : "New item request"} />
           </section>
 
+          <section className="rounded-xl border border-[#e1e6eb] p-4">
+            <h3 className="font-semibold text-[#102a49]">Requested Items · {request.itemCount}</h3>
+            <div className="mt-3 divide-y divide-[#edf0f3]">{request.items.map((item) => <div key={item.id} className="flex items-center justify-between py-3 text-sm"><span className="font-medium text-[#293e55]">{item.name}</span><span className="text-[#657284]">{item.quantity}{item.unit ? ` ${item.unit}` : ""}</span></div>)}</div>
+          </section>
+
           {request.staffNote && <section><h3 className="font-semibold text-[#102a49]">Staff Note</h3><p className="mt-2 rounded-xl bg-[#f5f7f9] p-4 text-sm leading-6 text-[#526174]">{request.staffNote}</p></section>}
 
           <section>

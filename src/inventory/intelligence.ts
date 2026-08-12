@@ -30,6 +30,7 @@ export interface InventoryPurchaseObservation {
 export interface InventoryDemandObservation {
   productId: string;
   quantity: number | null;
+  requestId?: string;
 }
 
 export interface InventoryReceiptObservation {
@@ -90,10 +91,10 @@ export function buildInventoryIntelligenceDashboard(input: {
     const current = purchases.get(observation.productId);
     if (!current || observation.purchaseDate > current.purchaseDate) purchases.set(observation.productId, observation);
   }
-  const demand = new Map<string, { count: number; quantity: number }>();
+  const demand = new Map<string, { requestIds: Set<string>; quantity: number }>();
   for (const request of input.demand) {
-    const current = demand.get(request.productId) ?? { count: 0, quantity: 0 };
-    current.count += 1;
+    const current = demand.get(request.productId) ?? { requestIds: new Set<string>(), quantity: 0 };
+    current.requestIds.add(request.requestId ?? `${request.productId}:${current.requestIds.size}`);
     current.quantity += request.quantity ?? 0;
     demand.set(request.productId, current);
   }
@@ -121,7 +122,7 @@ export function buildInventoryIntelligenceDashboard(input: {
       lastPurchasePrice: purchase?.unitPrice ?? inventory.inventoryLastPurchasePrice,
       lastPurchaseDate: purchase?.purchaseDate ?? inventory.inventoryLastPurchaseDate,
       lastReceivedDate: receipts.get(inventory.inventoryItemId) ?? null,
-      openRequestCount: openDemand?.count ?? 0,
+      openRequestCount: openDemand?.requestIds.size ?? 0,
       pendingRequestedQuantity: openDemand?.quantity ?? 0,
       dataQuality: {
         linkedToProduct,

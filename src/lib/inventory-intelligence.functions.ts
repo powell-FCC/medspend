@@ -51,10 +51,10 @@ export const getInventoryIntelligenceDashboardFn = createServerFn({ method: 'POS
           .order('purchase_date', { ascending: false })
         : Promise.resolve({ data: [], error: null }),
       productIds.length
-        ? db.from('supply_requests')
-          .select('product_id,quantity')
+        ? db.from('supply_request_items')
+          .select('supply_request_id,product_id,quantity,supply_requests!inner(status)')
           .eq('organization_id', data.organizationId).in('product_id', productIds)
-          .in('status', [...OPEN_REQUEST_STATUSES])
+          .in('supply_requests.status', [...OPEN_REQUEST_STATUSES])
         : Promise.resolve({ data: [], error: null }),
       inventoryItemIds.length
         ? db.from('inventory_adjustments')
@@ -105,7 +105,7 @@ export const getInventoryIntelligenceDashboardFn = createServerFn({ method: 'POS
         purchaseDate: row.purchase_date,
         unitPrice: row.unit_price,
       })),
-      demand: (demandResult.data ?? []).flatMap((row: any) => row.product_id ? [{ productId: row.product_id, quantity: row.quantity }] : []),
+      demand: (demandResult.data ?? []).flatMap((row: any) => row.product_id ? [{ requestId: row.supply_request_id, productId: row.product_id, quantity: row.quantity }] : []),
       receipts: (receiptsResult.data ?? []).map((row: any) => ({ inventoryItemId: row.inventory_item_id, receivedAt: row.created_at })),
     });
   });

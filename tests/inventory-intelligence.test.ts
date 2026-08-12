@@ -64,6 +64,20 @@ test('open requests aggregate only supplied canonical demand observations', () =
   assert.equal(dashboard.items[0].pendingRequestedQuantity, 5);
 });
 
+test('multiple lines from one parent add demand without inflating operational request count', () => {
+  const dashboard = buildInventoryIntelligenceDashboard({
+    inventoryItems: [linked],
+    products: [{ id: 'product-1', name: 'Tape', category: null, preferredVendor: null }],
+    purchaseHistory: [], receipts: [],
+    demand: [
+      { requestId: 'request-1', productId: 'product-1', quantity: 2 },
+      { requestId: 'request-1', productId: 'product-1', quantity: 3 },
+    ],
+  });
+  assert.equal(dashboard.items[0].openRequestCount, 1);
+  assert.equal(dashboard.items[0].pendingRequestedQuantity, 5);
+});
+
 test('server query is organization scoped, role protected, read-only, and excludes closed demand', async () => {
   const source = await readFile(new URL('../src/lib/inventory-intelligence.functions.ts', import.meta.url), 'utf8');
   assert.match(source, /canAccessInventoryIntelligence/);

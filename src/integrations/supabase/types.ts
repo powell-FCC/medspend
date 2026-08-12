@@ -592,6 +592,12 @@ export type Database = {
           },
         ]
       }
+      supply_request_items: {
+        Row: { id: string; organization_id: string; supply_request_id: string; product_id: string | null; free_text_item: string | null; quantity: number; unit: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; organization_id: string; supply_request_id: string; product_id?: string | null; free_text_item?: string | null; quantity: number; unit?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; organization_id?: string; supply_request_id?: string; product_id?: string | null; free_text_item?: string | null; quantity?: number; unit?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
       supply_requests: {
         Row: {
           assigned_to: string | null
@@ -955,6 +961,10 @@ export type Database = {
           _staff_visible_note?: string | null
         }
         Returns: Json
+      }
+      submit_supply_request: {
+        Args: { _organization_id: string; _request_type: Database["public"]["Enums"]["supply_request_type"]; _team_id: string | null; _location_id: string | null; _notes: string | null; _items: Json }
+        Returns: string
       }
       unlink_invoice_item_product: {
         Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string; _forget_mapping?: boolean }

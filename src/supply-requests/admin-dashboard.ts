@@ -1,4 +1,5 @@
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
+import type { SupplyRequestItemViewModel } from "@/supply-requests/staff-dashboard";
 
 export const ADMIN_REQUEST_QUEUE_GROUPS = [
   "NEEDS_REVIEW",
@@ -18,6 +19,8 @@ export type AdminQueueTranslation = {
 
 export type AdminSupplyRequestViewModel = {
   id: string;
+  itemCount: number;
+  items: SupplyRequestItemViewModel[];
   itemName: string;
   quantity: number | null;
   unit: string | null;

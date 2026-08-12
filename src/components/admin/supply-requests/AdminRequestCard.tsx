@@ -37,7 +37,9 @@ export function AdminRequestCard({
           </div>
           <h2 className="mt-3 text-lg font-semibold tracking-tight text-[#102a49]">{request.itemName}</h2>
           <p className="mt-1 text-sm text-[#647183]">
-            {request.quantity ?? "Quantity not specified"}{request.quantity && request.unit ? ` ${request.unit}` : ""}
+            {request.itemCount > 1
+              ? request.items.slice(0, 3).map((item) => `${item.name} — ${item.quantity}${item.unit ? ` ${item.unit}` : ""}`).join(" · ")
+              : `${request.quantity ?? "Quantity not specified"}${request.quantity && request.unit ? ` ${request.unit}` : ""}`}
           </p>
           <div className="mt-4 grid gap-2 text-sm text-[#536174] sm:grid-cols-3">
             <span className="flex items-center gap-2"><Users className="size-4 text-[#87919e]" />{request.requesterName}</span>

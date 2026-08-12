@@ -16,6 +16,8 @@ export type StaffRequestStatus = {
 
 export type StaffRequestViewModel = {
   id: string;
+  itemCount: number;
+  items: SupplyRequestItemViewModel[];
   itemName: string;
   quantity: number | null;
   unit: string | null;
@@ -24,6 +26,14 @@ export type StaffRequestViewModel = {
   submittedAt: string;
   lastUpdatedAt: string;
   staffMessage: string | null;
+};
+
+export type SupplyRequestItemViewModel = {
+  id: string;
+  productId: string | null;
+  name: string;
+  quantity: number;
+  unit: string | null;
 };
 
 export type StaffDashboardViewModel = {
@@ -58,6 +68,11 @@ const STAFF_STATUS: Readonly<Record<SupplyRequestStatus, StaffRequestStatus>> = 
 
 export function translateStaffRequestStatus(status: SupplyRequestStatus): StaffRequestStatus {
   return STAFF_STATUS[status];
+}
+
+export function summarizeRequestItems(items: SupplyRequestItemViewModel[]): string {
+  if (items.length === 1) return items[0].name;
+  return `${items.length} items`;
 }
 
 export function summarizeStaffRequests(requests: StaffRequestViewModel[]): StaffDashboardViewModel["summary"] {

@@ -3,12 +3,14 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { SUPPLY_REQUEST_STATUSES } from "@/supply-requests/lifecycle";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
-import { supplyRequestInputSchema } from "@/supply-requests/validation";
+import { multiItemSupplyRequestInputSchema } from "@/supply-requests/validation";
 import {
   summarizeStaffRequests,
   translateStaffRequestStatus,
   type StaffRequestViewModel,
   type StaffRequestDetailViewModel,
+  type SupplyRequestItemViewModel,
+  summarizeRequestItems,
 } from "@/supply-requests/staff-dashboard";
 import {
   buildAdminRequestDashboard,
@@ -48,46 +50,54 @@ async function requireRelatedRecord(
   if (!data) throw new Error(`Selected ${table.slice(0, -1)} is unavailable for this organization`);
 }
 
+async function loadRequestItems(
+  db: any,
+  organizationId: string,
+  requests: Array<{ id: string; product_id: string | null; free_text_item: string | null; quantity: number | null; products?: unknown }>,
+) {
+  const requestIds = requests.map((request) => request.id);
+  const byRequest = new Map<string, SupplyRequestItemViewModel[]>();
+  if (requestIds.length) {
+    const { data, error } = await db.from("supply_request_items")
+      .select("id,supply_request_id,product_id,free_text_item,quantity,unit,products(name,unit_of_measure)")
+      .eq("organization_id", organizationId).in("supply_request_id", requestIds)
+      .order("created_at", { ascending: true });
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) {
+      const product = row.products as { name: string; unit_of_measure: string | null } | null;
+      const items = byRequest.get(row.supply_request_id) ?? [];
+      items.push({ id: row.id, productId: row.product_id, name: product?.name ?? row.free_text_item ?? "Requested item", quantity: row.quantity, unit: row.unit ?? product?.unit_of_measure ?? null });
+      byRequest.set(row.supply_request_id, items);
+    }
+  }
+  for (const request of requests) {
+    if (byRequest.has(request.id)) continue;
+    const product = request.products as { name: string; unit_of_measure: string | null } | null;
+    if (request.product_id || request.free_text_item) {
+      byRequest.set(request.id, [{ id: `legacy:${request.id}`, productId: request.product_id, name: product?.name ?? request.free_text_item ?? "Requested item", quantity: request.quantity ?? 1, unit: product?.unit_of_measure ?? null }]);
+    } else byRequest.set(request.id, []);
+  }
+  return byRequest;
+}
+
 // Staff submit: organization_id is DERIVED server-side from the caller's active membership.
 export const submitSupplyRequestFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    supplyRequestInputSchema.parse(d),
+    multiItemSupplyRequestInputSchema.parse(d),
   )
   .handler(async ({ data, context }) => {
-    const mem = await requireMembership(context, data.organizationId);
-    const teamId = data.teamId ?? mem.default_team_id;
-    const locationId = data.locationId ?? mem.default_location_id;
-
-    if (!data.productId && !data.freeTextItem?.trim()) {
-      throw new Error("Product or free-text item required");
-    }
-    if (!teamId) throw new Error("Select a team for this request");
-    if (!locationId) throw new Error("Select a location for this request");
-    await Promise.all([
-      requireRelatedRecord(context, "products", data.productId, mem.organization_id),
-      requireRelatedRecord(context, "teams", teamId, mem.organization_id),
-      requireRelatedRecord(context, "locations", locationId, mem.organization_id),
-    ]);
-
-    const { data: row, error } = await context.supabase
-      .from("supply_requests")
-      .insert({
-        organization_id: mem.organization_id, // derived from membership, never client-trusted directly
-        requested_by: context.userId,
-        request_type: data.requestType,
-        product_id: data.productId ?? null,
-        free_text_item: data.productId ? null : data.freeTextItem?.trim() || null,
-        quantity: data.quantity ?? null,
-        team_id: teamId,
-        location_id: locationId,
-        notes: data.notes ?? null,
-        status: "submitted",
-      })
-      .select("id")
-      .single();
+    await requireMembership(context, data.organizationId);
+    const { data: requestId, error } = await (context.supabase as any).rpc("submit_supply_request", {
+      _organization_id: data.organizationId,
+      _request_type: data.requestType,
+      _team_id: data.teamId ?? null,
+      _location_id: data.locationId ?? null,
+      _notes: data.notes?.trim() || null,
+      _items: data.items.map((item) => ({ productId: item.productId ?? null, freeTextItem: item.productId ? null : item.freeTextItem?.trim(), quantity: item.quantity })),
+    });
     if (error) throw new Error(error.message);
-    return { id: row.id };
+    return { id: requestId as string };
   });
 
 export const listMyRequestsFn = createServerFn({ method: "POST" })
@@ -105,6 +115,7 @@ export const listMyRequestsFn = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
     const ids = (rows ?? []).map((row) => row.id);
+    const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows ?? []);
     const latestVisibleUpdates = new Map<string, { note: string; status: SupplyRequestStatus | null; createdAt: string }>();
     if (ids.length) {
       const { data: updates, error: updatesError } = await context.supabase.from("supply_request_updates")
@@ -122,20 +133,25 @@ export const listMyRequestsFn = createServerFn({ method: "POST" })
         }
       }
     }
-    return (rows ?? []).map((r) => ({
+    return (rows ?? []).map((r) => {
+      const items = itemsByRequest.get(r.id) ?? [];
+      const first = items[0];
+      return ({
       id: r.id,
       requestType: r.request_type,
-      quantity: r.quantity,
+      quantity: items.length === 1 ? first?.quantity ?? r.quantity : null,
       status: r.status,
       notes: r.notes,
-      itemName: (r.products as { name: string } | null)?.name ?? r.free_text_item ?? "—",
+      itemCount: items.length,
+      items,
+      itemName: summarizeRequestItems(items) || (r.products as { name: string } | null)?.name || r.free_text_item || "—",
       orderedAt: r.ordered_at,
       receivedAt: r.received_at,
       createdAt: r.created_at,
       latestStaffVisibleNote: latestVisibleUpdates.get(r.id)?.note ?? null,
       latestStatusChange: r.status,
       latestUpdateAt: r.updated_at,
-    }));
+    }); });
   });
 
 export const getStaffDashboardFn = createServerFn({ method: "POST" })
@@ -145,13 +161,13 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
     await requireMembership(context, data.organizationId);
     const { data: rows, error } = await context.supabase
       .from("supply_requests")
-      .select("id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
+      .select("id,product_id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
       .eq("organization_id", data.organizationId)
       .eq("requested_by", context.userId)
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
-
     const ids = (rows ?? []).map((row) => row.id);
+    const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows ?? []);
     const latestMessages = new Map<string, { message: string; createdAt: string }>();
     if (ids.length) {
       const { data: updates, error: updatesError } = await context.supabase
@@ -176,11 +192,15 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
       const status = translateStaffRequestStatus(row.status as SupplyRequestStatus);
       const product = row.products as { name: string; unit_of_measure: string | null } | null;
       const message = latestMessages.get(row.id);
+      const items = itemsByRequest.get(row.id) ?? [];
+      const first = items[0];
       return {
         id: row.id,
-        itemName: product?.name ?? row.free_text_item ?? "Requested item",
-        quantity: row.quantity,
-        unit: product?.unit_of_measure ?? null,
+        itemCount: items.length,
+        items,
+        itemName: summarizeRequestItems(items) || product?.name || row.free_text_item || "Requested item",
+        quantity: items.length === 1 ? first?.quantity ?? row.quantity : null,
+        unit: items.length === 1 ? first?.unit ?? product?.unit_of_measure ?? null : null,
         statusLabel: status.label,
         statusGroup: status.group,
         submittedAt: row.created_at,
@@ -206,7 +226,7 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     await requireMembership(context, data.organizationId);
     const { data: row, error } = await context.supabase
       .from("supply_requests")
-      .select("id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
+      .select("id,product_id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
       .eq("id", data.requestId)
       .eq("organization_id", data.organizationId)
       .eq("requested_by", context.userId)
@@ -225,12 +245,16 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     const visibleUpdates = updates ?? [];
     const latestMessage = [...visibleUpdates].reverse().find((update) => update.staff_visible_note);
     const product = row.products as { name: string; unit_of_measure: string | null } | null;
+    const items = (await loadRequestItems(context.supabase, data.organizationId, [row])).get(row.id) ?? [];
+    const first = items[0];
     const status = translateStaffRequestStatus(row.status as SupplyRequestStatus);
     const detail: StaffRequestDetailViewModel = {
       id: row.id,
-      itemName: product?.name ?? row.free_text_item ?? "Requested item",
-      quantity: row.quantity,
-      unit: product?.unit_of_measure ?? null,
+      itemCount: items.length,
+      items,
+      itemName: summarizeRequestItems(items) || product?.name || row.free_text_item || "Requested item",
+      quantity: items.length === 1 ? first?.quantity ?? row.quantity : null,
+      unit: items.length === 1 ? first?.unit ?? product?.unit_of_measure ?? null : null,
       statusLabel: status.label,
       statusGroup: status.group,
       submittedAt: row.created_at,
@@ -260,30 +284,36 @@ export const listOrgRequestsFn = createServerFn({ method: "POST" })
     const { data: rows, error } = await context.supabase
       .from("supply_requests")
       .select(
-        "id, request_type, quantity, status, notes, free_text_item, requested_by, ordered_at, received_at, created_at, products(name)",
+        "id, request_type, product_id, quantity, status, notes, free_text_item, requested_by, ordered_at, received_at, created_at, products(name,unit_of_measure)",
       )
       .eq("organization_id", data.organizationId)
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
+    const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows ?? []);
     const ids = Array.from(new Set((rows ?? []).map((r) => r.requested_by)));
     const profileMap: Record<string, { full_name: string | null; email: string | null }> = {};
     if (ids.length) {
       const { data: p } = await context.supabase.from("profiles").select("id, full_name, email").in("id", ids);
       for (const x of p ?? []) profileMap[x.id] = { full_name: x.full_name, email: x.email };
     }
-    return (rows ?? []).map((r) => ({
+    return (rows ?? []).map((r) => {
+      const items = itemsByRequest.get(r.id) ?? [];
+      const first = items[0];
+      return ({
       id: r.id,
       requestType: r.request_type,
-      quantity: r.quantity,
+      quantity: items.length === 1 ? first?.quantity ?? r.quantity : null,
       status: r.status,
       notes: r.notes,
-      itemName: (r.products as { name: string } | null)?.name ?? r.free_text_item ?? "—",
+      itemCount: items.length,
+      items,
+      itemName: summarizeRequestItems(items) || (r.products as { name: string } | null)?.name || r.free_text_item || "—",
       requestedBy:
         profileMap[r.requested_by]?.full_name ?? profileMap[r.requested_by]?.email ?? "—",
       orderedAt: r.ordered_at,
       receivedAt: r.received_at,
       createdAt: r.created_at,
-    }));
+    }); });
   });
 
 export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" })
@@ -301,6 +331,7 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
     if (error) throw new Error(error.message);
 
     const requestIds = (rows ?? []).map((row) => row.id);
+    const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows ?? []);
     const requesterIds = Array.from(new Set((rows ?? []).map((row) => row.requested_by)));
     const [identitiesResult, updatesResult] = await Promise.all([
       requesterIds.length
@@ -350,11 +381,15 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
       const location = row.locations as { name: string } | null;
       const updates = updateInfo.get(row.id);
       const requesterIdentity = identities.get(row.requested_by);
+      const items = itemsByRequest.get(row.id) ?? [];
+      const first = items[0];
       return {
         id: row.id,
-        itemName: product?.name ?? row.free_text_item ?? "Requested item",
-        quantity: row.quantity,
-        unit: product?.unit_of_measure ?? null,
+        itemCount: items.length,
+        items,
+        itemName: summarizeRequestItems(items) || product?.name || row.free_text_item || "Requested item",
+        quantity: items.length === 1 ? first?.quantity ?? row.quantity : null,
+        unit: items.length === 1 ? first?.unit ?? product?.unit_of_measure ?? null : null,
         requesterName: requesterIdentity?.display_name ?? `Member ${row.requested_by.slice(0, 8)}`,
         requesterEmail: requesterIdentity?.email ?? null,
         team: team?.name ?? requesterIdentity?.default_team_name ?? null,
@@ -371,8 +406,8 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
         latestStaffMessage: updates?.latestStaffMessage ?? null,
         latestInternalNote: updates?.latestInternalNote ?? null,
         latestUpdateAt: updates?.latestUpdateAt ?? row.updated_at,
-        hasExistingProduct: !!row.product_id,
-        isNewItem: row.request_type === "new_item" || !row.product_id,
+        hasExistingProduct: items.some((item) => !!item.productId),
+        isNewItem: items.some((item) => !item.productId),
       };
     });
     return buildAdminRequestDashboard(requests);

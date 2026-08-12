@@ -60,12 +60,11 @@ test('database transition is atomic, organization-scoped, and preserves timestam
 });
 
 test('submission validates related records inside the active organization', async () => {
-  const server = await readFile(new URL('../src/lib/supply-requests.functions.ts', import.meta.url), 'utf8');
-  for (const table of ['products', 'teams', 'locations']) {
-    assert.match(server, new RegExp(`requireRelatedRecord\\(context, "${table}"`));
-  }
-  assert.match(server, /eq\("organization_id", organizationId\)\.eq\("active", true\)/);
-  assert.match(server, /table === "products"[\s\S]*staff_requestable/);
+  const sql = await readFile(new URL('../supabase/migrations/20260812140000_phase4a4_multi_item_supply_requests.sql', import.meta.url), 'utf8');
+  for (const table of ['products', 'teams', 'locations']) assert.match(sql, new RegExp(`public\\.${table}`));
+  assert.match(sql, /id = _product_id AND organization_id = _organization_id[\s\S]*active = true AND staff_requestable = true/);
+  assert.match(sql, /id = _team_id AND organization_id = _organization_id AND active = true/);
+  assert.match(sql, /id = _location_id AND organization_id = _organization_id AND active = true/);
 });
 
 test('staff request summaries expose safe latest-update metadata without internal notes', async () => {

@@ -42,13 +42,14 @@ test('settings sends optional team and location defaults through the invitation 
 test('request submission derives membership defaults, requires missing context, and validates organization ownership', async () => {
   const source = await readFile(new URL('../src/lib/supply-requests.functions.ts', import.meta.url), 'utf8');
   const submit = source.slice(source.indexOf('export const submitSupplyRequestFn'), source.indexOf('export const listMyRequestsFn'));
-  assert.match(submit, /data\.teamId \?\? mem\.default_team_id/);
-  assert.match(submit, /data\.locationId \?\? mem\.default_location_id/);
-  assert.match(submit, /Select a team for this request/);
-  assert.match(submit, /Select a location for this request/);
-  assert.match(submit, /requireRelatedRecord\(context, "teams", teamId, mem\.organization_id\)/);
-  assert.match(submit, /requireRelatedRecord\(context, "locations", locationId, mem\.organization_id\)/);
-  assert.match(submit, /requested_by: context\.userId/);
+  assert.match(submit, /rpc\("submit_supply_request"/);
+  assert.match(submit, /_team_id: data\.teamId \?\? null/);
+  assert.match(submit, /_location_id: data\.locationId \?\? null/);
+  const migration = await readFile(new URL('../supabase/migrations/20260812140000_phase4a4_multi_item_supply_requests.sql', import.meta.url), 'utf8');
+  assert.match(migration, /coalesce\(_team_id, _membership\.default_team_id\)/);
+  assert.match(migration, /coalesce\(_location_id, _membership\.default_location_id\)/);
+  assert.match(migration, /organization_id = _organization_id AND active = true/);
+  assert.match(migration, /_organization_id, _uid, _request_type/);
 });
 
 test('admin request attribution uses safe identities and includes team and location while staff ownership stays enforced', async () => {

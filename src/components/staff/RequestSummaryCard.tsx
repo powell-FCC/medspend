@@ -17,7 +17,9 @@ export function RequestSummaryCard({ request }: { request: StaffRequestViewModel
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold text-[#071d38]">{request.itemName}</div>
           <div className="mt-1 text-sm text-[#657182]">
-            {request.quantity ?? "Quantity not specified"}{request.quantity && request.unit ? ` ${request.unit}` : ""}
+            {request.itemCount > 1
+              ? request.items.slice(0, 3).map((item) => item.name).join(" · ")
+              : `${request.quantity ?? "Quantity not specified"}${request.quantity && request.unit ? ` ${request.unit}` : ""}`}
           </div>
           <div className="mt-2 text-xs text-[#7a8491]">{updatedLabel(request.lastUpdatedAt)}</div>
         </div>
