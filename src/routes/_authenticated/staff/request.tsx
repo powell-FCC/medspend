@@ -1,234 +1,123 @@
-import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
+import { createFileRoute, Link, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { Check, Minus, Plus, Search, X } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { searchProductsFn, submitSupplyRequestFn } from "@/lib/supply-requests.functions";
-import { listOrgStructureFn } from "@/lib/org-structure.functions";
 
 const search = z.object({
   type: z.enum(["reorder", "low_stock", "out_of_stock", "new_item"]).optional(),
 });
 
 export const Route = createFileRoute("/_authenticated/staff/request")({
-  validateSearch: (s) => search.parse(s),
+  validateSearch: (value) => search.parse(value),
   head: () => ({ meta: [{ title: "Request supplies — MedSpend" }, { name: "robots", content: "noindex" }] }),
   component: RequestPage,
 });
 
 function RequestPage() {
   const { active } = useActiveOrg();
-  const s = useSearch({ from: "/_authenticated/staff/request" });
-  const navigate = useNavigate();
-  const [type, setType] = useState<"reorder" | "low_stock" | "out_of_stock" | "new_item">(s.type ?? "reorder");
-  const [q, setQ] = useState("");
-  const [productId, setProductId] = useState<string | null>(null);
-  const [productName, setProductName] = useState<string>("");
-  const [freeText, setFreeText] = useState("");
-  const [qty, setQty] = useState<string>("");
+  const routeSearch = useSearch({ from: "/_authenticated/staff/request" });
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<{ id: string; name: string; unit: string | null } | null>(null);
+  const [customItem, setCustomItem] = useState("");
+  const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [teamId, setTeamId] = useState<string>("");
-  const [locationId, setLocationId] = useState<string>("");
-
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
   const searchFn = useServerFn(searchProductsFn);
   const submitFn = useServerFn(submitSupplyRequestFn);
-  const listStructure = useServerFn(listOrgStructureFn);
-  const qc = useQueryClient();
-
-  const structure = useQuery({
-    queryKey: ["org", active?.organizationId, "structure", "active"],
-    queryFn: () => listStructure({ data: { organizationId: active!.organizationId, includeArchived: false } }),
-    enabled: !!active,
-  });
-  const teams = structure.data?.teams ?? [];
-  const locations = structure.data?.locations ?? [];
-
+  const queryClient = useQueryClient();
   const products = useQuery({
-    queryKey: ["products", active?.organizationId, q],
-    queryFn: () => searchFn({ data: { organizationId: active!.organizationId, q } }),
-    enabled: !!active && q.length >= 2,
+    queryKey: ["products", active?.organizationId, query],
+    queryFn: () => searchFn({ data: { organizationId: active!.organizationId, q: query } }),
+    enabled: !!active && query.trim().length >= 2 && !selected,
   });
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
     setBusy(true);
     try {
-      await submitFn({
-        data: {
-          organizationId: active!.organizationId,
-          requestType: type,
-          productId: productId ?? null,
-          freeTextItem: productId ? null : freeText || null,
-          quantity: qty ? Number(qty) : null,
-          teamId: teamId || active!.defaultTeamId || null,
-          locationId: locationId || active!.defaultLocationId || null,
-          notes: notes || null,
-        },
-      });
-      await qc.invalidateQueries({ queryKey: ["me", active?.organizationId, "requests"] });
-      navigate({ to: "/staff/requests" });
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed to submit");
+      await submitFn({ data: {
+        organizationId: active!.organizationId,
+        requestType: routeSearch.type ?? (selected ? "reorder" : "new_item"),
+        productId: selected?.id ?? null,
+        freeTextItem: selected ? null : customItem.trim() || null,
+        quantity,
+        teamId: active!.defaultTeamId ?? null,
+        locationId: active!.defaultLocationId ?? null,
+        notes: notes.trim() || null,
+      } });
+      await queryClient.invalidateQueries({ queryKey: ["me", active?.organizationId, "requests"] });
+      setSubmitted(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "We couldn't submit your request.");
     } finally {
       setBusy(false);
     }
   }
 
+  if (submitted) return (
+    <div className="flex min-h-[65dvh] flex-col items-center justify-center text-center">
+      <span className="flex size-16 items-center justify-center rounded-full bg-[#edf7f1] text-[#286443]"><Check className="size-8" /></span>
+      <h1 className="mt-6 text-2xl font-semibold tracking-tight">Request Submitted</h1>
+      <p className="mt-2 max-w-xs text-sm leading-6 text-[#667384]">We'll update you when it is ready.</p>
+      <Link to="/staff/requests" className="mt-8 flex min-h-12 w-full items-center justify-center rounded-xl bg-[#071d38] px-5 font-semibold text-white">View My Requests</Link>
+      <button type="button" onClick={() => { setSubmitted(false); setSelected(null); setCustomItem(""); setQuery(""); setQuantity(1); setNotes(""); }} className="mt-3 min-h-12 w-full text-sm font-semibold text-[#d95700]">Request another item</button>
+    </div>
+  );
+
+  const hasItem = !!selected || !!customItem.trim();
   return (
     <div>
-      <h1 className="text-2xl font-semibold">Request supplies</h1>
-      <form onSubmit={submit} className="mt-6 space-y-4">
-        <div>
-          <label className="text-xs text-muted-foreground">Type</label>
-          <div className="mt-1 grid grid-cols-2 gap-2">
-            {(["reorder", "low_stock", "out_of_stock", "new_item"] as const).map((t) => (
-              <button
-                type="button"
-                key={t}
-                data-type={t}
-                onClick={() => setType(t)}
-                className={
-                  "rounded-md border px-3 py-2 text-sm " +
-                  (type === t ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted")
-                }
-              >
-                {t.replaceAll("_", " ")}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <label className="text-xs text-muted-foreground">Item</label>
-          {productId ? (
-            <div className="mt-1 flex items-center justify-between rounded-md border bg-muted px-3 py-2 text-sm">
-              <span>{productName}</span>
-              <button
-                type="button"
-                className="text-xs underline"
-                onClick={() => {
-                  setProductId(null);
-                  setProductName("");
-                }}
-              >
-                Change
-              </button>
+      <header>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#697687]">New Request</p>
+        <h1 className="mt-1 text-[1.7rem] font-semibold tracking-tight">What do you need?</h1>
+      </header>
+      <form onSubmit={submit} className="mt-7 space-y-7">
+        <section>
+          <label htmlFor="supply-search" className="text-sm font-semibold">Search supplies</label>
+          {!selected ? <>
+            <div className="relative mt-2">
+              <Search className="absolute left-4 top-1/2 size-5 -translate-y-1/2 text-[#7b8693]" aria-hidden="true" />
+              <input id="supply-search" value={query} onChange={(event) => { setQuery(event.target.value); setCustomItem(""); }} placeholder="Tape, gloves, gauze…" autoComplete="off" className="min-h-14 w-full rounded-2xl border border-[#dce2e8] bg-white pl-12 pr-4 text-base shadow-sm outline-none placeholder:text-[#9aa3ad] focus:border-[#f56600] focus:ring-4 focus:ring-[#f56600]/10" />
             </div>
-          ) : (
-            <>
-              <input
-                className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                placeholder="Search products…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-              {(products.data ?? []).length > 0 && (
-                <ul className="mt-1 rounded-md border bg-card divide-y max-h-48 overflow-auto">
-                  {(products.data ?? []).map((p: { id: string; name: string; unit: string | null }) => (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProductId(p.id);
-                          setProductName(p.name);
-                        }}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
-                      >
-                        {p.name}
-                        {p.unit && <span className="text-xs text-muted-foreground"> · {p.unit}</span>}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="mt-3">
-                <label className="text-xs text-muted-foreground">Or enter a custom item</label>
-                <input
-                  className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  placeholder="Item name"
-                  value={freeText}
-                  onChange={(e) => setFreeText(e.target.value)}
-                />
-              </div>
-            </>
-          )}
-        </div>
+            {(products.data?.length ?? 0) > 0 && <div className="mt-2 overflow-hidden rounded-2xl border border-[#dfe5eb] bg-white shadow-lg">
+              {products.data?.map((product: { id: string; name: string; unit: string | null }) => <button key={product.id} type="button" onClick={() => { setSelected(product); setQuery(""); }} className="flex min-h-14 w-full items-center justify-between border-b border-[#edf0f3] px-4 text-left last:border-0 hover:bg-[#f7f8fa] focus-visible:bg-[#f7f8fa]">
+                <span className="font-medium">{product.name}</span><span className="text-xs text-[#75808e]">{product.unit}</span>
+              </button>)}
+            </div>}
+            <details className="mt-4 group">
+              <summary className="min-h-11 cursor-pointer list-none py-3 text-sm font-semibold text-[#566477]">Can't find the item?</summary>
+              <label htmlFor="custom-item" className="sr-only">Item name</label>
+              <input id="custom-item" value={customItem} onChange={(event) => { setCustomItem(event.target.value); setQuery(""); }} placeholder="Enter the item name" className="min-h-14 w-full rounded-2xl border border-[#dce2e8] bg-white px-4 text-base outline-none focus:border-[#f56600] focus:ring-4 focus:ring-[#f56600]/10" />
+            </details>
+          </> : <div className="mt-2 flex min-h-20 items-center justify-between rounded-2xl border border-[#dce2e8] bg-white p-4 shadow-sm">
+            <div><div className="font-semibold">{selected.name}</div>{selected.unit && <div className="mt-1 text-sm text-[#697687]">{selected.unit}</div>}</div>
+            <button type="button" onClick={() => setSelected(null)} className="flex size-11 items-center justify-center rounded-full text-[#637080] hover:bg-[#f0f2f5]" aria-label="Change selected item"><X className="size-5" /></button>
+          </div>}
+        </section>
 
-        <div>
-          <label className="text-xs text-muted-foreground">Quantity</label>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-            value={qty}
-            onChange={(e) => setQty(e.target.value)}
-          />
-        </div>
-
-        {(teams.length > 0 || locations.length > 0) && (
-          <div className="grid grid-cols-2 gap-2">
-            {teams.length > 0 && (
-              <div>
-                <label className="text-xs text-muted-foreground">Team (optional)</label>
-                <select
-                  data-field="team"
-                  className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  value={teamId || (active?.defaultTeamId ?? "")}
-                  onChange={(e) => setTeamId(e.target.value)}
-                >
-                  <option value="">—</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {locations.length > 0 && (
-              <div>
-                <label className="text-xs text-muted-foreground">Location (optional)</label>
-                <select
-                  data-field="location"
-                  className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  value={locationId || (active?.defaultLocationId ?? "")}
-                  onChange={(e) => setLocationId(e.target.value)}
-                >
-                  <option value="">—</option>
-                  {locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div>
-          <label className="text-xs text-muted-foreground">Notes</label>
-          <textarea
-            rows={3}
-            className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-        </div>
-
-        {err && <div className="text-xs text-destructive">{err}</div>}
-        <button
-          type="submit"
-          disabled={busy || (!productId && !freeText.trim())}
-          className="w-full rounded-md bg-primary text-primary-foreground px-3 py-3 text-sm font-medium disabled:opacity-60"
-        >
-          {busy ? "Submitting…" : "Submit request"}
-        </button>
+        {hasItem && <>
+          <section>
+            <div className="text-sm font-semibold">Quantity</div>
+            <div className="mt-2 flex items-center justify-between rounded-2xl border border-[#dce2e8] bg-white p-2 shadow-sm">
+              <button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))} className="flex size-12 items-center justify-center rounded-xl bg-[#eef1f4]" aria-label="Decrease quantity"><Minus className="size-5" /></button>
+              <span className="text-xl font-semibold tabular-nums" aria-live="polite">{quantity}</span>
+              <button type="button" onClick={() => setQuantity((value) => value + 1)} className="flex size-12 items-center justify-center rounded-xl bg-[#071d38] text-white" aria-label="Increase quantity"><Plus className="size-5" /></button>
+            </div>
+          </section>
+          <section>
+            <label htmlFor="request-note" className="text-sm font-semibold">Add a note <span className="font-normal text-[#7b8693]">(optional)</span></label>
+            <textarea id="request-note" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Size, location, or anything helpful" className="mt-2 w-full resize-none rounded-2xl border border-[#dce2e8] bg-white p-4 text-base outline-none placeholder:text-[#9aa3ad] focus:border-[#f56600] focus:ring-4 focus:ring-[#f56600]/10" />
+          </section>
+          {error && <p role="alert" className="rounded-xl bg-[#fff0f1] p-3 text-sm text-[#a83340]">{error}</p>}
+          <button type="submit" disabled={busy} className="min-h-14 w-full rounded-2xl bg-[#f56600] px-5 text-base font-semibold text-white shadow-[0_10px_25px_rgba(245,102,0,0.22)] disabled:opacity-60">{busy ? "Submitting…" : "Submit Request"}</button>
+        </>}
       </form>
     </div>
   );

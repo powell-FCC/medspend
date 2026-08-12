@@ -4,6 +4,12 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { SUPPLY_REQUEST_STATUSES } from "@/supply-requests/lifecycle";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 import { supplyRequestInputSchema } from "@/supply-requests/validation";
+import {
+  summarizeStaffRequests,
+  translateStaffRequestStatus,
+  type StaffRequestViewModel,
+  type StaffRequestDetailViewModel,
+} from "@/supply-requests/staff-dashboard";
 
 const statusEnum = z.enum(SUPPLY_REQUEST_STATUSES);
 
@@ -119,6 +125,120 @@ export const listMyRequestsFn = createServerFn({ method: "POST" })
       latestStatusChange: r.status,
       latestUpdateAt: r.updated_at,
     }));
+  });
+
+export const getStaffDashboardFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ organizationId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMembership(context, data.organizationId);
+    const { data: rows, error } = await context.supabase
+      .from("supply_requests")
+      .select("id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
+      .eq("organization_id", data.organizationId)
+      .eq("requested_by", context.userId)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+
+    const ids = (rows ?? []).map((row) => row.id);
+    const latestMessages = new Map<string, { message: string; createdAt: string }>();
+    if (ids.length) {
+      const { data: updates, error: updatesError } = await context.supabase
+        .from("supply_request_updates")
+        .select("supply_request_id,staff_visible_note,created_at")
+        .eq("organization_id", data.organizationId)
+        .in("supply_request_id", ids)
+        .not("staff_visible_note", "is", null)
+        .order("created_at", { ascending: false });
+      if (updatesError) throw new Error(updatesError.message);
+      for (const update of updates ?? []) {
+        if (!latestMessages.has(update.supply_request_id) && update.staff_visible_note) {
+          latestMessages.set(update.supply_request_id, {
+            message: update.staff_visible_note,
+            createdAt: update.created_at,
+          });
+        }
+      }
+    }
+
+    const recentRequests: StaffRequestViewModel[] = (rows ?? []).map((row) => {
+      const status = translateStaffRequestStatus(row.status as SupplyRequestStatus);
+      const product = row.products as { name: string; unit_of_measure: string | null } | null;
+      const message = latestMessages.get(row.id);
+      return {
+        id: row.id,
+        itemName: product?.name ?? row.free_text_item ?? "Requested item",
+        quantity: row.quantity,
+        unit: product?.unit_of_measure ?? null,
+        statusLabel: status.label,
+        statusGroup: status.group,
+        submittedAt: row.created_at,
+        lastUpdatedAt:
+          message && message.createdAt > row.updated_at ? message.createdAt : row.updated_at,
+        staffMessage: message?.message ?? null,
+      };
+    });
+
+    return {
+      summary: summarizeStaffRequests(recentRequests),
+      recentRequests,
+      attentionItems: recentRequests.filter((request) => request.statusGroup === "ACTION_REQUIRED"),
+    };
+  });
+
+export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ organizationId: z.string().uuid(), requestId: z.string().uuid() }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await requireMembership(context, data.organizationId);
+    const { data: row, error } = await context.supabase
+      .from("supply_requests")
+      .select("id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
+      .eq("id", data.requestId)
+      .eq("organization_id", data.organizationId)
+      .eq("requested_by", context.userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!row) throw new Error("Request not found");
+
+    const { data: updates, error: updatesError } = await context.supabase
+      .from("supply_request_updates")
+      .select("status_to,staff_visible_note,created_at")
+      .eq("organization_id", data.organizationId)
+      .eq("supply_request_id", row.id)
+      .order("created_at", { ascending: true });
+    if (updatesError) throw new Error(updatesError.message);
+
+    const visibleUpdates = updates ?? [];
+    const latestMessage = [...visibleUpdates].reverse().find((update) => update.staff_visible_note);
+    const product = row.products as { name: string; unit_of_measure: string | null } | null;
+    const status = translateStaffRequestStatus(row.status as SupplyRequestStatus);
+    const detail: StaffRequestDetailViewModel = {
+      id: row.id,
+      itemName: product?.name ?? row.free_text_item ?? "Requested item",
+      quantity: row.quantity,
+      unit: product?.unit_of_measure ?? null,
+      statusLabel: status.label,
+      statusGroup: status.group,
+      submittedAt: row.created_at,
+      lastUpdatedAt: row.updated_at,
+      staffMessage: latestMessage?.staff_visible_note ?? null,
+      timeline: [
+        { label: "Requested", occurredAt: row.created_at, message: null },
+        ...visibleUpdates.flatMap((update) => {
+          if (!update.status_to) return [];
+          const translated = translateStaffRequestStatus(update.status_to as SupplyRequestStatus);
+          return [{
+            label: translated.label,
+            occurredAt: update.created_at,
+            message: update.staff_visible_note,
+          }];
+        }),
+      ],
+    };
+    return detail;
   });
 
 export const listOrgRequestsFn = createServerFn({ method: "POST" })

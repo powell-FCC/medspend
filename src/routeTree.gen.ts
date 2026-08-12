@@ -31,6 +31,7 @@ import { Route as AuthenticatedInvoicesInvoiceIdRouteImport } from './routes/_au
 import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authenticated/staff/index'
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
 import { Route as AuthenticatedStaffRequestsRouteImport } from './routes/_authenticated/staff/requests'
+import { Route as AuthenticatedStaffRequestsIdRouteImport } from './routes/_authenticated/staff/requests.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -147,6 +148,12 @@ const AuthenticatedStaffRequestsRoute =
     path: '/staff/requests',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedStaffRequestsIdRoute =
+  AuthenticatedStaffRequestsIdRouteImport.update({
+    id: '/$id',
+    path: '/$id',
+    getParentRoute: () => AuthenticatedStaffRequestsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -167,9 +174,10 @@ export interface FileRoutesByFullPath {
   '/join/$token': typeof JoinTokenRoute
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
-  '/staff/requests': typeof AuthenticatedStaffRequestsRoute
+  '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/staff/': typeof AuthenticatedStaffIndexRoute
+  '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -189,9 +197,10 @@ export interface FileRoutesByTo {
   '/join/$token': typeof JoinTokenRoute
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
-  '/staff/requests': typeof AuthenticatedStaffRequestsRoute
+  '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/invoices': typeof AuthenticatedInvoicesIndexRoute
   '/staff': typeof AuthenticatedStaffIndexRoute
+  '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -214,9 +223,10 @@ export interface FileRoutesById {
   '/join/$token': typeof JoinTokenRoute
   '/_authenticated/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/_authenticated/staff/request': typeof AuthenticatedStaffRequestRoute
-  '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRoute
+  '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/_authenticated/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/_authenticated/staff/': typeof AuthenticatedStaffIndexRoute
+  '/_authenticated/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -242,6 +252,7 @@ export interface FileRouteTypes {
     | '/staff/requests'
     | '/invoices/'
     | '/staff/'
+    | '/staff/requests/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -264,6 +275,7 @@ export interface FileRouteTypes {
     | '/staff/requests'
     | '/invoices'
     | '/staff'
+    | '/staff/requests/$id'
   id:
     | '__root__'
     | '/'
@@ -288,6 +300,7 @@ export interface FileRouteTypes {
     | '/_authenticated/staff/requests'
     | '/_authenticated/invoices/'
     | '/_authenticated/staff/'
+    | '/_authenticated/staff/requests/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -454,6 +467,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedStaffRequestsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/staff/requests/$id': {
+      id: '/_authenticated/staff/requests/$id'
+      path: '/$id'
+      fullPath: '/staff/requests/$id'
+      preLoaderRoute: typeof AuthenticatedStaffRequestsIdRouteImport
+      parentRoute: typeof AuthenticatedStaffRequestsRoute
+    }
   }
 }
 
@@ -472,6 +492,20 @@ const AuthenticatedInvoicesRouteWithChildren =
     AuthenticatedInvoicesRouteChildren,
   )
 
+interface AuthenticatedStaffRequestsRouteChildren {
+  AuthenticatedStaffRequestsIdRoute: typeof AuthenticatedStaffRequestsIdRoute
+}
+
+const AuthenticatedStaffRequestsRouteChildren: AuthenticatedStaffRequestsRouteChildren =
+  {
+    AuthenticatedStaffRequestsIdRoute: AuthenticatedStaffRequestsIdRoute,
+  }
+
+const AuthenticatedStaffRequestsRouteWithChildren =
+  AuthenticatedStaffRequestsRoute._addFileChildren(
+    AuthenticatedStaffRequestsRouteChildren,
+  )
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedInventoryRoute: typeof AuthenticatedInventoryRoute
@@ -486,7 +520,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUploadRoute: typeof AuthenticatedUploadRoute
   AuthenticatedVendorsRoute: typeof AuthenticatedVendorsRoute
   AuthenticatedStaffRequestRoute: typeof AuthenticatedStaffRequestRoute
-  AuthenticatedStaffRequestsRoute: typeof AuthenticatedStaffRequestsRoute
+  AuthenticatedStaffRequestsRoute: typeof AuthenticatedStaffRequestsRouteWithChildren
   AuthenticatedStaffIndexRoute: typeof AuthenticatedStaffIndexRoute
 }
 
@@ -504,7 +538,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUploadRoute: AuthenticatedUploadRoute,
   AuthenticatedVendorsRoute: AuthenticatedVendorsRoute,
   AuthenticatedStaffRequestRoute: AuthenticatedStaffRequestRoute,
-  AuthenticatedStaffRequestsRoute: AuthenticatedStaffRequestsRoute,
+  AuthenticatedStaffRequestsRoute: AuthenticatedStaffRequestsRouteWithChildren,
   AuthenticatedStaffIndexRoute: AuthenticatedStaffIndexRoute,
 }
 

@@ -1,48 +1,20 @@
-import { Link, useRouter, useRouterState } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { Home, PackagePlus, ClipboardList, User } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-
-const tabs = [
-  { to: "/staff", label: "Home", icon: Home, exact: true },
-  { to: "/staff/request", label: "Request", icon: PackagePlus, exact: false },
-  { to: "/staff/requests", label: "My Requests", icon: ClipboardList, exact: false },
-  { to: "/profile", label: "Profile", icon: User, exact: false },
-] as const;
+import { StaffBottomNav } from "@/components/staff/StaffBottomNav";
 
 export function StaffAppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-
   return (
-    <div className="min-h-screen bg-background text-foreground pb-20" data-shell="staff">
-      <main className="max-w-2xl mx-auto px-4 py-6">{children}</main>
-      <nav className="fixed bottom-0 inset-x-0 border-t bg-card">
-        <div className="max-w-2xl mx-auto grid grid-cols-4">
-          {tabs.map(({ to, label, icon: Icon, exact }) => {
-            const active = exact ? pathname === to : pathname === to || pathname.startsWith(to + "/");
-            return (
-              <Link
-                key={to}
-                to={to}
-                className={
-                  "flex flex-col items-center gap-1 py-3 text-[11px] font-medium " +
-                  (active ? "text-primary" : "text-muted-foreground")
-                }
-              >
-                <Icon className="h-5 w-5" />
-                {label}
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
+    <div className="min-h-dvh bg-[#f5f7f9] pb-[calc(5rem+env(safe-area-inset-bottom))] text-[#071d38]" data-shell="staff">
+      <main className="mx-auto max-w-2xl px-4 pb-8 pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-6">{children}</main>
+      <StaffBottomNav />
       <button
         onClick={async () => {
           await supabase.auth.signOut();
           router.navigate({ to: "/auth", replace: true });
         }}
-        className="fixed top-3 right-3 text-xs text-muted-foreground hover:text-foreground"
+        className="fixed right-4 top-[max(1.25rem,env(safe-area-inset-top))] z-30 min-h-11 px-2 text-xs font-medium text-[#667384] hover:text-[#071d38]"
       >
         Sign out
       </button>

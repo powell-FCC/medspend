@@ -2,7 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useActiveOrg } from "@/hooks/use-active-org";
-import { listMyRequestsFn } from "@/lib/supply-requests.functions";
+import { getStaffDashboardFn } from "@/lib/supply-requests.functions";
+import { RequestSummaryCard } from "@/components/staff/RequestSummaryCard";
+import { StaffEmptyState } from "@/components/staff/StaffEmptyState";
 
 export const Route = createFileRoute("/_authenticated/staff/requests")({
   head: () => ({ meta: [{ title: "My requests — MedSpend" }, { name: "robots", content: "noindex" }] }),
@@ -11,34 +13,39 @@ export const Route = createFileRoute("/_authenticated/staff/requests")({
 
 function MyRequests() {
   const { active } = useActiveOrg();
-  const fetcher = useServerFn(listMyRequestsFn);
+  const fetcher = useServerFn(getStaffDashboardFn);
   const q = useQuery({
     queryKey: ["me", active?.organizationId, "requests"],
     queryFn: () => fetcher({ data: { organizationId: active!.organizationId } }),
     enabled: !!active,
   });
+  const activeRequests = q.data?.recentRequests.filter((request) => request.statusGroup !== "COMPLETED") ?? [];
+  const completedRequests = q.data?.recentRequests.filter((request) => request.statusGroup === "COMPLETED") ?? [];
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold">My requests</h1>
-      <ul className="mt-4 divide-y rounded-xl border bg-card">
-        {(q.data ?? []).map((r) => (
-          <li key={r.id} className="p-4 text-sm">
-            <div className="flex items-center justify-between">
-              <div className="font-medium">{r.itemName}</div>
-              <span className="text-xs uppercase tracking-wider text-primary">{r.status}</span>
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {r.requestType} · qty {r.quantity ?? "—"} · submitted {new Date(r.createdAt).toLocaleDateString()}
-            </div>
-            {r.notes && <div className="mt-2 text-sm">{r.notes}</div>}
-            {r.latestStaffVisibleNote && <div className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">{r.latestStaffVisibleNote}</div>}
-            {r.orderedAt && <div className="mt-1 text-xs text-muted-foreground">Ordered {new Date(r.orderedAt).toLocaleDateString()}</div>}
-            {r.receivedAt && <div className="mt-1 text-xs text-muted-foreground">Received {new Date(r.receivedAt).toLocaleDateString()}</div>}
-          </li>
-        ))}
-        {(q.data ?? []).length === 0 && <li className="p-6 text-sm text-muted-foreground text-center">No requests yet.</li>}
-      </ul>
+    <div className="space-y-8">
+      <header>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#697687]">History</p>
+        <h1 className="mt-1 text-[1.7rem] font-semibold tracking-tight text-[#071d38]">My Requests</h1>
+      </header>
+      {(q.data?.recentRequests.length ?? 0) > 0 ? (<>
+        {activeRequests.length > 0 && <section aria-labelledby="active-requests-title">
+          <h2 id="active-requests-title" className="text-sm font-semibold text-[#34445a]">Active</h2>
+          <div className="mt-3 space-y-3">
+          {activeRequests.map((request) => (
+            <RequestSummaryCard key={request.id} request={request} />
+          ))}
+          </div>
+        </section>}
+        {completedRequests.length > 0 && <section aria-labelledby="completed-requests-title">
+          <h2 id="completed-requests-title" className="text-sm font-semibold text-[#34445a]">Completed</h2>
+          <div className="mt-3 space-y-3">
+            {completedRequests.map((request) => <RequestSummaryCard key={request.id} request={request} />)}
+          </div>
+        </section>}
+      </>) : (
+        <StaffEmptyState title="No requests yet" description="Requests you submit will appear here." />
+      )}
     </div>
   );
 }

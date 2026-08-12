@@ -238,16 +238,15 @@ async def main():
         check("no 'Open requests' widget in staff view", "Open requests" not in body)
 
         # Submit out-of-stock request
-        await staff_page.goto(BASE + "/staff/request")
-        await staff_page.wait_for_selector('button[data-type="out_of_stock"]')
-        await staff_page.click('button[data-type="out_of_stock"]')
-        await staff_page.wait_for_selector('select[data-field="team"]', timeout=15000)
-        check("staff can choose a team on the request form", True)
-        await staff_page.select_option('select[data-field="team"]', TEAM_ID)
-        await staff_page.fill('input[placeholder="Item name"]', "Athletic tape 1.5in")
-        await staff_page.fill('input[type=number]', "12")
+        await staff_page.goto(BASE + "/staff/request?type=out_of_stock")
+        await staff_page.get_by_text("Can't find the item?").click()
+        await staff_page.fill('input[placeholder="Enter the item name"]', "Athletic tape 1.5in")
+        for _ in range(11):
+            await staff_page.get_by_role("button", name="Increase quantity").click()
         await staff_page.fill('textarea', "Urgent — pregame")
-        await staff_page.get_by_role("button", name="Submit request").click()
+        await staff_page.get_by_role("button", name="Submit Request").click()
+        await staff_page.get_by_role("heading", name="Request Submitted").wait_for()
+        await staff_page.get_by_role("link", name="View My Requests").click()
         await staff_page.wait_for_url("**/staff/requests", timeout=20000)
         await staff_page.wait_for_load_state("networkidle")
         await staff_page.screenshot(path=str(SHOTS/"03_staff_submitted.png"))
@@ -283,8 +282,12 @@ async def main():
         await staff_page.goto(BASE + "/staff/requests")
         await staff_page.wait_for_load_state("networkidle")
         body = await staff_page.content()
-        check("staff sees status 'ordered'", "ordered" in body.lower())
-        check("staff sees 'Ordered <date>' line", "Ordered " in body)
+        check("staff sees friendly status 'Ordered'", "ordered" in body.lower())
+        await staff_page.get_by_text("Athletic tape 1.5in").click()
+        await staff_page.wait_for_url("**/staff/requests/*", timeout=20000)
+        body = await staff_page.content()
+        check("staff sees staff-visible update in request detail", "Ordered from McKesson" in body)
+        check("staff sees request timeline", "Timeline" in body and "Ordered" in body)
 
         # Route isolation: staff -> admin routes redirect to /staff
         for route in ["/dashboard", "/settings", "/upload", "/purchases", "/invoices", "/products", "/vendors", "/supply-requests"]:
