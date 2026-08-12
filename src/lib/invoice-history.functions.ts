@@ -3,10 +3,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware';
 import type { Database } from '@/integrations/supabase/types';
-import type { InvoiceHistoryRow, PurchaseHistoryRow, VendorHistoryRow } from '@/types/invoice-history';
+import type { DeleteInvoiceResult, InvoiceHistoryRow, PurchaseHistoryRow, VendorHistoryRow } from '@/types/invoice-history';
 import type { ProcessingStatus } from '@/types/invoice-processing';
+import { getInvoiceDeletionEligibility, type InvoiceDocumentType } from '@/invoice/deletion';
 
 const input = z.object({ organizationId: z.string().uuid() });
+const deleteInput = z.object({ organizationId: z.string().uuid(), invoiceId: z.string().uuid() }).strict();
 
 async function assertOwner(db: SupabaseClient<Database>, userId: string, organizationId: string) {
   const { data, error } = await db.from('organization_memberships').select('role')
@@ -19,7 +21,7 @@ async function loadHistory(db: SupabaseClient<Database>, organizationId: string)
   const [sourcesResult, jobsResult, invoicesResult] = await Promise.all([
     db.from('vendor_invoices').select('id,original_filename,file_size,storage_path,status,created_at').eq('organization_id', organizationId).order('created_at', { ascending: false }),
     db.from('invoice_processing_jobs').select('invoice_id,status').eq('organization_id', organizationId),
-    db.from('invoices').select('id,source_file_id,vendor_name,invoice_number,invoice_date,invoice_total,processing_status,created_at').eq('organization_id', organizationId),
+    db.from('invoices').select('id,source_file_id,vendor_name,invoice_number,invoice_date,invoice_total,total_amount,processing_status,posted_at,document_type,order_number,order_date,created_at').eq('organization_id', organizationId),
   ]);
   if (sourcesResult.error) throw new Error(sourcesResult.error.message);
   if (jobsResult.error) throw new Error(jobsResult.error.message);
@@ -39,12 +41,43 @@ export const listInvoiceHistoryFn = createServerFn({ method: 'POST' }).middlewar
     const rows: InvoiceHistoryRow[] = history.sources.map((source) => {
       const structured = history.invoices.find((invoice) => invoice.source_file_id === source.id);
       const job = history.jobs.find((candidate) => candidate.invoice_id === source.id);
+      const status = (job?.status ?? source.status) as ProcessingStatus;
+      const documentType = (structured?.document_type ?? 'UNKNOWN') as InvoiceDocumentType;
       return { vendorInvoiceId: source.id, filename: source.original_filename, vendor: structured?.vendor_name === 'Vendor pending extraction' ? null : structured?.vendor_name ?? null,
-        uploadedAt: source.created_at, status: (job?.status ?? source.status) as ProcessingStatus,
+        uploadedAt: source.created_at, status,
         itemsProcessed: structured ? history.items.filter((item) => item.invoice_id === structured.id).length : 0,
-        fileSize: source.file_size, storagePath: source.storage_path };
+        fileSize: source.file_size, storagePath: source.storage_path, documentType,
+        documentNumber: documentType === 'ORDER_CONFIRMATION' || documentType === 'PURCHASE_ORDER' ? structured?.order_number ?? null : structured?.invoice_number ?? null,
+        documentDate: documentType === 'ORDER_CONFIRMATION' || documentType === 'PURCHASE_ORDER' ? structured?.order_date ?? null : structured?.invoice_date ?? null,
+        total: structured?.invoice_total ?? structured?.total_amount ?? null,
+        posted: Boolean(structured?.posted_at || structured?.processing_status === 'completed' || status === 'completed'),
+        deletionEligibility: getInvoiceDeletionEligibility({ status, processingStatus: structured?.processing_status ?? null, postedAt: structured?.posted_at ?? null }) };
     });
     return rows;
+  });
+
+export const deleteInvoiceFn = createServerFn({ method: 'POST' }).middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => deleteInput.parse(value)).handler(async ({ data, context }) => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
+    const { data: deleted, error } = await context.supabase.rpc('delete_invoice_permanently', {
+      _organization_id: data.organizationId, _source_file_id: data.invoiceId,
+    });
+    if (error) {
+      if (/currently being processed/i.test(error.message)) throw new Error('This document is currently being processed. Try again when processing is complete.');
+      if (/inventory.*negative|history.*(?:begin|become).*negative|provenance is incomplete/i.test(error.message)) throw new Error(error.message);
+      if (/owner access required/i.test(error.message)) throw new Error('Only organization owners can permanently delete documents.');
+      throw new Error('Invoice deletion could not be completed. No changes were made.');
+    }
+    const result = deleted as { storagePath?: unknown } | null;
+    if (!result || typeof result.storagePath !== 'string') throw new Error('Invoice deletion did not return a trusted source file.');
+
+    const storage = await context.supabase.storage.from('vendor-invoices').remove([result.storagePath]);
+    const storageDeleted = !storage.error;
+    return {
+      deleted: true,
+      storageDeleted,
+      warning: storageDeleted ? null : 'Document deleted, but its uploaded file could not be removed.',
+    } satisfies DeleteInvoiceResult;
   });
 
 export const listPurchaseHistoryFn = createServerFn({ method: 'POST' }).middleware([requireSupabaseAuth])

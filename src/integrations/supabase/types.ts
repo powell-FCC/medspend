@@ -936,6 +936,10 @@ export type Database = {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: Json
       }
+      delete_invoice_permanently: {
+        Args: { _organization_id: string; _source_file_id: string }
+        Returns: Json
+      }
       persist_invoice_document_identity: {
         Args: { _organization_id: string; _source_file_id: string; _document_type: string; _order_number: string; _order_date: string | null }
         Returns: undefined
