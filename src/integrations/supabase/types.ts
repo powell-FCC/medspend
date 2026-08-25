@@ -10,39 +10,967 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.15"
   }
   public: {
     Tables: {
-      invoice_processing_jobs: {
-        Row: { id: string; organization_id: string; invoice_id: string; status: string; extraction_result: Json | null; extraction_error: string | null; ocr_provider: string | null; extraction_provider: string | null; document_text_status: string; raw_extracted_text: string | null; document_page_count: number | null; document_processing_duration_ms: number | null; ocr_required: boolean; created_at: string; updated_at: string }
-        Insert: { id?: string; organization_id: string; invoice_id: string; status?: string; extraction_result?: Json | null; extraction_error?: string | null; ocr_provider?: string | null; extraction_provider?: string | null; document_text_status?: string; raw_extracted_text?: string | null; document_page_count?: number | null; document_processing_duration_ms?: number | null; ocr_required?: boolean; created_at?: string; updated_at?: string }
-        Update: { id?: string; organization_id?: string; invoice_id?: string; status?: string; extraction_result?: Json | null; extraction_error?: string | null; ocr_provider?: string | null; extraction_provider?: string | null; document_text_status?: string; raw_extracted_text?: string | null; document_page_count?: number | null; document_processing_duration_ms?: number | null; ocr_required?: boolean; created_at?: string; updated_at?: string }
+      catalog_categories: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          name: string
+          normalized_name: string
+          parent_category_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name: string
+          normalized_name: string
+          parent_category_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name?: string
+          normalized_name?: string
+          parent_category_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_categories_parent_category_id_fkey"
+            columns: ["parent_category_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_import_batches: {
+        Row: {
+          artifact_name: string | null
+          artifact_sha256: string | null
+          catalog_vendor_id: string
+          completed_at: string | null
+          created_at: string
+          error_count: number
+          id: string
+          matched_record_count: number
+          metadata: Json
+          raw_record_count: number
+          source_name: string
+          source_uri: string | null
+          source_version: string
+          started_at: string | null
+          status: string
+          unique_key_count: number
+          unmatched_record_count: number
+          updated_at: string
+          warning_count: number
+        }
+        Insert: {
+          artifact_name?: string | null
+          artifact_sha256?: string | null
+          catalog_vendor_id: string
+          completed_at?: string | null
+          created_at?: string
+          error_count?: number
+          id?: string
+          matched_record_count?: number
+          metadata?: Json
+          raw_record_count?: number
+          source_name: string
+          source_uri?: string | null
+          source_version: string
+          started_at?: string | null
+          status?: string
+          unique_key_count?: number
+          unmatched_record_count?: number
+          updated_at?: string
+          warning_count?: number
+        }
+        Update: {
+          artifact_name?: string | null
+          artifact_sha256?: string | null
+          catalog_vendor_id?: string
+          completed_at?: string | null
+          created_at?: string
+          error_count?: number
+          id?: string
+          matched_record_count?: number
+          metadata?: Json
+          raw_record_count?: number
+          source_name?: string
+          source_uri?: string | null
+          source_version?: string
+          started_at?: string | null
+          status?: string
+          unique_key_count?: number
+          unmatched_record_count?: number
+          updated_at?: string
+          warning_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_import_batches_catalog_vendor_id_fkey"
+            columns: ["catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_products: {
+        Row: {
+          active: boolean
+          catalog_category_id: string | null
+          created_at: string
+          description: string | null
+          id: string
+          manufacturer: string | null
+          name: string
+          normalized_manufacturer: string | null
+          normalized_name: string
+          updated_at: string
+          verification_status: string
+        }
+        Insert: {
+          active?: boolean
+          catalog_category_id?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          manufacturer?: string | null
+          name: string
+          normalized_manufacturer?: string | null
+          normalized_name: string
+          updated_at?: string
+          verification_status?: string
+        }
+        Update: {
+          active?: boolean
+          catalog_category_id?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          manufacturer?: string | null
+          name?: string
+          normalized_manufacturer?: string | null
+          normalized_name?: string
+          updated_at?: string
+          verification_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_products_catalog_category_id_fkey"
+            columns: ["catalog_category_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_source_records: {
+        Row: {
+          catalog_vendor_id: string
+          created_at: string
+          id: string
+          import_batch_id: string
+          matched_catalog_vendor_product_id: string | null
+          normalized_raw_vendor_sku: string | null
+          raw_category: string | null
+          raw_data: Json
+          raw_package: string | null
+          raw_product_name: string | null
+          raw_subsection: string | null
+          raw_variant: string | null
+          raw_vendor_sku: string | null
+          raw_vendor_sku_match_key: string | null
+          resolution_status: string
+          resolved_at: string | null
+          source_ordinal: number
+          source_page: string | null
+          updated_at: string
+        }
+        Insert: {
+          catalog_vendor_id: string
+          created_at?: string
+          id?: string
+          import_batch_id: string
+          matched_catalog_vendor_product_id?: string | null
+          normalized_raw_vendor_sku?: string | null
+          raw_category?: string | null
+          raw_data: Json
+          raw_package?: string | null
+          raw_product_name?: string | null
+          raw_subsection?: string | null
+          raw_variant?: string | null
+          raw_vendor_sku?: string | null
+          raw_vendor_sku_match_key?: string | null
+          resolution_status?: string
+          resolved_at?: string | null
+          source_ordinal: number
+          source_page?: string | null
+          updated_at?: string
+        }
+        Update: {
+          catalog_vendor_id?: string
+          created_at?: string
+          id?: string
+          import_batch_id?: string
+          matched_catalog_vendor_product_id?: string | null
+          normalized_raw_vendor_sku?: string | null
+          raw_category?: string | null
+          raw_data?: Json
+          raw_package?: string | null
+          raw_product_name?: string | null
+          raw_subsection?: string | null
+          raw_variant?: string | null
+          raw_vendor_sku?: string | null
+          raw_vendor_sku_match_key?: string | null
+          resolution_status?: string
+          resolved_at?: string | null
+          source_ordinal?: number
+          source_page?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_source_records_batch_vendor_fk"
+            columns: ["import_batch_id", "catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_import_batches"
+            referencedColumns: ["id", "catalog_vendor_id"]
+          },
+          {
+            foreignKeyName: "catalog_source_records_match_vendor_fk"
+            columns: ["matched_catalog_vendor_product_id", "catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendor_products"
+            referencedColumns: ["id", "catalog_vendor_id"]
+          },
+        ]
+      }
+      catalog_vendor_products: {
+        Row: {
+          active: boolean
+          catalog_product_id: string
+          catalog_vendor_id: string
+          created_at: string
+          currency_code: string | null
+          discontinued: boolean
+          id: string
+          manufacturer_sku: string | null
+          normalized_manufacturer_sku: string | null
+          normalized_vendor_sku: string
+          package_description: string | null
+          package_quantity: number | null
+          package_status: string
+          package_unit: string | null
+          source_catalog_price: number | null
+          updated_at: string
+          vendor_sku: string
+          vendor_sku_match_key: string | null
+          verification_status: string
+        }
+        Insert: {
+          active?: boolean
+          catalog_product_id: string
+          catalog_vendor_id: string
+          created_at?: string
+          currency_code?: string | null
+          discontinued?: boolean
+          id?: string
+          manufacturer_sku?: string | null
+          normalized_manufacturer_sku?: string | null
+          normalized_vendor_sku: string
+          package_description?: string | null
+          package_quantity?: number | null
+          package_status?: string
+          package_unit?: string | null
+          source_catalog_price?: number | null
+          updated_at?: string
+          vendor_sku: string
+          vendor_sku_match_key?: string | null
+          verification_status?: string
+        }
+        Update: {
+          active?: boolean
+          catalog_product_id?: string
+          catalog_vendor_id?: string
+          created_at?: string
+          currency_code?: string | null
+          discontinued?: boolean
+          id?: string
+          manufacturer_sku?: string | null
+          normalized_manufacturer_sku?: string | null
+          normalized_vendor_sku?: string
+          package_description?: string | null
+          package_quantity?: number | null
+          package_status?: string
+          package_unit?: string | null
+          source_catalog_price?: number | null
+          updated_at?: string
+          vendor_sku?: string
+          vendor_sku_match_key?: string | null
+          verification_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_vendor_products_catalog_product_id_fkey"
+            columns: ["catalog_product_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "catalog_vendor_products_catalog_vendor_id_fkey"
+            columns: ["catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_vendors: {
+        Row: {
+          active: boolean
+          created_at: string
+          domain: string | null
+          id: string
+          name: string
+          normalized_name: string
+          updated_at: string
+          website: string | null
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          domain?: string | null
+          id?: string
+          name: string
+          normalized_name: string
+          updated_at?: string
+          website?: string | null
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          domain?: string | null
+          id?: string
+          name?: string
+          normalized_name?: string
+          updated_at?: string
+          website?: string | null
+        }
         Relationships: []
       }
-      invoice_items: {
-        Row: { id: string; invoice_id: string; organization_id: string; product_id: string | null; vendor_product_id: string | null; line_number: number | null; sku: string | null; description: string; manufacturer: string | null; category: string | null; quantity: number; unit_price: number | null; total_price: number | null; unit_of_measure: string | null; package_size: string | null; review_status: string; created_at: string; updated_at: string }
-        Insert: { id?: string; invoice_id: string; organization_id: string; product_id?: string | null; vendor_product_id?: string | null; line_number?: number | null; sku?: string | null; description: string; manufacturer?: string | null; category?: string | null; quantity: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; package_size?: string | null; review_status?: string; created_at?: string; updated_at?: string }
-        Update: { id?: string; invoice_id?: string; organization_id?: string; product_id?: string | null; vendor_product_id?: string | null; line_number?: number | null; sku?: string | null; description?: string; manufacturer?: string | null; category?: string | null; quantity?: number; unit_price?: number | null; total_price?: number | null; unit_of_measure?: string | null; package_size?: string | null; review_status?: string; created_at?: string; updated_at?: string }
-        Relationships: []
-      }
-      inventory_items: {
-        Row: { id: string; organization_id: string; product_id: string | null; sku: string | null; name: string; description: string | null; category: string | null; manufacturer: string | null; unit: string; quantity: number; par_level: number | null; last_purchase_price: number | null; last_purchase_date: string | null; vendor_name: string | null; active: boolean; created_at: string; updated_at: string }
-        Insert: { id?: string; organization_id: string; product_id?: string | null; sku?: string | null; name: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
-        Update: { id?: string; organization_id?: string; product_id?: string | null; sku?: string | null; name?: string; description?: string | null; category?: string | null; manufacturer?: string | null; unit?: string; quantity?: number; par_level?: number | null; last_purchase_price?: number | null; last_purchase_date?: string | null; vendor_name?: string | null; active?: boolean; created_at?: string; updated_at?: string }
-        Relationships: []
-      }
-      inventory_categories: {
-        Row: { id: string; organization_id: string; name: string; created_at: string }
-        Insert: { id?: string; organization_id: string; name: string; created_at?: string }
-        Update: { id?: string; organization_id?: string; name?: string; created_at?: string }
-        Relationships: []
+      catalog_verification_overrides: {
+        Row: {
+          active: boolean
+          catalog_vendor_id: string
+          catalog_vendor_product_id: string | null
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          effective_to: string | null
+          evidence: Json
+          evidence_status: string
+          id: string
+          import_batch_id: string | null
+          normalized_source_vendor_sku: string | null
+          normalized_verified_vendor_sku: string | null
+          notes: string | null
+          override_type: string
+          production_rule: string
+          source_record_id: string | null
+          source_vendor_sku: string | null
+          updated_at: string
+          verified_vendor_sku: string | null
+        }
+        Insert: {
+          active?: boolean
+          catalog_vendor_id: string
+          catalog_vendor_product_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          effective_to?: string | null
+          evidence?: Json
+          evidence_status?: string
+          id?: string
+          import_batch_id?: string | null
+          normalized_source_vendor_sku?: string | null
+          normalized_verified_vendor_sku?: string | null
+          notes?: string | null
+          override_type: string
+          production_rule: string
+          source_record_id?: string | null
+          source_vendor_sku?: string | null
+          updated_at?: string
+          verified_vendor_sku?: string | null
+        }
+        Update: {
+          active?: boolean
+          catalog_vendor_id?: string
+          catalog_vendor_product_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          effective_to?: string | null
+          evidence?: Json
+          evidence_status?: string
+          id?: string
+          import_batch_id?: string | null
+          normalized_source_vendor_sku?: string | null
+          normalized_verified_vendor_sku?: string | null
+          notes?: string | null
+          override_type?: string
+          production_rule?: string
+          source_record_id?: string | null
+          source_vendor_sku?: string | null
+          updated_at?: string
+          verified_vendor_sku?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_verification_overrides_batch_vendor_fk"
+            columns: ["import_batch_id", "catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_import_batches"
+            referencedColumns: ["id", "catalog_vendor_id"]
+          },
+          {
+            foreignKeyName: "catalog_verification_overrides_catalog_vendor_id_fkey"
+            columns: ["catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "catalog_verification_overrides_product_vendor_fk"
+            columns: ["catalog_vendor_product_id", "catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendor_products"
+            referencedColumns: ["id", "catalog_vendor_id"]
+          },
+          {
+            foreignKeyName: "catalog_verification_overrides_source_vendor_fk"
+            columns: ["source_record_id", "catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_source_records"
+            referencedColumns: ["id", "catalog_vendor_id"]
+          },
+        ]
       }
       inventory_adjustments: {
-        Row: { id: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; source_type: string | null; source_invoice_id: string | null; source_invoice_item_id: string | null; idempotency_key: string | null; created_at: string }
-        Insert: { id?: string; organization_id: string; inventory_item_id: string; adjustment_amount: number; previous_quantity: number; new_quantity: number; reason: string; created_by: string; source_type?: string | null; source_invoice_id?: string | null; source_invoice_item_id?: string | null; idempotency_key?: string | null; created_at?: string }
-        Update: { id?: string; organization_id?: string; inventory_item_id?: string; adjustment_amount?: number; previous_quantity?: number; new_quantity?: number; reason?: string; created_by?: string; source_type?: string | null; source_invoice_id?: string | null; source_invoice_item_id?: string | null; idempotency_key?: string | null; created_at?: string }
-        Relationships: []
+        Row: {
+          adjustment_amount: number
+          created_at: string
+          created_by: string
+          id: string
+          idempotency_key: string | null
+          inventory_item_id: string
+          new_quantity: number
+          organization_id: string
+          previous_quantity: number
+          reason: string
+          source_invoice_id: string | null
+          source_invoice_item_id: string | null
+          source_type: string | null
+        }
+        Insert: {
+          adjustment_amount: number
+          created_at?: string
+          created_by: string
+          id?: string
+          idempotency_key?: string | null
+          inventory_item_id: string
+          new_quantity: number
+          organization_id: string
+          previous_quantity: number
+          reason: string
+          source_invoice_id?: string | null
+          source_invoice_item_id?: string | null
+          source_type?: string | null
+        }
+        Update: {
+          adjustment_amount?: number
+          created_at?: string
+          created_by?: string
+          id?: string
+          idempotency_key?: string | null
+          inventory_item_id?: string
+          new_quantity?: number
+          organization_id?: string
+          previous_quantity?: number
+          reason?: string
+          source_invoice_id?: string | null
+          source_invoice_item_id?: string | null
+          source_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_adjustments_inventory_item_id_fkey"
+            columns: ["inventory_item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_adjustments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_adjustments_source_invoice_org_fk"
+            columns: ["source_invoice_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_adjustments_source_item_org_fk"
+            columns: ["source_invoice_item_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "invoice_items"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      inventory_categories: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          organization_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          organization_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          organization_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_categories_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_items: {
+        Row: {
+          active: boolean
+          category: string | null
+          created_at: string
+          description: string | null
+          id: string
+          last_purchase_date: string | null
+          last_purchase_price: number | null
+          manufacturer: string | null
+          name: string
+          organization_id: string
+          par_level: number | null
+          product_id: string | null
+          quantity: number
+          sku: string | null
+          unit: string
+          updated_at: string
+          vendor_name: string | null
+        }
+        Insert: {
+          active?: boolean
+          category?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          last_purchase_date?: string | null
+          last_purchase_price?: number | null
+          manufacturer?: string | null
+          name: string
+          organization_id: string
+          par_level?: number | null
+          product_id?: string | null
+          quantity?: number
+          sku?: string | null
+          unit: string
+          updated_at?: string
+          vendor_name?: string | null
+        }
+        Update: {
+          active?: boolean
+          category?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          last_purchase_date?: string | null
+          last_purchase_price?: number | null
+          manufacturer?: string | null
+          name?: string
+          organization_id?: string
+          par_level?: number | null
+          product_id?: string | null
+          quantity?: number
+          sku?: string | null
+          unit?: string
+          updated_at?: string
+          vendor_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_items_product_org_fk"
+            columns: ["product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      inventory_price_history: {
+        Row: {
+          created_at: string
+          extended_price: number | null
+          id: string
+          invoice_id: string
+          invoice_item_id: string
+          organization_id: string
+          package_size: string | null
+          product_id: string
+          purchase_date: string
+          quantity: number
+          unit_of_measure: string | null
+          unit_price: number | null
+          vendor_id: string
+          vendor_product_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          extended_price?: number | null
+          id?: string
+          invoice_id: string
+          invoice_item_id: string
+          organization_id: string
+          package_size?: string | null
+          product_id: string
+          purchase_date: string
+          quantity: number
+          unit_of_measure?: string | null
+          unit_price?: number | null
+          vendor_id: string
+          vendor_product_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          extended_price?: number | null
+          id?: string
+          invoice_id?: string
+          invoice_item_id?: string
+          organization_id?: string
+          package_size?: string | null
+          product_id?: string
+          purchase_date?: string
+          quantity?: number
+          unit_of_measure?: string | null
+          unit_price?: number | null
+          vendor_id?: string
+          vendor_product_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_price_history_invoice_item_org_fk"
+            columns: ["invoice_item_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "invoice_items"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_price_history_invoice_org_fk"
+            columns: ["invoice_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_price_history_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_price_history_product_org_fk"
+            columns: ["product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_price_history_vendor_org_fk"
+            columns: ["vendor_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_price_history_vendor_product_org_fk"
+            columns: ["vendor_product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendor_products"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      invoice_extraction_candidates: {
+        Row: {
+          candidate_type: string
+          confidence_data: Json
+          created_at: string
+          extraction_run_id: string
+          field_data: Json
+          id: string
+          line_number: number | null
+          organization_id: string
+          review_status: string
+          source_data: Json
+          updated_at: string
+        }
+        Insert: {
+          candidate_type: string
+          confidence_data?: Json
+          created_at?: string
+          extraction_run_id: string
+          field_data?: Json
+          id?: string
+          line_number?: number | null
+          organization_id: string
+          review_status?: string
+          source_data?: Json
+          updated_at?: string
+        }
+        Update: {
+          candidate_type?: string
+          confidence_data?: Json
+          created_at?: string
+          extraction_run_id?: string
+          field_data?: Json
+          id?: string
+          line_number?: number | null
+          organization_id?: string
+          review_status?: string
+          source_data?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_extraction_candidates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_extraction_candidates_run_org_fk"
+            columns: ["extraction_run_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "invoice_extraction_runs"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      invoice_extraction_runs: {
+        Row: {
+          attempt_number: number
+          completed_at: string | null
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          extractor_name: string | null
+          extractor_version: string | null
+          id: string
+          organization_id: string
+          processing_job_id: string
+          raw_result: Json | null
+          schema_version: string
+          started_at: string | null
+          status: string
+          updated_at: string
+          vendor_invoice_id: string
+        }
+        Insert: {
+          attempt_number?: number
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          extractor_name?: string | null
+          extractor_version?: string | null
+          id?: string
+          organization_id: string
+          processing_job_id: string
+          raw_result?: Json | null
+          schema_version?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_invoice_id: string
+        }
+        Update: {
+          attempt_number?: number
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          extractor_name?: string | null
+          extractor_version?: string | null
+          id?: string
+          organization_id?: string
+          processing_job_id?: string
+          raw_result?: Json | null
+          schema_version?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_invoice_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_extraction_runs_job_org_fk"
+            columns: ["processing_job_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "invoice_processing_jobs"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "invoice_extraction_runs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_extraction_runs_source_org_fk"
+            columns: ["vendor_invoice_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendor_invoices"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      invoice_items: {
+        Row: {
+          category: string | null
+          created_at: string
+          description: string
+          id: string
+          invoice_id: string
+          line_number: number | null
+          manufacturer: string | null
+          organization_id: string
+          package_size: string | null
+          product_id: string | null
+          quantity: number
+          review_status: string
+          sku: string | null
+          total_price: number | null
+          unit_of_measure: string | null
+          unit_price: number | null
+          updated_at: string
+          vendor_product_id: string | null
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          description: string
+          id?: string
+          invoice_id: string
+          line_number?: number | null
+          manufacturer?: string | null
+          organization_id: string
+          package_size?: string | null
+          product_id?: string | null
+          quantity: number
+          review_status?: string
+          sku?: string | null
+          total_price?: number | null
+          unit_of_measure?: string | null
+          unit_price?: number | null
+          updated_at?: string
+          vendor_product_id?: string | null
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          description?: string
+          id?: string
+          invoice_id?: string
+          line_number?: number | null
+          manufacturer?: string | null
+          organization_id?: string
+          package_size?: string | null
+          product_id?: string | null
+          quantity?: number
+          review_status?: string
+          sku?: string | null
+          total_price?: number | null
+          unit_of_measure?: string | null
+          unit_price?: number | null
+          updated_at?: string
+          vendor_product_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_items_product_org_fk"
+            columns: ["product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "invoice_items_vendor_product_org_fk"
+            columns: ["vendor_product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendor_products"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
       }
       invoice_line_items: {
         Row: {
@@ -102,16 +1030,86 @@ export type Database = {
           },
         ]
       }
+      invoice_processing_jobs: {
+        Row: {
+          created_at: string
+          document_page_count: number | null
+          document_processing_duration_ms: number | null
+          document_text_status: string
+          extraction_error: string | null
+          extraction_provider: string | null
+          extraction_result: Json | null
+          id: string
+          invoice_id: string
+          ocr_provider: string | null
+          ocr_required: boolean
+          organization_id: string
+          raw_extracted_text: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          document_page_count?: number | null
+          document_processing_duration_ms?: number | null
+          document_text_status?: string
+          extraction_error?: string | null
+          extraction_provider?: string | null
+          extraction_result?: Json | null
+          id?: string
+          invoice_id: string
+          ocr_provider?: string | null
+          ocr_required?: boolean
+          organization_id: string
+          raw_extracted_text?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          document_page_count?: number | null
+          document_processing_duration_ms?: number | null
+          document_text_status?: string
+          extraction_error?: string | null
+          extraction_provider?: string | null
+          extraction_result?: Json | null
+          id?: string
+          invoice_id?: string
+          ocr_provider?: string | null
+          ocr_required?: boolean
+          organization_id?: string
+          raw_extracted_text?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_processing_jobs_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: true
+            referencedRelation: "vendor_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_processing_jobs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           created_at: string
+          currency_code: string | null
+          document_type: string
           id: string
           invoice_date: string | null
           invoice_number: string | null
           invoice_total: number | null
-          document_type: string
-          order_number: string | null
           order_date: string | null
+          order_number: string | null
           organization_id: string
           payment_terms: string | null
           posted_at: string | null
@@ -127,19 +1125,19 @@ export type Database = {
           total_amount: number | null
           updated_at: string
           vendor_id: string | null
-          vendor_name: string | null
           vendor_identity_reviewed: boolean
-          currency_code: string | null
+          vendor_name: string | null
         }
         Insert: {
           created_at?: string
+          currency_code?: string | null
+          document_type?: string
           id?: string
           invoice_date?: string | null
           invoice_number?: string | null
           invoice_total?: number | null
-          document_type?: string
-          order_number?: string | null
           order_date?: string | null
+          order_number?: string | null
           organization_id: string
           payment_terms?: string | null
           posted_at?: string | null
@@ -155,19 +1153,19 @@ export type Database = {
           total_amount?: number | null
           updated_at?: string
           vendor_id?: string | null
-          vendor_name?: string | null
           vendor_identity_reviewed?: boolean
-          currency_code?: string | null
+          vendor_name?: string | null
         }
         Update: {
           created_at?: string
+          currency_code?: string | null
+          document_type?: string
           id?: string
           invoice_date?: string | null
           invoice_number?: string | null
           invoice_total?: number | null
-          document_type?: string
-          order_number?: string | null
           order_date?: string | null
+          order_number?: string | null
           organization_id?: string
           payment_terms?: string | null
           posted_at?: string | null
@@ -183,9 +1181,8 @@ export type Database = {
           total_amount?: number | null
           updated_at?: string
           vendor_id?: string | null
-          vendor_name?: string | null
           vendor_identity_reviewed?: boolean
-          currency_code?: string | null
+          vendor_name?: string | null
         }
         Relationships: [
           {
@@ -193,6 +1190,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_source_file_id_fkey"
+            columns: ["source_file_id"]
+            isOneToOne: true
+            referencedRelation: "vendor_invoices"
             referencedColumns: ["id"]
           },
           {
@@ -402,6 +1406,7 @@ export type Database = {
           alias: string
           created_at: string
           id: string
+          normalized_alias: string
           organization_id: string
           product_id: string
         }
@@ -409,6 +1414,7 @@ export type Database = {
           alias: string
           created_at?: string
           id?: string
+          normalized_alias: string
           organization_id: string
           product_id: string
         }
@@ -416,6 +1422,7 @@ export type Database = {
           alias?: string
           created_at?: string
           id?: string
+          normalized_alias?: string
           organization_id?: string
           product_id?: string
         }
@@ -434,12 +1441,75 @@ export type Database = {
             referencedRelation: "products"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "product_aliases_product_org_fk"
+            columns: ["product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      product_categories: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          name: string
+          normalized_name: string
+          organization_id: string
+          parent_category_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name: string
+          normalized_name: string
+          organization_id: string
+          parent_category_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name?: string
+          normalized_name?: string
+          organization_id?: string
+          parent_category_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_categories_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_categories_parent_category_id_fkey"
+            columns: ["parent_category_id"]
+            isOneToOne: false
+            referencedRelation: "product_categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_categories_parent_org_fk"
+            columns: ["parent_category_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "product_categories"
+            referencedColumns: ["id", "organization_id"]
+          },
         ]
       }
       products: {
         Row: {
-          approved: boolean
           active: boolean
+          approved: boolean
+          catalog_product_id: string | null
           category_id: string | null
           created_at: string
           description: string | null
@@ -458,8 +1528,9 @@ export type Database = {
           vendor_item_number: string | null
         }
         Insert: {
-          approved?: boolean
           active?: boolean
+          approved?: boolean
+          catalog_product_id?: string | null
           category_id?: string | null
           created_at?: string
           description?: string | null
@@ -478,8 +1549,9 @@ export type Database = {
           vendor_item_number?: string | null
         }
         Update: {
-          approved?: boolean
           active?: boolean
+          approved?: boolean
+          catalog_product_id?: string | null
           category_id?: string | null
           created_at?: string
           description?: string | null
@@ -499,11 +1571,46 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "products_catalog_product_fk"
+            columns: ["catalog_product_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "product_categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_category_org_fk"
+            columns: ["category_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "product_categories"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
             foreignKeyName: "products_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_preferred_vendor_id_fkey"
+            columns: ["preferred_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_vendor_org_fk"
+            columns: ["preferred_vendor_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id", "organization_id"]
           },
         ]
       }
@@ -530,6 +1637,64 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      supply_request_items: {
+        Row: {
+          created_at: string
+          free_text_item: string | null
+          id: string
+          organization_id: string
+          product_id: string | null
+          quantity: number
+          supply_request_id: string
+          unit: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          free_text_item?: string | null
+          id?: string
+          organization_id: string
+          product_id?: string | null
+          quantity: number
+          supply_request_id: string
+          unit?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          free_text_item?: string | null
+          id?: string
+          organization_id?: string
+          product_id?: string | null
+          quantity?: number
+          supply_request_id?: string
+          unit?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supply_request_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supply_request_items_product_org_fk"
+            columns: ["product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "supply_request_items_request_org_fk"
+            columns: ["supply_request_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "supply_requests"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
       }
       supply_request_updates: {
         Row: {
@@ -591,12 +1756,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      supply_request_items: {
-        Row: { id: string; organization_id: string; supply_request_id: string; product_id: string | null; free_text_item: string | null; quantity: number; unit: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; organization_id: string; supply_request_id: string; product_id?: string | null; free_text_item?: string | null; quantity: number; unit?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; organization_id?: string; supply_request_id?: string; product_id?: string | null; free_text_item?: string | null; quantity?: number; unit?: string | null; created_at?: string; updated_at?: string }
-        Relationships: []
       }
       supply_requests: {
         Row: {
@@ -729,6 +1888,54 @@ export type Database = {
           },
         ]
       }
+      vendor_identity_signatures: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          normalized_value: string
+          organization_id: string
+          signature_type: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          normalized_value: string
+          organization_id: string
+          signature_type: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          normalized_value?: string
+          organization_id?: string
+          signature_type?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_identity_signatures_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vendor_identity_signatures_vendor_org_fk"
+            columns: ["vendor_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       vendor_invoices: {
         Row: {
           created_at: string
@@ -776,6 +1983,7 @@ export type Database = {
       vendor_products: {
         Row: {
           active: boolean
+          catalog_vendor_product_id: string | null
           created_at: string
           id: string
           manufacturer_sku: string | null
@@ -789,6 +1997,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          catalog_vendor_product_id?: string | null
           created_at?: string
           id?: string
           manufacturer_sku?: string | null
@@ -802,6 +2011,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          catalog_vendor_product_id?: string | null
           created_at?: string
           id?: string
           manufacturer_sku?: string | null
@@ -813,18 +2023,42 @@ export type Database = {
           vendor_id?: string
           vendor_sku?: string
         }
-        Relationships: []
-      }
-      vendor_identity_signatures: {
-        Row: { id: string; organization_id: string; vendor_id: string; signature_type: string; normalized_value: string; active: boolean; created_at: string; updated_at: string }
-        Insert: { id?: string; organization_id: string; vendor_id: string; signature_type: string; normalized_value: string; active?: boolean; created_at?: string; updated_at?: string }
-        Update: { id?: string; organization_id?: string; vendor_id?: string; signature_type?: string; normalized_value?: string; active?: boolean; created_at?: string; updated_at?: string }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "vendor_products_catalog_vendor_product_fk"
+            columns: ["catalog_vendor_product_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendor_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vendor_products_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vendor_products_product_org_fk"
+            columns: ["product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "vendor_products_vendor_org_fk"
+            columns: ["vendor_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
       }
       vendors: {
         Row: {
           account_number: string | null
           active: boolean
+          catalog_vendor_id: string | null
           contact_name: string | null
           created_at: string
           email: string | null
@@ -840,6 +2074,7 @@ export type Database = {
         Insert: {
           account_number?: string | null
           active?: boolean
+          catalog_vendor_id?: string | null
           contact_name?: string | null
           created_at?: string
           email?: string | null
@@ -855,6 +2090,7 @@ export type Database = {
         Update: {
           account_number?: string | null
           active?: boolean
+          catalog_vendor_id?: string | null
           contact_name?: string | null
           created_at?: string
           email?: string | null
@@ -869,6 +2105,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "vendors_catalog_vendor_fk"
+            columns: ["catalog_vendor_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendors"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "vendors_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
@@ -882,10 +2125,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      adjust_inventory_quantity: {
-        Args: { _organization_id: string; _inventory_item_id: string; _adjustment_amount: number; _reason: string }
-        Returns: number
-      }
       accept_invitation: {
         Args: { _raw_token: string }
         Returns: {
@@ -893,6 +2132,25 @@ export type Database = {
           role: Database["public"]["Enums"]["org_role"]
           route: string
         }[]
+      }
+      adjust_inventory_quantity: {
+        Args: {
+          _adjustment_amount: number
+          _inventory_item_id: string
+          _organization_id: string
+          _reason: string
+        }
+        Returns: number
+      }
+      confirm_invoice_item_product: {
+        Args: {
+          _invoice_item_id: string
+          _organization_id: string
+          _product_id: string
+          _remember_vendor_sku?: boolean
+          _source_file_id: string
+        }
+        Returns: Json
       }
       create_invitation: {
         Args: {
@@ -906,13 +2164,21 @@ export type Database = {
         Returns: string
       }
       create_organization: { Args: { _name: string }; Returns: string }
-      confirm_invoice_item_product: {
-        Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string; _product_id: string; _remember_vendor_sku?: boolean }
+      create_product_from_invoice_item: {
+        Args: {
+          _invoice_item_id: string
+          _organization_id: string
+          _source_file_id: string
+        }
         Returns: Json
       }
-      create_product_from_invoice_item: {
-        Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string }
+      delete_invoice_permanently: {
+        Args: { _organization_id: string; _source_file_id: string }
         Returns: Json
+      }
+      forget_invoice_vendor_signatures: {
+        Args: { _organization_id: string; _source_file_id: string }
+        Returns: number
       }
       has_org_role: {
         Args: {
@@ -922,63 +2188,111 @@ export type Database = {
         }
         Returns: boolean
       }
-      forget_invoice_vendor_signatures: {
-        Args: { _organization_id: string; _source_file_id: string }
-        Returns: number
-      }
       is_org_admin: { Args: { _org: string; _user: string }; Returns: boolean }
       is_org_member: { Args: { _org: string; _user: string }; Returns: boolean }
       list_organization_member_identities: {
         Args: { _organization_id: string }
-        Returns: { user_id: string; display_name: string; email: string | null; default_team_name: string | null; default_location_name: string | null }[]
+        Returns: {
+          default_location_name: string
+          default_team_name: string
+          display_name: string
+          email: string
+          user_id: string
+        }[]
+      }
+      normalize_catalog_sku: { Args: { _value: string }; Returns: string }
+      normalize_catalog_sku_match_key: {
+        Args: { _value: string }
+        Returns: string
+      }
+      normalize_catalog_text: { Args: { _value: string }; Returns: string }
+      persist_invoice_document_identity: {
+        Args: {
+          _document_type: string
+          _order_date: string
+          _order_number: string
+          _organization_id: string
+          _source_file_id: string
+        }
+        Returns: undefined
       }
       post_reviewed_invoice: {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: Json
       }
-      delete_invoice_permanently: {
-        Args: { _organization_id: string; _source_file_id: string }
-        Returns: Json
-      }
-      persist_invoice_document_identity: {
-        Args: { _organization_id: string; _source_file_id: string; _document_type: string; _order_number: string; _order_date: string | null }
-        Returns: undefined
-      }
-      remember_invoice_vendor_signatures: {
-        Args: { _organization_id: string; _source_file_id: string; _vendor_id: string; _evidence: Json }
-        Returns: number
+      receive_invoice_inventory_item: {
+        Args: {
+          _category: string
+          _name: string
+          _organization_id: string
+          _quantity: number
+          _sku: string
+          _unit: string
+          _unit_price: number
+          _vendor_name: string
+        }
+        Returns: {
+          created: boolean
+          inventory_item_id: string
+        }[]
       }
       rematch_invoice_vendor_products: {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: number
       }
+      remember_invoice_vendor_signatures: {
+        Args: {
+          _evidence: Json
+          _organization_id: string
+          _source_file_id: string
+          _vendor_id: string
+        }
+        Returns: number
+      }
+      revoke_invitation: { Args: { _id: string }; Returns: undefined }
+      seed_product_categories: {
+        Args: { _organization_id: string }
+        Returns: undefined
+      }
       seed_structured_invoice_draft: {
-        Args: { _organization_id: string; _source_file_id: string; _extraction: Json; _provider: string }
+        Args: {
+          _extraction: Json
+          _organization_id: string
+          _provider: string
+          _source_file_id: string
+        }
         Returns: boolean
+      }
+      submit_supply_request: {
+        Args: {
+          _items: Json
+          _location_id: string
+          _notes: string
+          _organization_id: string
+          _request_type: Database["public"]["Enums"]["supply_request_type"]
+          _team_id: string
+        }
+        Returns: string
       }
       transition_supply_request: {
         Args: {
+          _internal_note?: string
           _organization_id: string
           _request_id: string
+          _staff_visible_note?: string
           _status: Database["public"]["Enums"]["supply_request_status"]
-          _internal_note?: string | null
-          _staff_visible_note?: string | null
         }
         Returns: Json
       }
-      submit_supply_request: {
-        Args: { _organization_id: string; _request_type: Database["public"]["Enums"]["supply_request_type"]; _team_id: string | null; _location_id: string | null; _notes: string | null; _items: Json }
-        Returns: string
-      }
       unlink_invoice_item_product: {
-        Args: { _organization_id: string; _source_file_id: string; _invoice_item_id: string; _forget_mapping?: boolean }
+        Args: {
+          _forget_mapping?: boolean
+          _invoice_item_id: string
+          _organization_id: string
+          _source_file_id: string
+        }
         Returns: undefined
       }
-      receive_invoice_inventory_item: {
-        Args: { _organization_id: string; _sku: string; _name: string; _vendor_name: string; _quantity: number; _unit: string; _category: string; _unit_price: number }
-        Returns: { inventory_item_id: string; created: boolean }[]
-      }
-      revoke_invitation: { Args: { _id: string }; Returns: undefined }
     }
     Enums: {
       org_role: "owner" | "admin" | "staff"

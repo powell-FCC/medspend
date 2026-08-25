@@ -428,12 +428,14 @@ export const updateRequestStatusFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     await requireAdmin(context, data.organizationId);
+    const internalNote = data.internalNote?.trim();
+    const staffVisibleNote = data.staffVisibleNote?.trim();
     const { data: result, error } = await context.supabase.rpc("transition_supply_request", {
       _organization_id: data.organizationId,
       _request_id: data.id,
       _status: data.status,
-      _internal_note: data.internalNote?.trim() || null,
-      _staff_visible_note: data.staffVisibleNote?.trim() || null,
+      ...(internalNote ? { _internal_note: internalNote } : {}),
+      ...(staffVisibleNote ? { _staff_visible_note: staffVisibleNote } : {}),
     });
     if (error) throw new Error(error.message);
     return result;

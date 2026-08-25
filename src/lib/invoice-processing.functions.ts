@@ -212,7 +212,8 @@ async function attemptStructuredExtraction(db: SupabaseClient<Database>, organiz
         _organization_id: organizationId, _source_file_id: sourceFileId,
         _document_type: extraction.header.documentType?.value ?? 'UNKNOWN',
         _order_number: extraction.header.orderNumber?.value ?? '',
-        _order_date: extraction.header.orderDate?.value || null,
+        // PostgreSQL accepts NULL here; generated RPC types only model that the argument is required.
+        _order_date: (extraction.header.orderDate?.value || null) as string,
       });
       if (identityError) throw new Error(identityError.message);
     }
