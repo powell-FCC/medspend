@@ -34,3 +34,59 @@ The 9,268 keyed SKU occurrences become source-record candidates with ordinals
 invented SKUs or ordinals. Dry-run records use deterministic logical keys and
 omit database UUIDs and lifecycle timestamps; a future, separately approved
 promotion workflow must translate those keys and add lifecycle timestamps.
+
+## Phase 5A.4C production importer
+
+`import.ts` consumes only the generated v28 directory. It never reads the XLSX
+workbooks. Its default mode validates the pinned manifest and every artifact,
+maps deterministic database IDs, appends ordinals 9,269–9,321 to the 53
+unkeyed rows in their preserved artifact order, and writes an import plan
+without opening a database connection:
+
+```sh
+npm run catalog:henry-schein:import
+```
+
+An optional live preflight is read-only and requires the server-side Supabase
+environment variables:
+
+```sh
+npm run catalog:henry-schein:import -- --preflight-live
+```
+
+The production mutation path is deliberately awkward to invoke:
+
+```sh
+npm run catalog:henry-schein:import -- \
+  --execute \
+  --confirm-production-import
+```
+
+An existing `pending`, `processing`, `failed`, or `cancelled` batch is refused
+unless `--resume-incomplete` is also supplied. Resume re-reads every expected
+deterministic row, adopts only exact semantic matches, and inserts only missing
+rows. It never updates or deletes immutable source records. A completed batch
+is reconciled and returned as already imported without mutation.
+
+Supabase REST requests are not a shared database transaction. The importer
+therefore uses deterministic UUIDv5 identities, small ordered chunks, exact
+post-phase reads, explicit failed/incomplete batch state, and opt-in recovery.
+It targets only the six platform catalog tables and never organization-scoped
+catalog, inventory, invoice, or pricing tables.
+
+All IDs use RFC 4122 UUIDv5 under the namespace derived from URL namespace
+`6ba7b811-9dad-11d1-80b4-00c04fd430c8` and
+`https://medspend.app/global-catalog/import-identities/v1`. Natural names are:
+
+- vendor: normalized vendor name;
+- batch: normalized vendor name + source artifact SHA-256 + manifest SHA-256;
+- canonical product: normalized vendor name + authoritative normalized SKU;
+- vendor product: normalized vendor name + authoritative normalized SKU;
+- source record: deterministic batch ID + source ordinal;
+- override: normalized vendor name + deterministic batch ID + stable dry-run
+  `override_key`.
+
+Canonical IDs deliberately remain stable across catalog versions. If a later
+artifact reuses an authoritative SKU with different semantic product
+attributes, the importer stops for manual reconciliation rather than creating
+a versioned duplicate or overwriting the existing identity.
