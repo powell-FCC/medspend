@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
   reconcileImportedCatalog,
   runPreflight,
   uuidV5,
+  writeExecutionReports,
   type CatalogStore,
   type CatalogTable,
   type DbRow,
@@ -245,6 +246,10 @@ test("same completed batch returns already-imported without mutation", async () 
   assert.equal(result.result, "already_imported");
   assert.equal(result.reconciliation.result, "PASS");
   assert.equal(store.mutationCalls, 0);
+  assert.equal(result.rowActions.catalog_products.insert, 0);
+  assert.equal(result.rowActions.catalog_products.adopt, EXPECTED_COUNTS.products);
+  assert.equal(result.successfulInsertChunks, 0);
+  assert.equal(result.finalBatchCompletionUpdates, 0);
 });
 
 test("incomplete batch refuses by default", async () => {
@@ -274,6 +279,164 @@ test("resume-incomplete adopts exact rows and inserts only missing rows", async 
   assert.equal(store.rows("catalog_products").length, EXPECTED_COUNTS.products);
   assert.equal(store.rows("catalog_source_records").length, EXPECTED_COUNTS.sources);
   assert.deepEqual(store.batchStatuses.slice(-2), ["processing", "completed"]);
+  assert.deepEqual(result.rowActions.catalog_products, {
+    insert: EXPECTED_COUNTS.products - exactProducts.length,
+    adopt: exactProducts.length,
+  });
+});
+
+test("successful execute mode writes complete durable execution artifacts", async () => {
+  const temporary = mkdtempSync(path.join(tmpdir(), "medspend-hs-execution-report-"));
+  const store = new MemoryCatalogStore();
+  try {
+    const result = await runCli(
+      [
+        "--execute",
+        "--confirm-production-import",
+        "--input-dir",
+        inputDir,
+        "--output-dir",
+        temporary,
+      ],
+      {
+        environment: {
+          SUPABASE_URL: "https://example.supabase.co",
+          SUPABASE_SERVICE_ROLE_KEY: "test-only",
+        },
+        createStore: async () => store,
+        log: () => undefined,
+      },
+    );
+    assert.equal(result.result, "completed");
+    assert.deepEqual(
+      result.executionFiles.map((file) => path.basename(file)),
+      ["execution_report.json", "execution_report.md", "post_import_reconciliation.json"],
+    );
+
+    const report = JSON.parse(
+      readFileSync(path.join(temporary, "execution_report.json"), "utf8"),
+    ) as {
+      result: string;
+      generatedAt: string;
+      executionResult: string;
+      finalBatch: { status: string };
+      startingState: { lifecycle: string };
+      recovery: { state: string };
+      totals: {
+        insertedRows: number;
+        adoptedRows: number;
+        failedOrConflictingRows: number;
+        mutationCalls: number;
+        finalBatchCompletionUpdates: number;
+      };
+      chunking: { successfulInsertChunks: number; failedInsertChunks: number };
+      finalTableCounts: Record<ReadCountTable, number>;
+    };
+    assert.equal(report.result, "PASS");
+    assert.equal(report.executionResult, "completed");
+    assert.equal(report.finalBatch.status, "completed");
+    assert.equal(report.startingState.lifecycle, "fresh");
+    assert.equal(report.recovery.state, "not_required");
+    assert.equal(report.totals.insertedRows, EXPECTED_COUNTS.freshInsertedRows);
+    assert.equal(report.totals.adoptedRows, 0);
+    assert.equal(report.totals.failedOrConflictingRows, 0);
+    assert.equal(report.totals.mutationCalls, 116);
+    assert.equal(report.totals.finalBatchCompletionUpdates, 1);
+    assert.equal(report.chunking.successfulInsertChunks, 115);
+    assert.equal(report.chunking.failedInsertChunks, 0);
+    assert.deepEqual(report.finalTableCounts, {
+      catalog_vendors: 1,
+      catalog_categories: 0,
+      catalog_products: EXPECTED_COUNTS.products,
+      catalog_vendor_products: EXPECTED_COUNTS.vendorProducts,
+      catalog_import_batches: 1,
+      catalog_source_records: EXPECTED_COUNTS.sources,
+      catalog_verification_overrides: EXPECTED_COUNTS.overrides,
+    });
+    assert.equal(Number.isNaN(Date.parse(report.generatedAt)), false);
+
+    const reconciliation = JSON.parse(
+      readFileSync(path.join(temporary, "post_import_reconciliation.json"), "utf8"),
+    ) as {
+      result: string;
+      tableCounts: Record<ReadCountTable, number>;
+      assertions: Array<{ pass: boolean }>;
+    };
+    assert.equal(reconciliation.result, "PASS");
+    assert.deepEqual(reconciliation.tableCounts, report.finalTableCounts);
+    assert.deepEqual(
+      reconciliation.assertions.filter((item: { pass: boolean }) => !item.pass),
+      [],
+    );
+
+    const markdown = readFileSync(path.join(temporary, "execution_report.md"), "utf8");
+    assert.match(markdown, /Inserted rows: \*\*27,474\*\*/);
+    assert.match(markdown, /catalog_categories \| 0/);
+    assert.match(markdown, /Final batch status: \*\*completed\*\*/);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("failed execute mode cannot write success execution artifacts", async () => {
+  const temporary = mkdtempSync(path.join(tmpdir(), "medspend-hs-execution-failure-"));
+  const store = new MemoryCatalogStore();
+  store.failInsertTable = "catalog_verification_overrides";
+  try {
+    await assert.rejects(
+      runCli(
+        [
+          "--execute",
+          "--confirm-production-import",
+          "--input-dir",
+          inputDir,
+          "--output-dir",
+          temporary,
+        ],
+        {
+          environment: {
+            SUPABASE_URL: "https://example.supabase.co",
+            SUPABASE_SERVICE_ROLE_KEY: "test-only",
+          },
+          createStore: async () => store,
+          log: () => undefined,
+        },
+      ),
+      /forced catalog_verification_overrides insert failure/,
+    );
+    for (const name of [
+      "execution_report.json",
+      "execution_report.md",
+      "post_import_reconciliation.json",
+    ]) {
+      assert.equal(existsSync(path.join(temporary, name)), false);
+    }
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("execution reporting rejects inconsistent row accounting", async () => {
+  const temporary = mkdtempSync(path.join(tmpdir(), "medspend-hs-accounting-failure-"));
+  const store = new MemoryCatalogStore(completeSeed(prepared));
+  try {
+    const execution = await executePreparedImport(prepared, store, {
+      resumeIncomplete: false,
+      timestamp: "2026-08-25T12:00:00.000Z",
+    });
+    execution.rowActions.catalog_products.adopt -= 1;
+    assert.throws(
+      () =>
+        writeExecutionReports(temporary, prepared, execution, {
+          resumeIncomplete: false,
+          generatedAt: "2026-08-25T12:01:00.000Z",
+        }),
+      /Execution accounting mismatch for catalog_products/,
+    );
+    assert.equal(existsSync(path.join(temporary, "execution_report.json")), false);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test("conflicting existing canonical product blocks import", async () => {

@@ -212,12 +212,18 @@ export type PlannedMutations = {
 export type ReconciliationResult = {
   result: "PASS" | "FAIL";
   assertions: ValidationAssertion[];
+  tableCounts: Record<ReadCountTable, number>;
 };
 
 export type ExecuteResult = {
   result: "completed" | "already_imported";
   reconciliation: ReconciliationResult;
   mutationCalls: number;
+  initialLifecycle: CatalogState["lifecycle"];
+  initialBatchStatus: string | null;
+  rowActions: Record<CatalogTable, { insert: number; adopt: number }>;
+  successfulInsertChunks: number;
+  finalBatchCompletionUpdates: number;
 };
 
 export interface CatalogStore {
@@ -1289,6 +1295,15 @@ function emptyCounts(): Record<ReadCountTable, null> {
   >;
 }
 
+async function readCatalogTableCounts(
+  store: CatalogStore,
+): Promise<Record<ReadCountTable, number>> {
+  const entries = await Promise.all(
+    READ_ONLY_COUNT_TABLES.map(async (table) => [table, await store.count(table)] as const),
+  );
+  return Object.fromEntries(entries) as Record<ReadCountTable, number>;
+}
+
 export function offlineCatalogState(): CatalogState {
   return {
     mode: "offline",
@@ -1321,10 +1336,7 @@ export async function inspectLiveCatalog(
   store: CatalogStore,
   prepared: PreparedImport,
 ): Promise<CatalogState> {
-  const tableCountEntries = await Promise.all(
-    READ_ONLY_COUNT_TABLES.map(async (table) => [table, await store.count(table)] as const),
-  );
-  const tableCounts = Object.fromEntries(tableCountEntries) as Record<ReadCountTable, number>;
+  const tableCounts = await readCatalogTableCounts(store);
   const vendorRows = await store.findVendorsByNormalizedName(
     prepared.vendor.normalized_name as string,
   );
@@ -1612,6 +1624,191 @@ export function writeImportPlan(
   return files.map(([name]) => path.join(resolved, name));
 }
 
+function executionMarkdown(report: {
+  generatedAt: string;
+  executionResult: ExecuteResult["result"];
+  manifestSha256: string;
+  vendorId: string;
+  batchId: string;
+  initialLifecycle: CatalogState["lifecycle"];
+  initialBatchStatus: string | null;
+  resumeIncompleteRequested: boolean;
+  rowActions: Record<CatalogTable, { insert: number; adopt: number }>;
+  insertedRows: number;
+  adoptedRows: number;
+  mutationCalls: number;
+  successfulInsertChunks: number;
+  finalBatchCompletionUpdates: number;
+  reconciliationResult: ReconciliationResult["result"];
+  finalTableCounts: Record<ReadCountTable, number>;
+}): string {
+  return [
+    "# Henry Schein v28 production import execution",
+    "",
+    `Execution result: **${report.executionResult}**`,
+    `Post-import reconciliation: **${report.reconciliationResult}**`,
+    "Final batch status: **completed**",
+    `Report generated: **${report.generatedAt}**`,
+    `Manifest SHA-256: \`${report.manifestSha256}\``,
+    `Vendor ID: \`${report.vendorId}\``,
+    `Batch ID: \`${report.batchId}\``,
+    "",
+    "## Starting state",
+    "",
+    `Lifecycle: **${report.initialLifecycle}**`,
+    `Batch status: **${report.initialBatchStatus ?? "absent"}**`,
+    `Resume requested: **${report.resumeIncompleteRequested ? "yes" : "no"}**`,
+    "",
+    "## Row actions",
+    "",
+    "| Table | Inserted | Adopted |",
+    "|---|---:|---:|",
+    ...CATALOG_TABLES.map(
+      (table) =>
+        `| ${table} | ${report.rowActions[table].insert.toLocaleString("en-US")} | ${report.rowActions[table].adopt.toLocaleString("en-US")} |`,
+    ),
+    "",
+    `Inserted rows: **${report.insertedRows.toLocaleString("en-US")}**`,
+    `Adopted rows: **${report.adoptedRows.toLocaleString("en-US")}**`,
+    `Successful insert chunks: **${report.successfulInsertChunks}**`,
+    "Failed insert chunks: **0**",
+    `Database mutation calls: **${report.mutationCalls}**`,
+    `Final batch completion updates: **${report.finalBatchCompletionUpdates}**`,
+    "",
+    "## Final live table counts",
+    "",
+    "| Table | Rows |",
+    "|---|---:|",
+    ...READ_ONLY_COUNT_TABLES.map(
+      (table) => `| ${table} | ${report.finalTableCounts[table].toLocaleString("en-US")} |`,
+    ),
+    "",
+    "Any failed insert chunk throws, prevents this success report, and produces a non-zero process exit status.",
+    "",
+  ].join("\n");
+}
+
+export function writeExecutionReports(
+  outputDir: string,
+  prepared: PreparedImport,
+  execution: ExecuteResult,
+  options: { resumeIncomplete: boolean; generatedAt?: string },
+): string[] {
+  if (execution.reconciliation.result !== "PASS") {
+    throw new ImportValidationError(
+      "Refusing to write a successful execution report for failed reconciliation",
+    );
+  }
+  const resolved = path.resolve(outputDir);
+  mkdirSync(resolved, { recursive: true });
+  const expectedRowsByTable: Record<CatalogTable, number> = {
+    catalog_vendors: EXPECTED_COUNTS.vendors,
+    catalog_products: EXPECTED_COUNTS.products,
+    catalog_vendor_products: EXPECTED_COUNTS.vendorProducts,
+    catalog_import_batches: EXPECTED_COUNTS.batches,
+    catalog_source_records: EXPECTED_COUNTS.sources,
+    catalog_verification_overrides: EXPECTED_COUNTS.overrides,
+  };
+  for (const table of CATALOG_TABLES) {
+    const actions = execution.rowActions[table];
+    if (actions.insert + actions.adopt !== expectedRowsByTable[table]) {
+      throw new ImportValidationError(
+        `Execution accounting mismatch for ${table}: expected ${expectedRowsByTable[table]}, received ${actions.insert + actions.adopt}`,
+      );
+    }
+  }
+  const insertedRows = CATALOG_TABLES.reduce(
+    (total, table) => total + execution.rowActions[table].insert,
+    0,
+  );
+  const adoptedRows = CATALOG_TABLES.reduce(
+    (total, table) => total + execution.rowActions[table].adopt,
+    0,
+  );
+  const expectedInsertChunks = CATALOG_TABLES.reduce(
+    (total, table) => total + Math.ceil(execution.rowActions[table].insert / WRITE_CHUNK_SIZE),
+    0,
+  );
+  if (execution.successfulInsertChunks !== expectedInsertChunks) {
+    throw new ImportValidationError(
+      `Successful insert chunk mismatch: expected ${expectedInsertChunks}, received ${execution.successfulInsertChunks}`,
+    );
+  }
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const report = {
+    result: "PASS" as const,
+    generatedAt,
+    executionResult: execution.result,
+    manifestSha256: prepared.manifestSha256,
+    deterministicIds: {
+      vendorId: prepared.ids.vendorId,
+      batchId: prepared.ids.batchId,
+    },
+    startingState: {
+      lifecycle: execution.initialLifecycle,
+      batchStatus: execution.initialBatchStatus,
+    },
+    recovery: {
+      resumeIncompleteRequested: options.resumeIncomplete,
+      resumeRequired: execution.initialLifecycle === "incomplete",
+      state:
+        execution.initialLifecycle === "incomplete"
+          ? "resumed"
+          : options.resumeIncomplete
+            ? "requested_not_needed"
+            : "not_required",
+    },
+    rowActions: execution.rowActions,
+    totals: {
+      insertedRows,
+      adoptedRows,
+      failedOrConflictingRows: 0,
+      mutationCalls: execution.mutationCalls,
+      finalBatchCompletionUpdates: execution.finalBatchCompletionUpdates,
+    },
+    chunking: {
+      writeChunkSize: WRITE_CHUNK_SIZE,
+      successfulInsertChunks: execution.successfulInsertChunks,
+      failedInsertChunks: 0,
+    },
+    finalBatch: {
+      id: prepared.ids.batchId,
+      status: "completed" as const,
+    },
+    finalTableCounts: execution.reconciliation.tableCounts,
+    postImportReconciliation: {
+      result: execution.reconciliation.result,
+      assertionCount: execution.reconciliation.assertions.length,
+      failedAssertions: execution.reconciliation.assertions.filter((item) => !item.pass),
+    },
+  };
+  const markdown = executionMarkdown({
+    generatedAt,
+    executionResult: execution.result,
+    manifestSha256: prepared.manifestSha256,
+    vendorId: prepared.ids.vendorId,
+    batchId: prepared.ids.batchId,
+    initialLifecycle: execution.initialLifecycle,
+    initialBatchStatus: execution.initialBatchStatus,
+    resumeIncompleteRequested: options.resumeIncomplete,
+    rowActions: execution.rowActions,
+    insertedRows,
+    adoptedRows,
+    mutationCalls: execution.mutationCalls,
+    successfulInsertChunks: execution.successfulInsertChunks,
+    finalBatchCompletionUpdates: execution.finalBatchCompletionUpdates,
+    reconciliationResult: execution.reconciliation.result,
+    finalTableCounts: execution.reconciliation.tableCounts,
+  });
+  const files: Array<[string, string]> = [
+    ["execution_report.json", jsonForReport(report)],
+    ["execution_report.md", markdown],
+    ["post_import_reconciliation.json", jsonForReport(execution.reconciliation)],
+  ];
+  for (const [name, contents] of files) writeFileSync(path.join(resolved, name), contents);
+  return files.map(([name]) => path.join(resolved, name));
+}
+
 export function chunkRows(rows: DbRow[], size = WRITE_CHUNK_SIZE): DbRow[][] {
   if (!Number.isInteger(size) || size <= 0) {
     throw new ImportValidationError(`Invalid chunk size: ${size}`);
@@ -1641,9 +1838,11 @@ async function insertMissing(
   table: CatalogTable,
   rows: DbRow[],
   timestamp: string,
-): Promise<void> {
+): Promise<number> {
   const materialized = executionRows(table, rows, timestamp);
-  for (const chunk of chunkRows(materialized)) await store.insert(table, chunk);
+  const chunks = chunkRows(materialized);
+  for (const chunk of chunks) await store.insert(table, chunk);
+  return chunks.length;
 }
 
 function expectNoConflicts(preflight: PreflightResult): void {
@@ -1660,6 +1859,23 @@ function classificationFor(state: CatalogState, table: CatalogTable): RowClassif
     throw new ImportValidationError("Live row classifications are required for execute mode");
   }
   return state.classifications[table];
+}
+
+function emptyRowActions(): Record<CatalogTable, { insert: number; adopt: number }> {
+  return Object.fromEntries(
+    CATALOG_TABLES.map((table) => [table, { insert: 0, adopt: 0 }]),
+  ) as Record<CatalogTable, { insert: number; adopt: number }>;
+}
+
+function recordRowActions(
+  rowActions: Record<CatalogTable, { insert: number; adopt: number }>,
+  table: CatalogTable,
+  classification: RowClassification,
+): void {
+  rowActions[table] = {
+    insert: classification.missing.length,
+    adopt: classification.exact.length,
+  };
 }
 
 async function verifyPhase(
@@ -1717,17 +1933,19 @@ export async function reconcileImportedCatalog(
   prepared: PreparedImport,
   expectedBatchStatus: "processing" | "completed",
 ): Promise<ReconciliationResult> {
-  const [vendors, batches, products, vendorProducts, sources, overrides] = await Promise.all([
-    store.findVendorsByNormalizedName(prepared.vendor.normalized_name as string),
-    store.findBatchesByArtifactSha(prepared.batch.artifact_sha256 as string),
-    store.findRowsByIds(
-      "catalog_products",
-      prepared.products.map((row) => row.id),
-    ),
-    store.findVendorProductsByVendor(prepared.ids.vendorId),
-    store.findSourceRecordsByBatch(prepared.ids.batchId),
-    store.findOverridesByBatch(prepared.ids.batchId),
-  ]);
+  const [tableCounts, vendors, batches, products, vendorProducts, sources, overrides] =
+    await Promise.all([
+      readCatalogTableCounts(store),
+      store.findVendorsByNormalizedName(prepared.vendor.normalized_name as string),
+      store.findBatchesByArtifactSha(prepared.batch.artifact_sha256 as string),
+      store.findRowsByIds(
+        "catalog_products",
+        prepared.products.map((row) => row.id),
+      ),
+      store.findVendorProductsByVendor(prepared.ids.vendorId),
+      store.findSourceRecordsByBatch(prepared.ids.batchId),
+      store.findOverridesByBatch(prepared.ids.batchId),
+    ]);
   const assertions: ValidationAssertion[] = [];
   dbAssertion(assertions, "Henry Schein vendor count", 1, vendors.length);
   if (vendors[0]) {
@@ -1918,6 +2136,7 @@ export async function reconcileImportedCatalog(
   return {
     result: assertions.every((item) => item.pass) ? "PASS" : "FAIL",
     assertions,
+    tableCounts,
   };
 }
 
@@ -1930,8 +2149,13 @@ export async function executePreparedImport(
   const initialMutationCalls = store.mutationCalls;
   const preflight = await runPreflight(prepared, store);
   expectNoConflicts(preflight);
+  const rowActions = emptyRowActions();
+  let successfulInsertChunks = 0;
 
   if (preflight.state.lifecycle === "completed") {
+    for (const table of CATALOG_TABLES) {
+      recordRowActions(rowActions, table, classificationFor(preflight.state, table));
+    }
     const reconciliation = await reconcileImportedCatalog(store, prepared, "completed");
     if (reconciliation.result !== "PASS") {
       throw new ImportValidationError("Completed batch failed post-import reconciliation");
@@ -1940,6 +2164,11 @@ export async function executePreparedImport(
       result: "already_imported",
       reconciliation,
       mutationCalls: store.mutationCalls - initialMutationCalls,
+      initialLifecycle: preflight.state.lifecycle,
+      initialBatchStatus: preflight.state.batchStatus,
+      rowActions,
+      successfulInsertChunks,
+      finalBatchCompletionUpdates: 0,
     };
   }
 
@@ -1952,12 +2181,24 @@ export async function executePreparedImport(
   let batchExists = preflight.state.lifecycle === "incomplete";
   try {
     const vendorClassification = classificationFor(preflight.state, "catalog_vendors");
-    await insertMissing(store, "catalog_vendors", vendorClassification.missing, timestamp);
+    recordRowActions(rowActions, "catalog_vendors", vendorClassification);
+    successfulInsertChunks += await insertMissing(
+      store,
+      "catalog_vendors",
+      vendorClassification.missing,
+      timestamp,
+    );
     await verifyPhase(store, "catalog_vendors", [prepared.vendor]);
 
     const batchClassification = classificationFor(preflight.state, "catalog_import_batches");
+    recordRowActions(rowActions, "catalog_import_batches", batchClassification);
     if (batchClassification.missing.length > 0) {
-      await insertMissing(store, "catalog_import_batches", batchClassification.missing, timestamp);
+      successfulInsertChunks += await insertMissing(
+        store,
+        "catalog_import_batches",
+        batchClassification.missing,
+        timestamp,
+      );
       batchExists = true;
     } else {
       await store.updateBatch(prepared.ids.batchId, {
@@ -1980,7 +2221,13 @@ export async function executePreparedImport(
       const currentPreflight = await runPreflight(prepared, store);
       expectNoConflicts(currentPreflight);
       const classification = classificationFor(currentPreflight.state, table);
-      await insertMissing(store, table, classification.missing, timestamp);
+      recordRowActions(rowActions, table, classification);
+      successfulInsertChunks += await insertMissing(
+        store,
+        table,
+        classification.missing,
+        timestamp,
+      );
       await verifyPhase(store, table, expectedRows);
     }
 
@@ -2007,6 +2254,11 @@ export async function executePreparedImport(
       result: "completed",
       reconciliation: completed,
       mutationCalls: store.mutationCalls - initialMutationCalls,
+      initialLifecycle: preflight.state.lifecycle,
+      initialBatchStatus: preflight.state.batchStatus,
+      rowActions,
+      successfulInsertChunks,
+      finalBatchCompletionUpdates: 1,
     };
   } catch (error) {
     if (batchExists) {

@@ -90,3 +90,17 @@ Canonical IDs deliberately remain stable across catalog versions. If a later
 artifact reuses an authoritative SKU with different semantic product
 attributes, the importer stops for manual reconciliation rather than creating
 a versioned duplicate or overwriting the existing identity.
+
+After a successful execute-mode reconciliation, the importer writes these files
+to `outputs/catalog/henry-schein/v28/import-plan/`:
+
+- `execution_report.json`
+- `execution_report.md`
+- `post_import_reconciliation.json`
+
+The timestamped execution report records inserted versus adopted rows, chunk
+outcomes, batch lifecycle and recovery state, mutation-call counts, final live
+counts for all seven global catalog tables, and the completed batch identity.
+The reconciliation artifact contains every post-import assertion, including the
+special-SKU checks. A failed insert or reconciliation throws before these
+success artifacts are written and leaves a non-zero process exit status.

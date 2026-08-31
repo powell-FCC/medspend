@@ -7,6 +7,7 @@ import {
   executePreparedImport,
   loadPreparedImport,
   runPreflight,
+  writeExecutionReports,
   writeImportPlan,
   type CatalogStore,
 } from "./importer.ts";
@@ -127,11 +128,23 @@ export async function runCli(
     createStore?: () => Promise<CatalogStore>;
     log?: (message: string) => void;
   } = {},
-): Promise<{ mode: string; result: string; mutationCalls: number; planFiles: string[] }> {
+): Promise<{
+  mode: string;
+  result: string;
+  mutationCalls: number;
+  planFiles: string[];
+  executionFiles: string[];
+}> {
   const options = parseCliArgs(argv);
   if (options.help) {
     (dependencies.log ?? console.log)(usage());
-    return { mode: "help", result: "help", mutationCalls: 0, planFiles: [] };
+    return {
+      mode: "help",
+      result: "help",
+      mutationCalls: 0,
+      planFiles: [],
+      executionFiles: [],
+    };
   }
   const environment = dependencies.environment ?? process.env;
   assertCliSafety(options, environment);
@@ -159,6 +172,7 @@ export async function runCli(
       result: result.result,
       mutationCalls: result.mutationCalls,
       planFiles,
+      executionFiles: [],
     };
   }
 
@@ -169,12 +183,16 @@ export async function runCli(
   const execution = await executePreparedImport(prepared, store, {
     resumeIncomplete: options.resumeIncomplete,
   });
+  const executionFiles = writeExecutionReports(options.outputDir, prepared, execution, {
+    resumeIncomplete: options.resumeIncomplete,
+  });
   const result = {
     mode: "execute",
     result: execution.result,
     mutationCalls: execution.mutationCalls,
     reconciliation: execution.reconciliation.result,
     planFiles,
+    executionFiles,
   };
   (dependencies.log ?? console.log)(JSON.stringify(result, null, 2));
   return {
@@ -182,6 +200,7 @@ export async function runCli(
     result: result.result,
     mutationCalls: result.mutationCalls,
     planFiles,
+    executionFiles,
   };
 }
 
