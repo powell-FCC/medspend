@@ -2271,6 +2271,15 @@ export type Database = {
         }
         Returns: boolean
       }
+      stock_catalog_vendor_product: {
+        Args: {
+          _catalog_vendor_product_id: string
+          _organization_id: string
+          _par_level?: number
+          _unit?: string
+        }
+        Returns: Json
+      }
       submit_supply_request: {
         Args: {
           _items: Json
