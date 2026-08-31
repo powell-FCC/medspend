@@ -2184,6 +2184,10 @@ export type Database = {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: number
       }
+      get_catalog_vendor_product_admin_detail: {
+        Args: { _catalog_vendor_product_id: string; _organization_id: string }
+        Returns: Json
+      }
       has_org_role: {
         Args: {
           _org: string
