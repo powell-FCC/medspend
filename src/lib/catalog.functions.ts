@@ -11,6 +11,7 @@ import {
   type CatalogAdminResult,
   type CatalogAdminSearchInput,
   type CatalogAdoptionResult,
+  type CatalogStockResult,
 } from "@/catalog-admin/catalog-admin";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
@@ -233,6 +234,22 @@ const catalogAdoptionResultSchema = z
   })
   .strict();
 
+const catalogStockResultSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    catalogVendorProductId: z.string().uuid(),
+    vendorProductId: z.string().uuid(),
+    productId: z.string().uuid(),
+    inventoryItemId: z.string().uuid(),
+    inventoryCreated: z.boolean(),
+    alreadyStocked: z.boolean(),
+    quantity: z.number().nonnegative(),
+    parLevel: z.number().nonnegative().nullable(),
+    unit: z.string().min(1).max(80),
+    active: z.boolean(),
+  })
+  .strict();
+
 type CatalogSearchBucket =
   | "all"
   | "normalized_sku_exact"
@@ -403,6 +420,7 @@ function mapCatalogAdminRow(row: any): CatalogAdminResult {
   let adoptionState: CatalogAdminResult["adoptionState"] = "not_adopted";
   let adoptionIssue: string | null = null;
   let organizationVendorProductId: string | null = null;
+  let organizationProductId: string | null = null;
 
   if (adoptions.length === 1) {
     const adoption = adoptions[0];
@@ -421,6 +439,7 @@ function mapCatalogAdminRow(row: any): CatalogAdminResult {
       adoptionIssue = "The organization catalog link is incomplete or inconsistent.";
     } else {
       adoptionState = "adopted";
+      organizationProductId = String(adoption.product_id);
     }
   } else if (adoptions.length > 1) {
     adoptionState = "attention";
@@ -452,6 +471,15 @@ function mapCatalogAdminRow(row: any): CatalogAdminResult {
     adoptionState,
     adoptionIssue,
     organizationVendorProductId,
+    organizationProductId,
+    inventoryState:
+      adoptionState === "adopted"
+        ? "not_stocked"
+        : adoptionState === "attention"
+          ? "attention"
+          : "not_applicable",
+    inventoryItemId: null,
+    inventoryActive: null,
   };
 }
 
@@ -492,9 +520,61 @@ async function markPartialCatalogLinks(
           ...row,
           adoptionState: "attention" as const,
           adoptionIssue: "A partial organization catalog link requires review before adoption.",
+          inventoryState: "attention" as const,
         }
       : row,
   );
+}
+
+async function markCatalogInventoryState(
+  db: any,
+  organizationId: string,
+  rows: CatalogAdminResult[],
+): Promise<CatalogAdminResult[]> {
+  const productIds = [
+    ...new Set(
+      rows
+        .filter((row) => row.adoptionState === "adopted" && row.organizationProductId)
+        .map((row) => row.organizationProductId as string),
+    ),
+  ];
+  if (!productIds.length) return rows;
+
+  const { data: inventoryRows, error } = await db
+    .from("inventory_items")
+    .select("id,product_id,active")
+    .eq("organization_id", organizationId)
+    .in("product_id", productIds);
+  if (error) throw new Error("Unable to verify catalog inventory state");
+
+  const inventoryByProduct = new Map<string, any[]>();
+  for (const inventoryRow of inventoryRows ?? []) {
+    if (!inventoryRow.product_id) continue;
+    const matches = inventoryByProduct.get(inventoryRow.product_id) ?? [];
+    matches.push(inventoryRow);
+    inventoryByProduct.set(inventoryRow.product_id, matches);
+  }
+
+  return rows.map((row) => {
+    if (row.adoptionState !== "adopted" || !row.organizationProductId) return row;
+    const matches = inventoryByProduct.get(row.organizationProductId) ?? [];
+    if (matches.length > 1) {
+      return {
+        ...row,
+        inventoryState: "attention" as const,
+        adoptionIssue: "Multiple inventory links require review.",
+      };
+    }
+    if (matches.length === 1) {
+      return {
+        ...row,
+        inventoryState: "stocked" as const,
+        inventoryItemId: String(matches[0].id),
+        inventoryActive: Boolean(matches[0].active),
+      };
+    }
+    return row;
+  });
 }
 
 export const listCatalogAdminVendorsFn = createServerFn({ method: "POST" })
@@ -572,7 +652,8 @@ export const searchCatalogAdminFn = createServerFn({ method: "POST" })
     );
 
     const mapped = pageParts.flat().map(mapCatalogAdminRow);
-    const rows = await markPartialCatalogLinks(db, input.organizationId, mapped);
+    const linked = await markPartialCatalogLinks(db, input.organizationId, mapped);
+    const rows = await markCatalogInventoryState(db, input.organizationId, linked);
     return {
       rows,
       page: input.page,
@@ -625,6 +706,51 @@ export const adoptCatalogVendorProductFn = createServerFn({ method: "POST" })
       throw new Error("Unable to add this item to the organization catalog");
     }
     return catalogAdoptionResultSchema.parse(result) as CatalogAdoptionResult;
+  });
+
+export const stockCatalogVendorProductFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        organizationId: orgId,
+        catalogVendorProductId: z.string().uuid(),
+        unit: z.string().trim().min(1).max(80).nullable().default(null),
+        parLevel: z.number().finite().nonnegative().nullable().default(null),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const db = context.supabase as any;
+    await assertAdmin(db, context.userId, data.organizationId);
+    const { data: result, error } = await db.rpc("stock_catalog_vendor_product", {
+      _organization_id: data.organizationId,
+      _catalog_vendor_product_id: data.catalogVendorProductId,
+      _unit: data.unit,
+      _par_level: data.parLevel,
+    });
+    if (error) {
+      const message = String(error.message ?? "");
+      if (error.code === "42501") throw new Error("Forbidden");
+      if (error.code === "P0002") throw new Error("This catalog item no longer exists");
+      if (error.code === "55000" && message.includes("Adopt this catalog product")) {
+        throw new Error("Add this item to the organization catalog before adding inventory");
+      }
+      if (error.code === "55000" && message.includes("Inactive or discontinued")) {
+        throw new Error("Inactive or discontinued catalog items cannot create new inventory");
+      }
+      if (error.code === "22023" && message.includes("Par level")) {
+        throw new Error("Par level must be zero or greater");
+      }
+      if (error.code === "22023" || error.code === "22001") {
+        throw new Error("Enter a valid inventory unit of 80 characters or fewer");
+      }
+      if (error.code === "23505" || error.code === "23514") {
+        throw new Error("Existing catalog or inventory links need review before stocking");
+      }
+      throw new Error("Unable to add this catalog item to inventory");
+    }
+    return catalogStockResultSchema.parse(result) as CatalogStockResult;
   });
 
 export const saveCategoryFn = createServerFn({ method: "POST" })

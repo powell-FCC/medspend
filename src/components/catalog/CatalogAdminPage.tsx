@@ -1,9 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  CatalogStockDialog,
+  type CatalogStockSubmission,
+} from "@/components/catalog/CatalogStockDialog";
 import {
   Sheet,
   SheetContent,
@@ -17,8 +22,10 @@ import {
   getCatalogAdminDetailFn,
   listCatalogAdminVendorsFn,
   searchCatalogAdminFn,
+  stockCatalogVendorProductFn,
 } from "@/lib/catalog.functions";
 import {
+  canStockCatalogResult,
   catalogPackagePresentation,
   isCatalogAdminRole,
   type CatalogAdminDetail,
@@ -48,13 +55,18 @@ export function CatalogAdminPage({
   const searchFn = useServerFn(searchCatalogAdminFn);
   const vendorsFn = useServerFn(listCatalogAdminVendorsFn);
   const adoptFn = useServerFn(adoptCatalogVendorProductFn);
+  const stockFn = useServerFn(stockCatalogVendorProductFn);
   const [draftQuery, setDraftQuery] = useState(search.q);
   const [selected, setSelected] = useState<CatalogAdminResult | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
+  const [stockingRow, setStockingRow] = useState<CatalogAdminResult | null>(null);
 
   useEffect(() => setDraftQuery(search.q), [search.q]);
-  useEffect(() => setSelected(null), [active?.organizationId]);
+  useEffect(() => {
+    setSelected(null);
+    setStockingRow(null);
+  }, [active?.organizationId]);
 
   const organizationId = active?.organizationId;
   const queryKey = ["catalog-admin", organizationId, search] as const;
@@ -94,6 +106,23 @@ export function CatalogAdminPage({
     },
     onSettled: () => setAdoptingId(null),
   });
+  const stocking = useMutation({
+    mutationFn: (input: CatalogStockSubmission) =>
+      stockFn({ data: { organizationId: organizationId!, ...input } }),
+    onMutate: () => setNotice(null),
+    onSuccess: async (result) => {
+      setNotice({
+        tone: "success",
+        message: result.alreadyStocked
+          ? "This catalog item is already in inventory."
+          : "Added to inventory with an initial quantity of zero.",
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["catalog-admin", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory", organizationId] }),
+      ]);
+    },
+  });
 
   function updateSearch(patch: SearchPatch) {
     setNotice(null);
@@ -123,8 +152,8 @@ export function CatalogAdminPage({
             Catalog administration
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Find a verified global identity, review its source trail, and add it to{" "}
-            {active.organizationName}. Catalog adoption never creates inventory.
+            Find a verified global identity, review its source trail, adopt it for{" "}
+            {active.organizationName}, and add adopted products to inventory when needed.
           </p>
         </header>
 
@@ -137,7 +166,7 @@ export function CatalogAdminPage({
             Search the global catalog
           </label>
           <div className="flex flex-col gap-3 sm:flex-row">
-            <div className="relative flex-1">
+            <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 id="catalog-search"
@@ -152,7 +181,7 @@ export function CatalogAdminPage({
             </Button>
           </div>
           <div
-            className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4"
+            className="mt-3 grid gap-2 sm:grid-cols-2 2xl:grid-cols-4"
             data-section="catalog-filters"
           >
             <FilterSelect
@@ -256,8 +285,10 @@ export function CatalogAdminPage({
               key={row.catalogVendorProductId}
               row={row}
               adopting={adoptingId === row.catalogVendorProductId}
+              canOpenInventory={active.role === "owner"}
               onDetail={() => setSelected(row)}
               onAdopt={() => runAdoption(row)}
+              onStock={() => setStockingRow(row)}
             />
           ))}
         </div>
@@ -298,6 +329,15 @@ export function CatalogAdminPage({
           if (!open) setSelected(null);
         }}
       />
+      <CatalogStockDialog
+        row={stockingRow}
+        onOpenChange={(open) => {
+          if (!open) setStockingRow(null);
+        }}
+        onStock={async (input) => {
+          await stocking.mutateAsync(input);
+        }}
+      />
     </div>
   );
 }
@@ -314,7 +354,7 @@ function FilterSelect({
   children: React.ReactNode;
 }) {
   return (
-    <label className="text-xs font-medium text-muted-foreground">
+    <label className="min-w-0 text-xs font-medium text-muted-foreground">
       <span className="mb-1 block">{label}</span>
       <select
         className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring"
@@ -351,21 +391,27 @@ function EmptyState({ hasSearch }: { hasSearch: boolean }) {
 function CatalogResultCard({
   row,
   adopting,
+  canOpenInventory,
   onDetail,
   onAdopt,
+  onStock,
 }: {
   row: CatalogAdminResult;
   adopting: boolean;
+  canOpenInventory: boolean;
   onDetail: () => void;
   onAdopt: () => void;
+  onStock: () => void;
 }) {
   const packageInfo = catalogPackagePresentation(row);
+  const needsReview = row.adoptionState === "attention" || row.inventoryState === "attention";
+  const canStock = canStockCatalogResult(row);
   return (
     <article
       className="rounded-xl border bg-card p-4 shadow-sm sm:p-5"
       data-catalog-id={row.catalogVendorProductId}
     >
-      <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_minmax(12rem,1fr)_auto] md:items-center">
+      <div className="grid gap-4 md:grid-cols-2 md:items-start 2xl:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_minmax(12rem,1fr)_auto] 2xl:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-base font-semibold">{row.productName}</h3>
@@ -390,12 +436,38 @@ function CatalogResultCard({
           <span className="mt-1 block text-xs text-muted-foreground">{packageInfo.detail}</span>
         </InfoBlock>
         <InfoBlock label="Organization state">
-          {row.adoptionState === "adopted" ? (
-            <Badge variant="secondary">Adopted</Badge>
-          ) : row.adoptionState === "attention" ? (
+          {needsReview ? (
             <>
               <Badge variant="destructive">Review link</Badge>
               <span className="mt-1 block text-xs text-muted-foreground">{row.adoptionIssue}</span>
+            </>
+          ) : row.adoptionState === "adopted" ? (
+            <>
+              <div className="flex flex-wrap gap-1.5">
+                <Badge variant="secondary">Adopted</Badge>
+                {row.inventoryState === "stocked" ? (
+                  <Badge variant="secondary">In inventory</Badge>
+                ) : canStock ? (
+                  <Badge variant="outline">Not stocked</Badge>
+                ) : (
+                  <Badge variant="outline">Not stockable</Badge>
+                )}
+              </div>
+              {row.inventoryState === "stocked" && row.inventoryActive === false && (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  The existing inventory record is archived.
+                </span>
+              )}
+              {row.inventoryState === "stocked" && !canOpenInventory && (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Inventory management remains available to organization owners.
+                </span>
+              )}
+              {row.inventoryState === "not_stocked" && !canStock && (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Inactive or discontinued catalog items cannot create inventory.
+                </span>
+              )}
             </>
           ) : (
             <Badge variant="outline">Not adopted</Badge>
@@ -403,12 +475,22 @@ function CatalogResultCard({
         </InfoBlock>
         <div className="flex flex-wrap gap-2 md:justify-end">
           <Button variant="outline" size="sm" className="min-h-10" onClick={onDetail}>
-            View details
+            {needsReview ? "Review details" : "View details"}
           </Button>
           {row.adoptionState === "not_adopted" && (
             <Button size="sm" className="min-h-10" disabled={adopting} onClick={onAdopt}>
               {adopting && <Loader2 className="animate-spin" />}{" "}
               {adopting ? "Adding…" : "Add to organization catalog"}
+            </Button>
+          )}
+          {canStock && (
+            <Button size="sm" className="min-h-10" onClick={onStock}>
+              Add to inventory
+            </Button>
+          )}
+          {row.inventoryState === "stocked" && row.inventoryActive && canOpenInventory && (
+            <Button asChild variant="outline" size="sm" className="min-h-10">
+              <Link to="/inventory">Open inventory</Link>
             </Button>
           )}
         </div>

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  canStockCatalogResult,
+  catalogInventoryUnitPrefill,
   catalogPackagePresentation,
   catalogSearchRank,
+  catalogStockingBlockReason,
   isCatalogAdminRole,
   type CatalogAdminResult,
 } from "../src/catalog-admin/catalog-admin.ts";
@@ -13,6 +16,8 @@ const routePath = new URL("src/routes/_authenticated/products.tsx", root);
 const pagePath = new URL("src/components/catalog/CatalogAdminPage.tsx", root);
 const serverPath = new URL("src/lib/catalog.functions.ts", root);
 const shellPath = new URL("src/components/app/AdminAppShell.tsx", root);
+const stockDialogPath = new URL("src/components/catalog/CatalogStockDialog.tsx", root);
+const inventoryPagePath = new URL("src/components/inventory/InventoryPage.tsx", root);
 
 function result(overrides: Partial<CatalogAdminResult> = {}): CatalogAdminResult {
   return {
@@ -37,6 +42,10 @@ function result(overrides: Partial<CatalogAdminResult> = {}): CatalogAdminResult
     adoptionState: "not_adopted",
     adoptionIssue: null,
     organizationVendorProductId: null,
+    organizationProductId: null,
+    inventoryState: "not_applicable",
+    inventoryItemId: null,
+    inventoryActive: null,
     ...overrides,
   };
 }
@@ -96,6 +105,59 @@ test("package presentation never implies normalized values for source-only or un
     detail: "Package not specified",
     verified: false,
   });
+  assert.equal(catalogInventoryUnitPrefill(result({ packageUnit: " rolls " })), "rolls");
+  assert.equal(
+    catalogInventoryUnitPrefill(
+      result({ packageStatus: "source_only", packageUnit: "untrusted-case" }),
+    ),
+    "",
+  );
+  assert.equal(
+    catalogInventoryUnitPrefill(
+      result({ packageStatus: "unknown", packageUnit: "untrusted-each" }),
+    ),
+    "",
+  );
+});
+
+test("catalog inventory actions follow adoption, stock, lifecycle, and link-integrity state", () => {
+  const notAdopted = result();
+  const unstocked = result({
+    adoptionState: "adopted",
+    organizationVendorProductId: "00000000-0000-0000-0000-000000000010",
+    organizationProductId: "00000000-0000-0000-0000-000000000011",
+    inventoryState: "not_stocked",
+  });
+  const stocked = result({
+    ...unstocked,
+    inventoryState: "stocked",
+    inventoryItemId: "00000000-0000-0000-0000-000000000012",
+    inventoryActive: true,
+  });
+  const inconsistent = result({
+    ...unstocked,
+    inventoryState: "attention",
+    adoptionIssue: "Multiple inventory links require review.",
+  });
+  const discontinued = result({ ...unstocked, active: false, discontinued: true });
+  const discontinuedStocked = result({
+    ...stocked,
+    active: false,
+    discontinued: true,
+    inventoryActive: false,
+  });
+
+  assert.equal(canStockCatalogResult(notAdopted), false);
+  assert.equal(canStockCatalogResult(unstocked), true);
+  assert.equal(canStockCatalogResult(stocked), false);
+  assert.equal(canStockCatalogResult(inconsistent), false);
+  assert.equal(canStockCatalogResult(discontinued), false);
+  assert.equal(canStockCatalogResult(discontinuedStocked), false);
+  assert.equal(catalogStockingBlockReason(stocked), "This item is already in inventory.");
+  assert.match(catalogStockingBlockReason(inconsistent) ?? "", /Review/);
+  assert.match(catalogStockingBlockReason(discontinued) ?? "", /Inactive or discontinued/);
+  assert.equal(discontinuedStocked.inventoryState, "stocked");
+  assert.equal(discontinuedStocked.inventoryActive, false);
 });
 
 test("catalog admin server functions use auth, database pagination, exclusive ranking buckets, and set-based adoption", async () => {
@@ -109,6 +171,7 @@ test("catalog admin server functions use auth, database pagination, exclusive ra
     "searchCatalogAdminFn",
     "getCatalogAdminDetailFn",
     "adoptCatalogVendorProductFn",
+    "stockCatalogVendorProductFn",
   ]) {
     const start = adminBlock.indexOf(`export const ${functionName}`);
     const end = adminBlock.indexOf("export const ", start + 1);
@@ -129,6 +192,10 @@ test("catalog admin server functions use auth, database pagination, exclusive ra
   assert.match(adminBlock, /\.is\("orgAdoptions", null\)/);
   assert.match(adminBlock, /\.in\("catalog_vendor_id", catalogVendorIds\)/);
   assert.match(adminBlock, /\.in\("catalog_product_id", catalogProductIds\)/);
+  assert.match(adminBlock, /\.from\("inventory_items"\)/);
+  assert.match(adminBlock, /\.eq\("organization_id", organizationId\)/);
+  assert.match(adminBlock, /\.in\("product_id", productIds\)/);
+  assert.equal(adminBlock.match(/\.from\("inventory_items"\)/g)?.length, 1);
   assert.match(adminBlock, /count: "exact"/);
   assert.match(adminBlock, /\.range\(start, end\)/);
   assert.match(adminBlock, /const totalCount = counts\.reduce/);
@@ -144,7 +211,13 @@ test("catalog admin server functions use auth, database pagination, exclusive ra
     adminBlock,
     /catalog_source_records|catalog_import_batches|catalog_verification_overrides/,
   );
-  assert.doesNotMatch(adminBlock, /inventory_items|inventory_adjustments/);
+  assert.doesNotMatch(adminBlock, /inventory_adjustments|inventory_price_history/);
+  const inventoryStateBlock = adminBlock.slice(
+    adminBlock.indexOf("async function markCatalogInventoryState"),
+    adminBlock.indexOf("export const listCatalogAdminVendorsFn"),
+  );
+  assert.doesNotMatch(inventoryStateBlock, /\.insert\(|\.update\(|\.delete\(/);
+  assert.doesNotMatch(inventoryStateBlock, /vendor_name|\bsku\b|\bname\b/);
 });
 
 test("catalog admin wrappers invoke only the deployed RPCs with active organization and exact identity", async () => {
@@ -155,6 +228,10 @@ test("catalog admin wrappers invoke only the deployed RPCs with active organizat
   );
   const adoption = source.slice(
     source.indexOf("export const adoptCatalogVendorProductFn"),
+    source.indexOf("export const stockCatalogVendorProductFn"),
+  );
+  const stocking = source.slice(
+    source.indexOf("export const stockCatalogVendorProductFn"),
     source.indexOf("export const saveCategoryFn"),
   );
   assert.match(detail, /rpc\("get_catalog_vendor_product_admin_detail"/);
@@ -165,11 +242,21 @@ test("catalog admin wrappers invoke only the deployed RPCs with active organizat
   assert.match(adoption, /_organization_id: data\.organizationId/);
   assert.match(adoption, /_catalog_vendor_product_id: data\.catalogVendorProductId/);
   assert.match(adoption, /catalogAdoptionResultSchema\.parse\(result\)/);
+  assert.match(stocking, /middleware\(\[requireSupabaseAuth\]\)/);
+  assert.match(stocking, /await assertAdmin\(db, context\.userId, data\.organizationId\)/);
+  assert.match(stocking, /rpc\("stock_catalog_vendor_product"/);
+  assert.match(stocking, /_organization_id: data\.organizationId/);
+  assert.match(stocking, /_catalog_vendor_product_id: data\.catalogVendorProductId/);
+  assert.match(stocking, /_unit: data\.unit/);
+  assert.match(stocking, /_par_level: data\.parLevel/);
+  assert.match(stocking, /catalogStockResultSchema\.parse\(result\)/);
+  assert.match(source, /alreadyStocked: z\.boolean\(\)/);
   assert.doesNotMatch(
-    detail + adoption,
+    detail + adoption + stocking,
     /from\("catalog_(source_records|import_batches|verification_overrides)"\)/,
   );
-  assert.doesNotMatch(detail + adoption, /inventory_items|inventory_adjustments/);
+  assert.doesNotMatch(detail + adoption + stocking, /from\("inventory_items"\)/);
+  assert.doesNotMatch(stocking, /\.insert\(|\.update\(|\.delete\(|inventory_adjustments/);
 });
 
 test("products route preserves search, filters, and page state and has no category editor", async () => {
@@ -184,6 +271,7 @@ test("products route preserves search, filters, and page state and has no catego
 test("admin navigation exposes Catalog on desktop and mobile while staff navigation is untouched", async () => {
   const shell = await readFile(shellPath, "utf8");
   assert.match(shell, /to: "\/products", label: "Catalog"/);
+  assert.match(shell, /to: "\/inventory", label: "Inventory", icon: Package, ownerOnly: true/);
   assert.match(shell, /aria-label="Admin navigation"/);
   assert.match(
     shell,
@@ -193,7 +281,15 @@ test("admin navigation exposes Catalog on desktop and mobile while staff navigat
   assert.doesNotMatch(staff, /Catalog|\/products/);
 });
 
-test("catalog UI renders sanitized detail fields and blocks optimistic or inventory behavior", async () => {
+test("catalog stocking does not broaden owner-only inventory management", async () => {
+  const inventoryPage = await readFile(inventoryPagePath, "utf8");
+  assert.match(inventoryPage, /const owner = active\?\.role === 'owner'/);
+  assert.match(inventoryPage, /enabled: Boolean\(active\?\.organizationId && owner\)/);
+  assert.match(inventoryPage, /Only organization owners can manage inventory/);
+  assert.doesNotMatch(inventoryPage, /role === 'admin'|isCatalogAdminRole/);
+});
+
+test("catalog UI renders provenance and lifecycle actions without optimistic table writes", async () => {
   const page = await readFile(pagePath, "utf8");
   assert.match(page, /data-section="catalog-detail"/);
   for (const field of [
@@ -207,11 +303,34 @@ test("catalog UI renders sanitized detail fields and blocks optimistic or invent
   assert.match(page, /getCatalogAdminDetailFn/);
   assert.match(page, /invalidateQueries\(\{ queryKey: \["catalog-admin", organizationId\]/);
   assert.match(page, /adoption\.mutate\(row\.catalogVendorProductId\)/);
+  assert.match(page, /stocking\.mutateAsync\(input\)/);
+  assert.match(page, /canStockCatalogResult\(row\)/);
+  assert.match(page, /Add to inventory/);
+  assert.match(page, /In inventory/);
+  assert.match(page, /row\.inventoryActive && canOpenInventory/);
+  assert.match(page, /<Link to="\/inventory">Open inventory<\/Link>/);
+  assert.match(page, /Inventory management remains available to organization owners/);
   assert.doesNotMatch(
     page,
     /inventory_items|inventory_adjustments|catalog_source_records|JSON\.stringify/,
   );
   assert.doesNotMatch(page, /setAdoptingId\(.*\).*adoptionState/);
+});
+
+test("stocking dialog preserves package trust and creates zero-on-hand inventory only", async () => {
+  const dialog = await readFile(stockDialogPath, "utf8");
+  assert.match(dialog, /catalogInventoryUnitPrefill\(row\)/);
+  assert.match(dialog, /explicit inventory unit is required/);
+  assert.match(dialog, /Par level \(optional\)/);
+  assert.match(dialog, /parLevel\.trim\(\) === "" \? null/);
+  assert.match(dialog, /Initial quantity/);
+  assert.match(dialog, /value="0"/);
+  assert.match(dialog, /readOnly/);
+  assert.match(dialog, /onStock\(\{/);
+  assert.doesNotMatch(
+    dialog,
+    /packageQuantity|inventory_items|inventory_adjustments|adjustInventoryQuantityFn/,
+  );
 });
 
 test("known identity presentation keeps the two Good'N'Cheap SKUs separate and preserves discontinued state", async () => {
@@ -225,9 +344,15 @@ test("known identity presentation keeps the two Good'N'Cheap SKUs separate and p
     vendorSku: "128-5853",
     normalizedVendorSku: "128-5853",
   });
-  const discontinued = result({ discontinued: true, active: false });
+  const discontinued = result({
+    vendorSku: "364-0444",
+    normalizedVendorSku: "364-0444",
+    discontinued: true,
+    active: false,
+  });
   assert.equal(catalogSearchRank(first, "128-5852"), 0);
   assert.equal(catalogSearchRank(second, "128-5852"), 6);
   assert.equal(discontinued.discontinued, true);
   assert.equal(discontinued.active, false);
+  assert.equal(canStockCatalogResult(discontinued), false);
 });

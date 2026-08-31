@@ -5,6 +5,7 @@ export type CatalogPackageFilter = "verified" | "source_only" | "unknown" | "all
 export type CatalogAdoptionFilter = "adopted" | "not_adopted" | "all";
 export type CatalogPackageStatus = Exclude<CatalogPackageFilter, "all">;
 export type CatalogAdoptionState = "adopted" | "not_adopted" | "attention";
+export type CatalogInventoryState = "not_applicable" | "not_stocked" | "stocked" | "attention";
 
 export interface CatalogAdminSearchInput {
   organizationId: string;
@@ -43,6 +44,10 @@ export interface CatalogAdminResult {
   adoptionState: CatalogAdoptionState;
   adoptionIssue: string | null;
   organizationVendorProductId: string | null;
+  organizationProductId: string | null;
+  inventoryState: CatalogInventoryState;
+  inventoryItemId: string | null;
+  inventoryActive: boolean | null;
 }
 
 export interface CatalogAdminSearchResult {
@@ -118,6 +123,20 @@ export interface CatalogAdoptionResult {
   productCreated: boolean;
   vendorProductCreated: boolean;
   alreadyAdopted: boolean;
+}
+
+export interface CatalogStockResult {
+  organizationId: string;
+  catalogVendorProductId: string;
+  vendorProductId: string;
+  productId: string;
+  inventoryItemId: string;
+  inventoryCreated: boolean;
+  alreadyStocked: boolean;
+  quantity: number;
+  parLevel: number | null;
+  unit: string;
+  active: boolean;
 }
 
 export function isCatalogAdminRole(role: string | null | undefined): boolean {
@@ -197,4 +216,41 @@ export function catalogPackagePresentation(
     };
   }
   return { label: "Unknown package", detail: "Package not specified", verified: false };
+}
+
+export function catalogInventoryUnitPrefill(
+  row: Pick<CatalogAdminResult, "packageStatus" | "packageUnit">,
+): string {
+  return row.packageStatus === "verified" ? (row.packageUnit?.trim() ?? "") : "";
+}
+
+export function catalogStockingBlockReason(
+  row: Pick<
+    CatalogAdminResult,
+    "adoptionState" | "inventoryState" | "active" | "discontinued" | "productActive"
+  >,
+): string | null {
+  if (row.adoptionState === "attention" || row.inventoryState === "attention") {
+    return "Review the organization links before adding inventory.";
+  }
+  if (row.adoptionState !== "adopted") {
+    return "Add this item to the organization catalog first.";
+  }
+  if (row.inventoryState === "stocked") return "This item is already in inventory.";
+  if (row.inventoryState !== "not_stocked") {
+    return "Review the organization links before adding inventory.";
+  }
+  if (!row.active || row.discontinued || !row.productActive) {
+    return "Inactive or discontinued catalog items cannot create new inventory.";
+  }
+  return null;
+}
+
+export function canStockCatalogResult(
+  row: Pick<
+    CatalogAdminResult,
+    "adoptionState" | "inventoryState" | "active" | "discontinued" | "productActive"
+  >,
+): boolean {
+  return catalogStockingBlockReason(row) === null;
 }
