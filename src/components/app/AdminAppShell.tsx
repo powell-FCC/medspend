@@ -1,6 +1,18 @@
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { LayoutDashboard, Upload, ShoppingCart, Package, Building2, FileText, Users, Settings, LogOut, Building } from "lucide-react";
+import {
+  LayoutDashboard,
+  Upload,
+  ShoppingCart,
+  Package,
+  Building2,
+  FileText,
+  Users,
+  Settings,
+  LogOut,
+  Building,
+  LibraryBig,
+} from "lucide-react";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -9,6 +21,7 @@ const nav = [
   { to: "/inventory", label: "Inventory", icon: Package, ownerOnly: true },
   { to: "/purchases", label: "Orders", icon: ShoppingCart },
   { to: "/vendors", label: "Vendors", icon: Building2 },
+  { to: "/products", label: "Catalog", icon: LibraryBig },
   { to: "/upload", label: "Upload Invoice", icon: Upload, ownerOnly: true },
   { to: "/invoices", label: "Invoices", icon: FileText, ownerOnly: true },
   { to: "/supply-requests", label: "Staff", icon: Users },
@@ -34,7 +47,9 @@ export function AdminAppShell({ children }: { children: ReactNode }) {
             <Building className="h-3.5 w-3.5" />
             <span className="truncate">{active?.organizationName ?? "—"}</span>
           </div>
-          <div className="mt-0.5 text-[10px] uppercase tracking-wider text-primary">{active?.role}</div>
+          <div className="mt-0.5 text-[10px] uppercase tracking-wider text-primary">
+            {active?.role}
+          </div>
           {memberships.length > 1 && (
             <select
               className="mt-2 w-full text-xs rounded border bg-background px-2 py-1"
@@ -50,24 +65,26 @@ export function AdminAppShell({ children }: { children: ReactNode }) {
           )}
         </div>
         <nav className="flex-1 py-3">
-          {nav.filter((item) => !("ownerOnly" in item) || active?.role === "owner").map(({ to, label, icon: Icon }) => {
-            const activeLink = pathname === to || pathname.startsWith(to + "/");
-            return (
-              <Link
-                key={to}
-                to={to}
-                className={
-                  "flex items-center gap-2 px-5 py-2 text-sm transition-colors " +
-                  (activeLink
-                    ? "bg-accent text-accent-foreground font-medium"
-                    : "text-muted-foreground hover:bg-muted")
-                }
-              >
-                <Icon className="h-4 w-4" />
-                {label}
-              </Link>
-            );
-          })}
+          {nav
+            .filter((item) => !("ownerOnly" in item) || active?.role === "owner")
+            .map(({ to, label, icon: Icon }) => {
+              const activeLink = pathname === to || pathname.startsWith(to + "/");
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={
+                    "flex items-center gap-2 px-5 py-2 text-sm transition-colors " +
+                    (activeLink
+                      ? "bg-accent text-accent-foreground font-medium"
+                      : "text-muted-foreground hover:bg-muted")
+                  }
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </Link>
+              );
+            })}
         </nav>
         <button
           onClick={signOut}
@@ -76,7 +93,34 @@ export function AdminAppShell({ children }: { children: ReactNode }) {
           <LogOut className="h-4 w-4" /> Sign out
         </button>
       </aside>
-      <main className="flex-1 min-w-0">{children}</main>
+      <main className="flex-1 min-w-0">
+        <div className="border-b bg-card px-4 py-3 md:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold tracking-tight">MedSpend</div>
+            <span className="truncate text-xs text-muted-foreground">
+              {active?.organizationName ?? "—"}
+            </span>
+          </div>
+          <nav className="mt-3 flex gap-1 overflow-x-auto pb-1" aria-label="Admin navigation">
+            {nav
+              .filter((item) => !("ownerOnly" in item) || active?.role === "owner")
+              .map(({ to, label, icon: Icon }) => {
+                const activeLink = pathname === to || pathname.startsWith(to + "/");
+                return (
+                  <Link
+                    key={to}
+                    to={to}
+                    className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-md px-3 text-xs ${activeLink ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-muted"}`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </Link>
+                );
+              })}
+          </nav>
+        </div>
+        {children}
+      </main>
     </div>
   );
 }
