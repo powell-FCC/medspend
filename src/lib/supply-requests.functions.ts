@@ -22,6 +22,30 @@ import {
 
 const statusEnum = z.enum(SUPPLY_REQUEST_STATUSES);
 
+type RequestItemIdentityRow = {
+  id: string;
+  supply_request_id: string;
+  product_id: string | null;
+  inventory_item_id: string | null;
+  vendor_product_id: string | null;
+  catalog_vendor_product_id: string | null;
+  free_text_item: string | null;
+  quantity: number;
+  unit: string | null;
+  products: unknown;
+};
+
+type CatalogRequestIdentityRow = {
+  id: string;
+  product?: { name: string; manufacturer: string | null } | Array<{ name: string; manufacturer: string | null }>;
+};
+
+type InventoryRequestIdentityRow = {
+  id: string;
+  name: string;
+  unit: string;
+};
+
 async function requireMembership(context: { supabase: any; userId: string }, organizationId: string) {
   const { data, error } = await context.supabase.from("organization_memberships")
     .select("organization_id, role, default_team_id, default_location_id").eq("user_id", context.userId)
@@ -59,14 +83,62 @@ async function loadRequestItems(
   const byRequest = new Map<string, SupplyRequestItemViewModel[]>();
   if (requestIds.length) {
     const { data, error } = await db.from("supply_request_items")
-      .select("id,supply_request_id,product_id,free_text_item,quantity,unit,products(name,unit_of_measure)")
+      .select("id,supply_request_id,product_id,inventory_item_id,vendor_product_id,catalog_vendor_product_id,free_text_item,quantity,unit,products(name,unit_of_measure)")
       .eq("organization_id", organizationId).in("supply_request_id", requestIds)
       .order("created_at", { ascending: true });
     if (error) throw new Error(error.message);
-    for (const row of data ?? []) {
+    const requestItemRows = (data ?? []) as RequestItemIdentityRow[];
+
+    const catalogVendorProductIds = Array.from(new Set(
+      requestItemRows.flatMap((row) => row.catalog_vendor_product_id ? [row.catalog_vendor_product_id] : []),
+    ));
+    const inventoryItemIds = Array.from(new Set(
+      requestItemRows.flatMap((row) => row.inventory_item_id ? [row.inventory_item_id] : []),
+    ));
+    const [catalogResult, inventoryResult] = await Promise.all([
+      catalogVendorProductIds.length
+        ? db.from("catalog_vendor_products")
+          .select("id,vendor_sku,package_status,product:catalog_products!catalog_vendor_products_catalog_product_id_fkey(name,manufacturer),vendor:catalog_vendors!catalog_vendor_products_catalog_vendor_id_fkey(name)")
+          .in("id", catalogVendorProductIds)
+        : Promise.resolve({ data: [], error: null }),
+      inventoryItemIds.length
+        ? db.from("inventory_items")
+          .select("id,name,unit")
+          .eq("organization_id", organizationId)
+          .in("id", inventoryItemIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (catalogResult.error) throw new Error(catalogResult.error.message);
+    if (inventoryResult.error) throw new Error(inventoryResult.error.message);
+    const catalogById = new Map<string, CatalogRequestIdentityRow>(
+      ((catalogResult.data ?? []) as CatalogRequestIdentityRow[]).map((row) => [row.id, row]),
+    );
+    const inventoryById = new Map<string, InventoryRequestIdentityRow>(
+      ((inventoryResult.data ?? []) as InventoryRequestIdentityRow[]).map((row) => [row.id, row]),
+    );
+
+    for (const row of requestItemRows) {
       const product = row.products as { name: string; unit_of_measure: string | null } | null;
+      const catalogIdentity = row.catalog_vendor_product_id
+        ? catalogById.get(row.catalog_vendor_product_id)
+        : undefined;
+      const catalogProduct = Array.isArray(catalogIdentity?.product)
+        ? catalogIdentity.product[0] ?? null
+        : catalogIdentity?.product ?? null;
+      const inventory = row.inventory_item_id
+        ? inventoryById.get(row.inventory_item_id)
+        : undefined;
       const items = byRequest.get(row.supply_request_id) ?? [];
-      items.push({ id: row.id, productId: row.product_id, name: product?.name ?? row.free_text_item ?? "Requested item", quantity: row.quantity, unit: row.unit ?? product?.unit_of_measure ?? null });
+      items.push({
+        id: row.id,
+        productId: row.product_id,
+        inventoryItemId: row.inventory_item_id,
+        vendorProductId: row.vendor_product_id,
+        catalogVendorProductId: row.catalog_vendor_product_id,
+        name: product?.name ?? catalogProduct?.name ?? inventory?.name ?? row.free_text_item ?? "Requested item",
+        quantity: row.quantity,
+        unit: row.unit ?? product?.unit_of_measure ?? inventory?.unit ?? null,
+      });
       byRequest.set(row.supply_request_id, items);
     }
   }
@@ -74,7 +146,16 @@ async function loadRequestItems(
     if (byRequest.has(request.id)) continue;
     const product = request.products as { name: string; unit_of_measure: string | null } | null;
     if (request.product_id || request.free_text_item) {
-      byRequest.set(request.id, [{ id: `legacy:${request.id}`, productId: request.product_id, name: product?.name ?? request.free_text_item ?? "Requested item", quantity: request.quantity ?? 1, unit: product?.unit_of_measure ?? null }]);
+      byRequest.set(request.id, [{
+        id: `legacy:${request.id}`,
+        productId: request.product_id,
+        inventoryItemId: null,
+        vendorProductId: null,
+        catalogVendorProductId: null,
+        name: product?.name ?? request.free_text_item ?? "Requested item",
+        quantity: request.quantity ?? 1,
+        unit: product?.unit_of_measure ?? null,
+      }]);
     } else byRequest.set(request.id, []);
   }
   return byRequest;
@@ -94,7 +175,22 @@ export const submitSupplyRequestFn = createServerFn({ method: "POST" })
       _team_id: data.teamId ?? null,
       _location_id: data.locationId ?? null,
       _notes: data.notes?.trim() || null,
-      _items: data.items.map((item) => ({ productId: item.productId ?? null, freeTextItem: item.productId ? null : item.freeTextItem?.trim(), quantity: item.quantity })),
+      _items: data.items.map((item) => {
+        const hasStructuredIdentity = Boolean(
+          item.productId
+            || item.inventoryItemId
+            || item.vendorProductId
+            || item.catalogVendorProductId,
+        );
+        return {
+          productId: item.productId ?? null,
+          inventoryItemId: item.inventoryItemId ?? null,
+          vendorProductId: item.vendorProductId ?? null,
+          catalogVendorProductId: item.catalogVendorProductId ?? null,
+          freeTextItem: hasStructuredIdentity ? null : item.freeTextItem?.trim(),
+          quantity: item.quantity,
+        };
+      }),
     });
     if (error) throw new Error(error.message);
     return { id: requestId as string };
@@ -406,8 +502,18 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
         latestStaffMessage: updates?.latestStaffMessage ?? null,
         latestInternalNote: updates?.latestInternalNote ?? null,
         latestUpdateAt: updates?.latestUpdateAt ?? row.updated_at,
-        hasExistingProduct: items.some((item) => !!item.productId),
-        isNewItem: items.some((item) => !item.productId),
+        hasExistingProduct: items.some((item) => Boolean(
+          item.productId
+            || item.inventoryItemId
+            || item.vendorProductId
+            || item.catalogVendorProductId,
+        )),
+        isNewItem: items.some((item) => !(
+          item.productId
+          || item.inventoryItemId
+          || item.vendorProductId
+          || item.catalogVendorProductId
+        )),
       };
     });
     return buildAdminRequestDashboard(requests);
@@ -465,6 +571,76 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
       staffVisibleNote: row.staff_visible_note,
       internalNote: isAdmin ? row.internal_note : undefined,
       createdAt: row.created_at,
+    }));
+  });
+
+const unifiedSupplyRequestSearchResultSchema = z.object({
+  result_key: z.string().min(1),
+  identity_source: z.enum([
+    "inventory",
+    "organization_catalog",
+    "organization_product",
+    "global_catalog",
+  ]),
+  product_name: z.string().min(1),
+  manufacturer: z.string().nullable(),
+  vendor_name: z.string().nullable(),
+  vendor_sku: z.string().nullable(),
+  package_display: z.string(),
+  package_status: z.enum(["verified", "source_only", "unknown"]),
+  inventory_item_id: z.string().uuid().nullable(),
+  product_id: z.string().uuid().nullable(),
+  vendor_product_id: z.string().uuid().nullable(),
+  catalog_vendor_product_id: z.string().uuid().nullable(),
+}).strict();
+
+export type UnifiedSupplyRequestSearchResult = {
+  resultId: string;
+  identitySource: z.infer<typeof unifiedSupplyRequestSearchResultSchema>["identity_source"];
+  productName: string;
+  manufacturer: string | null;
+  vendorName: string | null;
+  vendorSku: string | null;
+  packageDisplay: string;
+  packageStatus: z.infer<typeof unifiedSupplyRequestSearchResultSchema>["package_status"];
+  inventoryItemId: string | null;
+  productId: string | null;
+  vendorProductId: string | null;
+  catalogVendorProductId: string | null;
+};
+
+export const searchSupplyRequestProductsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) => z.object({
+    organizationId: z.string().uuid(),
+    q: z.string().trim().max(120),
+    limit: z.number().int().min(1).max(50).default(20),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMembership(context, data.organizationId);
+    if (!data.q) return [] as UnifiedSupplyRequestSearchResult[];
+    const { data: rows, error } = await context.supabase.rpc(
+      "search_supply_request_products",
+      {
+        _organization_id: data.organizationId,
+        _query: data.q,
+        _limit: data.limit,
+      },
+    );
+    if (error) throw new Error(error.message);
+    return unifiedSupplyRequestSearchResultSchema.array().parse(rows ?? []).map((row) => ({
+      resultId: row.result_key,
+      identitySource: row.identity_source,
+      productName: row.product_name,
+      manufacturer: row.manufacturer,
+      vendorName: row.vendor_name,
+      vendorSku: row.vendor_sku,
+      packageDisplay: row.package_display,
+      packageStatus: row.package_status,
+      inventoryItemId: row.inventory_item_id,
+      productId: row.product_id,
+      vendorProductId: row.vendor_product_id,
+      catalogVendorProductId: row.catalog_vendor_product_id,
     }));
   });
 

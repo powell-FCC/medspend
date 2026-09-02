@@ -1640,39 +1640,62 @@ export type Database = {
       }
       supply_request_items: {
         Row: {
+          catalog_vendor_product_id: string | null
           created_at: string
           free_text_item: string | null
           id: string
+          inventory_item_id: string | null
           organization_id: string
           product_id: string | null
           quantity: number
           supply_request_id: string
           unit: string | null
           updated_at: string
+          vendor_product_id: string | null
         }
         Insert: {
+          catalog_vendor_product_id?: string | null
           created_at?: string
           free_text_item?: string | null
           id?: string
+          inventory_item_id?: string | null
           organization_id: string
           product_id?: string | null
           quantity: number
           supply_request_id: string
           unit?: string | null
           updated_at?: string
+          vendor_product_id?: string | null
         }
         Update: {
+          catalog_vendor_product_id?: string | null
           created_at?: string
           free_text_item?: string | null
           id?: string
+          inventory_item_id?: string | null
           organization_id?: string
           product_id?: string | null
           quantity?: number
           supply_request_id?: string
           unit?: string | null
           updated_at?: string
+          vendor_product_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "supply_request_items_catalog_vendor_product_fk"
+            columns: ["catalog_vendor_product_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_vendor_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supply_request_items_inventory_org_fk"
+            columns: ["inventory_item_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id", "organization_id"]
+          },
           {
             foreignKeyName: "supply_request_items_organization_id_fkey"
             columns: ["organization_id"]
@@ -1692,6 +1715,13 @@ export type Database = {
             columns: ["supply_request_id", "organization_id"]
             isOneToOne: false
             referencedRelation: "supply_requests"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "supply_request_items_vendor_product_org_fk"
+            columns: ["vendor_product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "vendor_products"
             referencedColumns: ["id", "organization_id"]
           },
         ]
@@ -2258,6 +2288,27 @@ export type Database = {
         Returns: number
       }
       revoke_invitation: { Args: { _id: string }; Returns: undefined }
+      search_supply_request_products: {
+        Args: {
+          _limit?: number
+          _organization_id: string
+          _query: string
+        }
+        Returns: {
+          catalog_vendor_product_id: string
+          identity_source: string
+          inventory_item_id: string
+          manufacturer: string
+          package_display: string
+          package_status: string
+          product_id: string
+          product_name: string
+          result_key: string
+          vendor_name: string
+          vendor_product_id: string
+          vendor_sku: string
+        }[]
+      }
       seed_product_categories: {
         Args: { _organization_id: string }
         Returns: undefined

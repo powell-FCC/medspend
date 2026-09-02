@@ -4,10 +4,21 @@ export const supplyRequestTypeSchema = z.enum(['reorder', 'low_stock', 'out_of_s
 
 export const supplyRequestItemSchema = z.object({
   productId: z.string().uuid().optional().nullable(),
+  inventoryItemId: z.string().uuid().optional().nullable(),
+  vendorProductId: z.string().uuid().optional().nullable(),
+  catalogVendorProductId: z.string().uuid().optional().nullable(),
   freeTextItem: z.string().trim().min(1).max(200).optional().nullable(),
   quantity: z.number().int().positive(),
-}).refine((item) => Boolean(item.productId) !== Boolean(item.freeTextItem), {
-  message: 'Each item must contain one catalog product or one custom item',
+}).refine((item) => {
+  const hasStructuredIdentity = Boolean(
+    item.productId
+      || item.inventoryItemId
+      || item.vendorProductId
+      || item.catalogVendorProductId,
+  );
+  return hasStructuredIdentity !== Boolean(item.freeTextItem);
+}, {
+  message: 'Each item must contain one structured identity or one custom item',
 });
 
 export const supplyRequestInputSchema = z.object({

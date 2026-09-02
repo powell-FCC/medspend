@@ -4,6 +4,9 @@ import test from 'node:test';
 import { multiItemSupplyRequestInputSchema } from '../src/supply-requests/validation.ts';
 
 const productId = '11111111-1111-4111-8111-111111111111';
+const inventoryItemId = '44444444-4444-4444-8444-444444444444';
+const vendorProductId = '55555555-5555-4555-8555-555555555555';
+const catalogVendorProductId = '66666666-6666-4666-8666-666666666666';
 const base = { organizationId: '22222222-2222-4222-8222-222222222222', requestType: 'reorder' as const };
 
 test('one, multiple catalog, mixed, and multiple custom request lines validate', () => {
@@ -12,6 +15,10 @@ test('one, multiple catalog, mixed, and multiple custom request lines validate',
     [{ productId, quantity: 2 }, { productId: '33333333-3333-4333-8333-333333333333', quantity: 3 }],
     [{ productId, quantity: 2 }, { freeTextItem: 'Custom wrap', quantity: 4 }],
     [{ freeTextItem: 'Custom wrap', quantity: 4 }, { freeTextItem: 'Travel kit', quantity: 1 }],
+    [{ inventoryItemId, quantity: 1 }],
+    [{ vendorProductId, quantity: 1 }],
+    [{ catalogVendorProductId, quantity: 1 }],
+    [{ productId, inventoryItemId, vendorProductId, catalogVendorProductId, quantity: 1 }],
   ]) assert.equal(multiItemSupplyRequestInputSchema.safeParse({ ...base, items }).success, true);
 });
 
@@ -22,6 +29,7 @@ test('empty requests and invalid quantities or ambiguous identities are rejected
     [{ productId, quantity: -1 }],
     [{ productId, quantity: 1.5 }],
     [{ productId, freeTextItem: 'Both', quantity: 1 }],
+    [{ catalogVendorProductId, freeTextItem: 'Both', quantity: 1 }],
     [{ quantity: 1 }],
   ]) assert.equal(multiItemSupplyRequestInputSchema.safeParse({ ...base, items }).success, false);
 });

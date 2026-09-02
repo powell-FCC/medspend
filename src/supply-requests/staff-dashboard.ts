@@ -31,6 +31,9 @@ export type StaffRequestViewModel = {
 export type SupplyRequestItemViewModel = {
   id: string;
   productId: string | null;
+  inventoryItemId: string | null;
+  vendorProductId: string | null;
+  catalogVendorProductId: string | null;
   name: string;
   quantity: number;
   unit: string | null;
