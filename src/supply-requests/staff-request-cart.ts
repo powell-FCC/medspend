@@ -7,6 +7,7 @@ type StructuredProductSelection = Pick<
   | "vendorName"
   | "vendorSku"
   | "packageDisplay"
+  | "specification"
   | "inventoryItemId"
   | "productId"
   | "vendorProductId"
@@ -55,6 +56,7 @@ export function createStructuredCartItem(
     vendorName: selection.vendorName,
     vendorSku: selection.vendorSku,
     packageDisplay: selection.packageDisplay,
+    specification: selection.specification,
     inventoryItemId: selection.inventoryItemId,
     productId: selection.productId,
     vendorProductId: selection.vendorProductId,
@@ -115,6 +117,35 @@ export function toSubmissionItem(item: StaffRequestCartItem): StaffRequestSubmis
 
 export function cartContainsCustomItem(items: StaffRequestCartItem[]) {
   return items.some((item) => item.kind === "custom");
+}
+
+export type StaffRequestProductDisplayLine = {
+  kind: "specification" | "metadata";
+  text: string;
+};
+
+export function getStaffRequestProductDisplayLines(
+  product: Pick<
+    UnifiedSupplyRequestSearchResult,
+    "manufacturer" | "vendorName" | "vendorSku" | "packageDisplay" | "specification"
+  >,
+): StaffRequestProductDisplayLine[] {
+  const lines: StaffRequestProductDisplayLine[] = [];
+  const specification = product.specification?.trim();
+  if (specification) lines.push({ kind: "specification", text: specification });
+
+  const suppliers = [product.manufacturer, product.vendorName].filter(
+    (value, index, values): value is string => !!value && values.indexOf(value) === index,
+  );
+  const packageDisplay = product.packageDisplay.trim();
+  const metadata = [
+    ...suppliers,
+    product.vendorSku ? `SKU ${product.vendorSku}` : null,
+    packageDisplay && packageDisplay.toLowerCase() !== "unknown" ? packageDisplay : null,
+  ].filter((value): value is string => !!value);
+  if (metadata.length > 0) lines.push({ kind: "metadata", text: metadata.join(" · ") });
+
+  return lines;
 }
 
 export function resolveRequestContextId(

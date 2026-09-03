@@ -6,6 +6,7 @@ import {
   changeCartItemQuantity,
   createCustomCartItem,
   createStructuredCartItem,
+  getStaffRequestProductDisplayLines,
   removeCartItem,
   resolveRequestContextId,
   toSubmissionItem,
@@ -22,6 +23,7 @@ const inventoryResult = {
   vendorName: "Supply Co",
   vendorSku: "TAPE-100",
   packageDisplay: "Box of 12 rolls",
+  specification: '2" × 5 yd',
   inventoryItemId,
   productId,
   vendorProductId,
@@ -34,6 +36,7 @@ const organizationProductResult = {
   vendorName: null,
   vendorSku: null,
   packageDisplay: "Each",
+  specification: null,
   inventoryItemId: null,
   productId,
   vendorProductId: null,
@@ -67,6 +70,7 @@ test("a global catalog result with no productId remains structured", () => {
       vendorName: "Global Vendor",
       vendorSku: "CP-900",
       packageDisplay: "Case of 24",
+      specification: "Large",
       inventoryItemId: null,
       productId: null,
       vendorProductId: null,
@@ -184,17 +188,14 @@ test("staff route uses unified search and represents the mobile search states", 
   assert.match(route, /useServerFn\(searchSupplyRequestProductsFn\)/);
   assert.doesNotMatch(route, /\bsearchProductsFn\b/);
   assert.match(route, /useDebouncedValue\(normalizedQuery, 300\)/);
-  assert.match(route, /Search by product name, manufacturer, vendor, or SKU/);
+  assert.match(route, /Search by product name, size, manufacturer, vendor, or SKU/);
   assert.match(route, /Searching after you pause/);
   assert.match(route, /aria-label="Searching supplies"/);
   assert.match(route, /aria-label="Search results"/);
   assert.match(route, /No matching supplies found/);
   assert.match(route, /We couldn't search supplies/);
   assert.match(route, /product\.productName/);
-  assert.match(route, /product\.manufacturer/);
-  assert.match(route, /product\.vendorName/);
-  assert.match(route, /product\.vendorSku/);
-  assert.match(route, /product\.packageDisplay/);
+  assert.match(route, /getStaffRequestProductDisplayLines\(product\)/);
   assert.match(route, /items\.map\(toSubmissionItem\)/);
   assert.match(route, /teamId: resolvedTeamId/);
   assert.match(route, /locationId: resolvedLocationId/);
@@ -207,4 +208,24 @@ test("staff route uses unified search and represents the mobile search states", 
   assert.doesNotMatch(route, /\.rpc\(/);
   assert.doesNotMatch(route, /\b(?:adopt|stock)(?:Catalog|Inventory)\w*Fn\b/);
   assert.doesNotMatch(route, /identitySource/);
+});
+
+test("staff product details put a trustworthy specification before compact metadata", () => {
+  assert.deepEqual(getStaffRequestProductDisplayLines(inventoryResult), [
+    { kind: "specification", text: '2" × 5 yd' },
+    { kind: "metadata", text: "Acme Medical · Supply Co · SKU TAPE-100 · Box of 12 rolls" },
+  ]);
+});
+
+test("staff product details do not derive a specification from SKU or package text", () => {
+  assert.deepEqual(
+    getStaffRequestProductDisplayLines({
+      manufacturer: null,
+      vendorName: "Supply Co",
+      vendorSku: "TAPE-2-INCH",
+      packageDisplay: "24 rolls/box",
+      specification: null,
+    }),
+    [{ kind: "metadata", text: "Supply Co · SKU TAPE-2-INCH · 24 rolls/box" }],
+  );
 });

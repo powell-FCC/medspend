@@ -2295,6 +2295,16 @@ export type Database = {
           inventory_item_id: string
         }[]
       }
+      get_supply_request_product_specifications: {
+        Args: {
+          _catalog_vendor_product_ids: string[]
+          _organization_id: string
+        }
+        Returns: {
+          catalog_vendor_product_id: string
+          specification: string
+        }[]
+      }
       rematch_invoice_vendor_products: {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: number

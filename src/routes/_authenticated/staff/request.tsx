@@ -16,6 +16,7 @@ import {
   changeCartItemQuantity,
   createCustomCartItem,
   createStructuredCartItem,
+  getStaffRequestProductDisplayLines,
   removeCartItem,
   resolveRequestContextId,
   toSubmissionItem,
@@ -45,24 +46,31 @@ function useDebouncedValue<T>(value: T, delay: number) {
   return debouncedValue;
 }
 
-function ProductMetadata({
+function ProductDetails({
   product,
 }: {
-  product: Pick<UnifiedSupplyRequestSearchResult, "manufacturer" | "vendorName" | "vendorSku" | "packageDisplay">;
+  product: Pick<
+    UnifiedSupplyRequestSearchResult,
+    "manufacturer" | "vendorName" | "vendorSku" | "packageDisplay" | "specification"
+  >;
 }) {
-  const suppliers = [product.manufacturer, product.vendorName].filter(
-    (value, index, values): value is string => !!value && values.indexOf(value) === index,
-  );
-  const packageDisplay = product.packageDisplay.trim();
-  const showPackage = packageDisplay && packageDisplay.toLowerCase() !== "unknown";
-
-  if (!suppliers.length && !product.vendorSku && !showPackage) return null;
+  const lines = getStaffRequestProductDisplayLines(product);
+  if (lines.length === 0) return null;
 
   return (
-    <span className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs leading-5 text-[#697687] [overflow-wrap:anywhere]">
-      {suppliers.length > 0 && <span>{suppliers.join(" · ")}</span>}
-      {product.vendorSku && <span>SKU {product.vendorSku}</span>}
-      {showPackage && <span>{packageDisplay}</span>}
+    <span className="mt-1 block [overflow-wrap:anywhere]">
+      {lines.map((line) => (
+        <span
+          key={line.kind}
+          className={
+            line.kind === "specification"
+              ? "block text-sm font-medium leading-5 text-[#344256]"
+              : "block text-xs leading-5 text-[#697687]"
+          }
+        >
+          {line.text}
+        </span>
+      ))}
     </span>
   );
 }
@@ -280,7 +288,7 @@ function RequestPage() {
                 <div className="mt-2" aria-live="polite">
                   {!normalizedQuery && (
                     <p className="px-1 py-2 text-sm text-[#697687]">
-                      Search by product name, manufacturer, vendor, or SKU.
+                      Search by product name, size, manufacturer, vendor, or SKU.
                     </p>
                   )}
                   {isTypingSearch && (
@@ -345,7 +353,7 @@ function RequestPage() {
                             <span className="block font-medium text-[#071d38] [overflow-wrap:anywhere]">
                               {product.productName}
                             </span>
-                            <ProductMetadata product={product} />
+                            <ProductDetails product={product} />
                           </button>
                         ))}
                       </div>
@@ -376,7 +384,7 @@ function RequestPage() {
             <div className="mt-2 flex min-h-20 items-center justify-between rounded-2xl border border-[#dce2e8] bg-white p-4 shadow-sm">
               <div className="min-w-0">
                 <div className="font-semibold [overflow-wrap:anywhere]">{selected.productName}</div>
-                <ProductMetadata product={selected} />
+                <ProductDetails product={selected} />
               </div>
               <button
                 type="button"
@@ -436,7 +444,7 @@ function RequestPage() {
                     <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
                       <div className="font-medium [overflow-wrap:anywhere]">{item.name}</div>
                       <div className="mt-1 text-sm text-[#697687]">Quantity {item.quantity}</div>
-                      {item.kind === "structured" && <ProductMetadata product={item} />}
+                      {item.kind === "structured" && <ProductDetails product={item} />}
                       {item.kind === "custom" && (
                         <div className="text-xs text-[#7b8693]">Custom item</div>
                       )}

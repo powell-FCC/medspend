@@ -659,6 +659,11 @@ const unifiedSupplyRequestSearchResultSchema = z.object({
   catalog_vendor_product_id: z.string().uuid().nullable(),
 }).strict();
 
+const supplyRequestProductSpecificationSchema = z.object({
+  catalog_vendor_product_id: z.string().uuid(),
+  specification: z.string().min(1),
+}).strict();
+
 export type UnifiedSupplyRequestSearchResult = {
   resultId: string;
   identitySource: z.infer<typeof unifiedSupplyRequestSearchResultSchema>["identity_source"];
@@ -668,6 +673,7 @@ export type UnifiedSupplyRequestSearchResult = {
   vendorSku: string | null;
   packageDisplay: string;
   packageStatus: z.infer<typeof unifiedSupplyRequestSearchResultSchema>["package_status"];
+  specification: string | null;
   inventoryItemId: string | null;
   productId: string | null;
   vendorProductId: string | null;
@@ -693,7 +699,34 @@ export const searchSupplyRequestProductsFn = createServerFn({ method: "POST" })
       },
     );
     if (error) throw new Error(error.message);
-    return unifiedSupplyRequestSearchResultSchema.array().parse(rows ?? []).map((row) => ({
+    const searchRows = unifiedSupplyRequestSearchResultSchema.array().parse(rows ?? []);
+    const catalogVendorProductIds = [
+      ...new Set(
+        searchRows.flatMap((row) =>
+          row.catalog_vendor_product_id ? [row.catalog_vendor_product_id] : [],
+        ),
+      ),
+    ];
+    const specificationsByCatalogVendorProductId = new Map<string, string>();
+    if (catalogVendorProductIds.length > 0) {
+      const { data: specificationRows, error: specificationError } = await context.supabase.rpc(
+        "get_supply_request_product_specifications",
+        {
+          _organization_id: data.organizationId,
+          _catalog_vendor_product_ids: catalogVendorProductIds,
+        },
+      );
+      if (specificationError) throw new Error(specificationError.message);
+      for (const row of supplyRequestProductSpecificationSchema.array().parse(
+        specificationRows ?? [],
+      )) {
+        specificationsByCatalogVendorProductId.set(
+          row.catalog_vendor_product_id,
+          row.specification,
+        );
+      }
+    }
+    return searchRows.map((row) => ({
       resultId: row.result_key,
       identitySource: row.identity_source,
       productName: row.product_name,
@@ -702,6 +735,9 @@ export const searchSupplyRequestProductsFn = createServerFn({ method: "POST" })
       vendorSku: row.vendor_sku,
       packageDisplay: row.package_display,
       packageStatus: row.package_status,
+      specification: row.catalog_vendor_product_id
+        ? (specificationsByCatalogVendorProductId.get(row.catalog_vendor_product_id) ?? null)
+        : null,
       inventoryItemId: row.inventory_item_id,
       productId: row.product_id,
       vendorProductId: row.vendor_product_id,
