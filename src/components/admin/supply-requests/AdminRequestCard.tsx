@@ -1,61 +1,40 @@
-import { Clock3, MapPin, Users } from "lucide-react";
 import { AdminActionButton } from "@/components/admin/supply-requests/AdminActionButton";
 import type { AdminSupplyRequestViewModel } from "@/supply-requests/admin-dashboard";
+import { requestTimestamp } from "@/supply-requests/admin-request-inbox";
 
-function ageLabel(days: number) {
-  if (days === 0) return "New";
-  if (days === 1) return "Waiting 1 day";
-  return `Waiting ${days} days`;
-}
-
-function ageTone(days: number) {
-  if (days >= 7) return "bg-[#fff1e8] text-[#9a430c]";
-  if (days >= 2) return "bg-[#f5f1e8] text-[#755b25]";
-  return "bg-[#eef4f7] text-[#526779]";
-}
-
-export function AdminRequestCard({
-  request,
-  onOpen,
-}: {
+export function AdminRequestCard({ request, onOpen }: {
   request: AdminSupplyRequestViewModel;
   onOpen: (request: AdminSupplyRequestViewModel) => void;
 }) {
+  const pending = request.queueGroup === "NEEDS_REVIEW";
   return (
-    <article className="rounded-2xl border border-[#dfe5eb] bg-white p-5 shadow-[0_5px_20px_rgba(16,42,73,0.045)]">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-[#eef2f6] px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-wide text-[#516176]">
-              {request.statusLabel}
-            </span>
-            {request.isNewItem && (
-              <span className="rounded-full bg-[#fff0e5] px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-wide text-[#a84300]">
-                New item
-              </span>
-            )}
+    <article aria-label={"Request from " + request.requesterName + ": " + request.itemName} className="border-b border-[#e2e7ec] bg-white p-4 last:border-b-0 hover:bg-[#fafbfc]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)_minmax(0,1.1fr)_8rem]">
+        <div className="min-w-0">
+          <h3 className="font-semibold text-[#102a49] [overflow-wrap:anywhere]">{request.itemName}</h3>
+          <div className="mt-1 text-sm text-[#526174]">
+            {request.items.slice(0, 3).map((item) => <p key={item.id} className="[overflow-wrap:anywhere]">
+              {request.itemCount > 1 && <span>{item.name} · </span>}Qty {item.quantity}{item.unit ? " " + item.unit : ""}
+            </p>)}
+            {request.itemCount > 3 && <p className="mt-1 text-xs">+{request.itemCount - 3} more in request</p>}
           </div>
-          <h2 className="mt-3 text-lg font-semibold tracking-tight text-[#102a49]">{request.itemName}</h2>
-          <p className="mt-1 text-sm text-[#647183]">
-            {request.itemCount > 1
-              ? request.items.slice(0, 3).map((item) => `${item.name} — ${item.quantity}${item.unit ? ` ${item.unit}` : ""}`).join(" · ")
-              : `${request.quantity ?? "Quantity not specified"}${request.quantity && request.unit ? ` ${request.unit}` : ""}`}
-          </p>
-          <div className="mt-4 grid gap-2 text-sm text-[#536174] sm:grid-cols-3">
-            <span className="flex items-center gap-2"><Users className="size-4 text-[#87919e]" />{request.requesterName}</span>
-            {(request.team || request.location) && (
-              <span className="flex items-center gap-2"><MapPin className="size-4 text-[#87919e]" />{[request.team, request.location].filter(Boolean).join(" · ")}</span>
-            )}
-            <span className={`flex w-fit items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${ageTone(request.ageInDays)}`}><Clock3 className="size-3.5" />{ageLabel(request.ageInDays)}</span>
-          </div>
+          {request.staffNote && <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#697687]"><span className="font-medium">Staff note: </span>{request.staffNote}</p>}
         </div>
-        <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row lg:flex-col lg:items-end">
-          <div className="text-xs font-medium text-[#778290]">Next action</div>
-          {request.nextAction ? (
-            <AdminActionButton onClick={() => onOpen(request)}>{request.nextAction}</AdminActionButton>
-          ) : (
-            <AdminActionButton variant="secondary" onClick={() => onOpen(request)}>View Details</AdminActionButton>
-          )}
+        <div className="min-w-0 text-sm">
+          <p className="font-medium text-[#293e55] [overflow-wrap:anywhere]">{request.requesterName}</p>
+          {request.requesterEmail && <p className="mt-1 break-all text-xs text-[#697687]">{request.requesterEmail}</p>}
+          <p className="mt-1 text-xs text-[#697687]">{request.itemCount} item{request.itemCount === 1 ? "" : "s"} · {request.requestTypeLabel}</p>
+        </div>
+        <div className="min-w-0 text-xs leading-5 text-[#697687]">
+          <time dateTime={request.submittedAt} className="font-medium text-[#3b5068]">{requestTimestamp(request.submittedAt)}</time>
+          {request.team && <p className="mt-1 [overflow-wrap:anywhere]">{request.team}</p>}
+          {request.location && <p className="[overflow-wrap:anywhere]">{request.location}</p>}
+        </div>
+        <div className="flex items-center justify-between gap-3 lg:flex-col lg:items-stretch">
+          <span className={"text-xs font-semibold " + (pending ? "text-[#a14e17]" : "text-[#526174]")}>{request.statusLabel}</span>
+          <AdminActionButton variant={pending ? "primary" : "secondary"} onClick={() => onOpen(request)} className="whitespace-nowrap px-3">
+            {request.nextAction ?? "View Details"}
+          </AdminActionButton>
         </div>
       </div>
     </article>

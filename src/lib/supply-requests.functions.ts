@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { SUPPLY_REQUEST_STATUSES } from "@/supply-requests/lifecycle";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 import { multiItemSupplyRequestInputSchema } from "@/supply-requests/validation";
+import { adminRequestDecisionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
 import {
   summarizeStaffRequests,
   translateStaffRequestStatus,
@@ -37,13 +38,29 @@ type RequestItemIdentityRow = {
 
 type CatalogRequestIdentityRow = {
   id: string;
+  vendor_sku: string;
+  package_status: string;
+  package_quantity: number | null;
+  package_unit: string | null;
+  package_description: string | null;
+  vendor?: { name: string } | Array<{ name: string }>;
   product?: { name: string; manufacturer: string | null } | Array<{ name: string; manufacturer: string | null }>;
+};
+
+type VendorRequestIdentityRow = {
+  id: string;
+  vendor_sku: string;
+  package_size: string | null;
+  vendor: { name: string } | Array<{ name: string }> | null;
 };
 
 type InventoryRequestIdentityRow = {
   id: string;
   name: string;
   unit: string;
+  manufacturer: string | null;
+  vendor_name: string | null;
+  sku: string | null;
 };
 
 async function requireMembership(context: { supabase: any; userId: string }, organizationId: string) {
@@ -83,7 +100,7 @@ async function loadRequestItems(
   const byRequest = new Map<string, SupplyRequestItemViewModel[]>();
   if (requestIds.length) {
     const { data, error } = await db.from("supply_request_items")
-      .select("id,supply_request_id,product_id,inventory_item_id,vendor_product_id,catalog_vendor_product_id,free_text_item,quantity,unit,products(name,unit_of_measure)")
+      .select("id,supply_request_id,product_id,inventory_item_id,vendor_product_id,catalog_vendor_product_id,free_text_item,quantity,unit,products(name,unit_of_measure,manufacturer,pack_size)")
       .eq("organization_id", organizationId).in("supply_request_id", requestIds)
       .order("created_at", { ascending: true });
     if (error) throw new Error(error.message);
@@ -95,21 +112,34 @@ async function loadRequestItems(
     const inventoryItemIds = Array.from(new Set(
       requestItemRows.flatMap((row) => row.inventory_item_id ? [row.inventory_item_id] : []),
     ));
-    const [catalogResult, inventoryResult] = await Promise.all([
+    const vendorProductIds = Array.from(new Set(
+      requestItemRows.flatMap((row) => row.vendor_product_id ? [row.vendor_product_id] : []),
+    ));
+    const [catalogResult, inventoryResult, vendorResult] = await Promise.all([
       catalogVendorProductIds.length
         ? db.from("catalog_vendor_products")
-          .select("id,vendor_sku,package_status,product:catalog_products!catalog_vendor_products_catalog_product_id_fkey(name,manufacturer),vendor:catalog_vendors!catalog_vendor_products_catalog_vendor_id_fkey(name)")
+          .select("id,vendor_sku,package_status,package_quantity,package_unit,package_description,product:catalog_products!catalog_vendor_products_catalog_product_id_fkey(name,manufacturer),vendor:catalog_vendors!catalog_vendor_products_catalog_vendor_id_fkey(name)")
           .in("id", catalogVendorProductIds)
         : Promise.resolve({ data: [], error: null }),
       inventoryItemIds.length
         ? db.from("inventory_items")
-          .select("id,name,unit")
+          .select("id,name,unit,manufacturer,vendor_name,sku")
           .eq("organization_id", organizationId)
           .in("id", inventoryItemIds)
+        : Promise.resolve({ data: [], error: null }),
+      vendorProductIds.length
+        ? db.from("vendor_products")
+          .select("id,vendor_sku,package_size,vendor:vendors!vendor_products_vendor_org_fk(name)")
+          .eq("organization_id", organizationId)
+          .in("id", vendorProductIds)
         : Promise.resolve({ data: [], error: null }),
     ]);
     if (catalogResult.error) throw new Error(catalogResult.error.message);
     if (inventoryResult.error) throw new Error(inventoryResult.error.message);
+    if (vendorResult.error) throw new Error(vendorResult.error.message);
+    const vendorById = new Map<string, VendorRequestIdentityRow>(
+      ((vendorResult.data ?? []) as VendorRequestIdentityRow[]).map((row) => [row.id, row]),
+    );
     const catalogById = new Map<string, CatalogRequestIdentityRow>(
       ((catalogResult.data ?? []) as CatalogRequestIdentityRow[]).map((row) => [row.id, row]),
     );
@@ -118,7 +148,7 @@ async function loadRequestItems(
     );
 
     for (const row of requestItemRows) {
-      const product = row.products as { name: string; unit_of_measure: string | null } | null;
+      const product = row.products as { name: string; unit_of_measure: string | null; manufacturer: string | null; pack_size: string | null } | null;
       const catalogIdentity = row.catalog_vendor_product_id
         ? catalogById.get(row.catalog_vendor_product_id)
         : undefined;
@@ -128,6 +158,9 @@ async function loadRequestItems(
       const inventory = row.inventory_item_id
         ? inventoryById.get(row.inventory_item_id)
         : undefined;
+      const vendorProduct = row.vendor_product_id ? vendorById.get(row.vendor_product_id) : undefined;
+      const vendor = Array.isArray(vendorProduct?.vendor) ? vendorProduct.vendor[0] : vendorProduct?.vendor;
+      const catalogVendor = Array.isArray(catalogIdentity?.vendor) ? catalogIdentity.vendor[0] : catalogIdentity?.vendor;
       const items = byRequest.get(row.supply_request_id) ?? [];
       items.push({
         id: row.id,
@@ -138,6 +171,13 @@ async function loadRequestItems(
         name: product?.name ?? catalogProduct?.name ?? inventory?.name ?? row.free_text_item ?? "Requested item",
         quantity: row.quantity,
         unit: row.unit ?? product?.unit_of_measure ?? inventory?.unit ?? null,
+        freeTextItem: row.free_text_item,
+        manufacturer: product?.manufacturer ?? catalogProduct?.manufacturer ?? inventory?.manufacturer ?? null,
+        vendorName: vendor?.name ?? catalogVendor?.name ?? inventory?.vendor_name ?? null,
+        vendorSku: vendorProduct?.vendor_sku ?? catalogIdentity?.vendor_sku ?? inventory?.sku ?? null,
+        packageDisplay: catalogIdentity
+          ? trustedRequestPackage(catalogIdentity)
+          : vendorProduct?.package_size ?? product?.pack_size ?? null,
       });
       byRequest.set(row.supply_request_id, items);
     }
@@ -155,6 +195,7 @@ async function loadRequestItems(
         name: product?.name ?? request.free_text_item ?? "Requested item",
         quantity: request.quantity ?? 1,
         unit: product?.unit_of_measure ?? null,
+        freeTextItem: request.free_text_item,
       }]);
     } else byRequest.set(request.id, []);
   }
@@ -214,9 +255,10 @@ export const listMyRequestsFn = createServerFn({ method: "POST" })
     const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows ?? []);
     const latestVisibleUpdates = new Map<string, { note: string; status: SupplyRequestStatus | null; createdAt: string }>();
     if (ids.length) {
-      const { data: updates, error: updatesError } = await context.supabase.from("supply_request_updates")
-        .select("supply_request_id,status_to,staff_visible_note,created_at")
-        .in("supply_request_id", ids).not("staff_visible_note", "is", null)
+      const { data: updates, error: updatesError } = await context.supabase.rpc("list_staff_supply_request_updates", {
+        _organization_id: data.organizationId, _request_ids: ids,
+      })
+        .not("staff_visible_note", "is", null)
         .order("created_at", { ascending: false });
       if (updatesError) throw new Error(updatesError.message);
       for (const update of updates ?? []) {
@@ -267,10 +309,9 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
     const latestMessages = new Map<string, { message: string; createdAt: string }>();
     if (ids.length) {
       const { data: updates, error: updatesError } = await context.supabase
-        .from("supply_request_updates")
-        .select("supply_request_id,staff_visible_note,created_at")
-        .eq("organization_id", data.organizationId)
-        .in("supply_request_id", ids)
+        .rpc("list_staff_supply_request_updates", {
+          _organization_id: data.organizationId, _request_ids: ids,
+        })
         .not("staff_visible_note", "is", null)
         .order("created_at", { ascending: false });
       if (updatesError) throw new Error(updatesError.message);
@@ -331,11 +372,10 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     if (!row) throw new Error("Request not found");
 
     const { data: updates, error: updatesError } = await context.supabase
-      .from("supply_request_updates")
-      .select("status_to,staff_visible_note,created_at")
-      .eq("organization_id", data.organizationId)
-      .eq("supply_request_id", row.id)
-      .order("created_at", { ascending: true });
+      .rpc("list_staff_supply_request_updates", {
+        _organization_id: data.organizationId, _request_ids: [row.id],
+      })
+      .order("created_at", { ascending: true }).order("status_to", { ascending: true });
     if (updatesError) throw new Error(updatesError.message);
 
     const visibleUpdates = updates ?? [];
@@ -486,7 +526,7 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
         itemName: summarizeRequestItems(items) || product?.name || row.free_text_item || "Requested item",
         quantity: items.length === 1 ? first?.quantity ?? row.quantity : null,
         unit: items.length === 1 ? first?.unit ?? product?.unit_of_measure ?? null : null,
-        requesterName: requesterIdentity?.display_name ?? `Member ${row.requested_by.slice(0, 8)}`,
+        requesterName: requesterIdentity?.display_name ?? "Staff member",
         requesterEmail: requesterIdentity?.email ?? null,
         team: team?.name ?? requesterIdentity?.default_team_name ?? null,
         location: location?.name ?? requesterIdentity?.default_location_name ?? null,
@@ -517,6 +557,22 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
       };
     });
     return buildAdminRequestDashboard(requests);
+  });
+
+export const decideSupplyRequestFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((value: unknown) => adminRequestDecisionSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    const { data: result, error } = await context.supabase.rpc("decide_supply_request", {
+      _organization_id: data.organizationId,
+      _request_id: data.id,
+      _decision: data.decision,
+      ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
+      ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
+    });
+    if (error) throw new Error(error.message);
+    return result;
   });
 
 export const updateRequestStatusFn = createServerFn({ method: "POST" })
@@ -557,11 +613,20 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
     const membership = await requireMembership(context, request.organization_id);
     const isAdmin = membership.role === "owner" || membership.role === "admin";
     if (!isAdmin && request.requested_by !== context.userId) throw new Error("Forbidden");
-    let query = context.supabase.from("supply_request_updates")
+    if (!isAdmin) {
+      const { data: rows, error } = await context.supabase.rpc("list_staff_supply_request_updates", {
+        _organization_id: request.organization_id, _request_ids: [data.requestId],
+      });
+      if (error) throw new Error(error.message);
+      return (rows ?? []).map((row) => ({
+        id: row.id, statusFrom: row.status_from, statusTo: row.status_to,
+        staffVisibleNote: row.staff_visible_note, createdAt: row.created_at,
+      }));
+    }
+    const query = context.supabase.from("supply_request_updates")
       .select("id,status_from,status_to,internal_note,staff_visible_note,created_at")
       .eq("organization_id", request.organization_id).eq("supply_request_id", data.requestId)
-      .order("created_at", { ascending: true });
-    if (!isAdmin) query = query.not("staff_visible_note", "is", null);
+      .order("created_at", { ascending: true }).order("status_to", { ascending: true });
     const { data: rows, error } = await query;
     if (error) throw new Error(error.message);
     return (rows ?? []).map((row) => ({

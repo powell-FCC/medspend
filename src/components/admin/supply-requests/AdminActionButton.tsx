@@ -1,5 +1,4 @@
 import type { ButtonHTMLAttributes } from "react";
-import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function AdminActionButton({
@@ -21,7 +20,6 @@ export function AdminActionButton({
       {...props}
     >
       {children}
-      {variant === "primary" && <ArrowRight className="size-4" aria-hidden="true" />}
     </button>
   );
 }

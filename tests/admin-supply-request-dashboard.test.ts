@@ -11,8 +11,8 @@ import type { SupplyRequestStatus } from "../src/supply-requests/lifecycle.ts";
 
 test("admin lifecycle states translate into operational queues and next actions", () => {
   const expected = {
-    submitted: ["NEEDS_REVIEW", "Review Request"],
-    under_review: ["NEEDS_REVIEW", "Approve or Decline"],
+    submitted: ["NEEDS_REVIEW", "View Request"],
+    under_review: ["NEEDS_REVIEW", "View Request"],
     approved: ["AWAITING_ORDER", "Mark Ordered"],
     ordered: ["AWAITING_DELIVERY", "Mark Received"],
     received: ["READY_FOR_STAFF", "Complete Request"],
@@ -23,7 +23,7 @@ test("admin lifecycle states translate into operational queues and next actions"
     const translated = translateAdminRequestStatus(status as SupplyRequestStatus);
     assert.deepEqual([translated.queueGroup, translated.nextAction], result);
   }
-  assert.equal(translateAdminRequestStatus("denied").statusLabel, "Denied");
+  assert.equal(translateAdminRequestStatus("denied").statusLabel, "Declined");
 });
 
 function request(status: SupplyRequestStatus): AdminSupplyRequestViewModel {

@@ -2155,6 +2155,27 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      decide_supply_request: {
+        Args: {
+          _organization_id: string
+          _request_id: string
+          _decision: Database["public"]["Enums"]["supply_request_status"]
+          _staff_visible_note?: string
+          _internal_note?: string
+        }
+        Returns: Json
+      }
+      list_staff_supply_request_updates: {
+        Args: { _organization_id: string; _request_ids: string[] }
+        Returns: {
+          id: string
+          supply_request_id: string
+          status_from: Database["public"]["Enums"]["supply_request_status"] | null
+          status_to: Database["public"]["Enums"]["supply_request_status"] | null
+          staff_visible_note: string | null
+          created_at: string
+        }[]
+      }
       accept_invitation: {
         Args: { _raw_token: string }
         Returns: {

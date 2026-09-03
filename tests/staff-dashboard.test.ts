@@ -16,7 +16,7 @@ test("staff lifecycle values have friendly labels and groups", () => {
     ordered: ["Ordered", "ACTIVE"],
     received: ["Ready", "READY"],
     completed: ["Completed", "COMPLETED"],
-    denied: ["Not Approved", "ACTION_REQUIRED"],
+    denied: ["Declined", "ACTION_REQUIRED"],
   } as const;
   for (const [status, translated] of Object.entries(expected)) {
     const result = translateStaffRequestStatus(status as SupplyRequestStatus);
@@ -83,7 +83,8 @@ test("staff request detail enforces ownership and organization boundaries withou
   assert.match(detail, /eq\("id", data\.requestId\)/);
   assert.match(detail, /eq\("organization_id", data\.organizationId\)/);
   assert.match(detail, /eq\("requested_by", context\.userId\)/);
-  assert.match(detail, /select\("status_to,staff_visible_note,created_at"\)/);
+  assert.match(detail, /rpc\("list_staff_supply_request_updates"/);
+  assert.match(detail, /_request_ids: \[row.id\]/);
   assert.doesNotMatch(detail, /internal_note|internalNote|vendor|invoice|purchase/);
 });
 

@@ -37,6 +37,20 @@ def rest(path, params=None, method="GET", body=None):
     except urllib.error.HTTPError as e:
         return {"__error__": e.read().decode(), "status": e.code}
 
+def authenticated_rest(path, access_token, params=None, method="GET", body=None):
+    url = SUPA_URL + "/rest/v1/" + path
+    if params: url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, method=method, headers={
+        "apikey": PUB, "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json", "Prefer": "return=representation"})
+    data = json.dumps(body).encode() if body is not None else None
+    try:
+        with urllib.request.urlopen(req, data=data) as response:
+            text = response.read().decode()
+            return json.loads(text) if text else None
+    except urllib.error.HTTPError as error:
+        return {"__error__": error.read().decode(), "status": error.code}
+
 def get_session(email):
     r = urllib.request.Request(SUPA_URL + "/auth/v1/token?grant_type=password", method="POST",
         headers={"apikey": PUB, "Content-Type":"application/json"},
@@ -194,6 +208,7 @@ async def main():
         check("team created and scoped to org", len(t_rows) == 1 and t_rows[0]["name"] == "First Team", t_rows)
         check("location created and scoped to org", len(l_rows) == 1 and l_rows[0]["name"] == "Main Training Room", l_rows)
         TEAM_ID = t_rows[0]["id"] if t_rows else None
+        LOCATION_ID = l_rows[0]["id"] if l_rows else None
 
         # === STAFF context: inject staff session, then open invite ===
         staff_ctx = await browser.new_context(viewport={"width":390,"height":844})
@@ -237,9 +252,15 @@ async def main():
         check("no 'Purchases' admin nav in staff view", ">Purchases<" not in body)
         check("no 'Open requests' widget in staff view", "Open requests" not in body)
 
-        # Submit out-of-stock request
+        # Submit a multi-line out-of-stock request with structured and custom identity.
         await staff_page.set_viewport_size({"width": 320, "height": 740})
         await staff_page.goto(BASE + "/staff/request?type=out_of_stock")
+        await staff_page.get_by_label("Search supplies").fill("127-1560")
+        structured_result = staff_page.locator('[aria-label="Search results"] button').filter(has_text="127-1560").first
+        await structured_result.wait_for(timeout=15000)
+        STRUCTURED_ITEM_NAME = (await structured_result.locator("span").first.inner_text()).strip()
+        await structured_result.click()
+        await staff_page.get_by_role("button", name="Add to Request").click()
         await staff_page.get_by_text("Can't find the item?").click()
         await staff_page.fill('input[placeholder="Enter the item name"]', "Athletic tape 1.5in")
         for _ in range(11):
@@ -258,7 +279,7 @@ async def main():
         await staff_page.get_by_role("link", name="View My Requests").click()
         await staff_page.wait_for_url("**/staff/requests", timeout=20000)
         await staff_page.wait_for_load_state("networkidle")
-        await staff_page.get_by_text("Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
+        await staff_page.get_by_role("article").filter(has_text="Athletic tape 1.5in").wait_for(timeout=15000)
         await staff_page.screenshot(path=str(SHOTS/"03_staff_submitted.png"))
 
         srs = rest("supply_requests", {"organization_id": f"eq.{ORG_ID}", "select": "id,organization_id,requested_by,request_type,status,team_id"})
@@ -271,25 +292,62 @@ async def main():
         body = await staff_page.content()
         check("staff sees request in /staff/requests", "Athletic tape 1.5in" in body)
 
-        # Owner reviews and updates
+        approval_items_before = rest("supply_request_items", {
+            "supply_request_id": f"eq.{REQ_ID}",
+            "select": "id,product_id,inventory_item_id,vendor_product_id,catalog_vendor_product_id,free_text_item,quantity,unit",
+            "order": "id.asc",
+        })
+        check("multi-item request stores both lines", len(approval_items_before) == 2, approval_items_before)
+        structured_lines = [item for item in approval_items_before if item.get("catalog_vendor_product_id")]
+        custom_lines = [item for item in approval_items_before if item.get("free_text_item") == "Athletic tape 1.5in"]
+        check("structured request line preserves global identity", len(structured_lines) == 1, approval_items_before)
+        check("custom request line has no structured identity", len(custom_lines) == 1 and all(
+            custom_lines[0].get(field) is None for field in
+            ["product_id", "inventory_item_id", "vendor_product_id", "catalog_vendor_product_id"]
+        ), approval_items_before)
+
+        # Owner makes one visible approval decision. The database wrapper preserves
+        # submitted -> under_review -> approved atomically.
         await owner_page.goto(BASE + "/supply-requests")
-        await owner_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
-        await owner_page.get_by_role("button", name="Review Request", exact=True).click()
+        approval_card = owner_page.get_by_role("article").filter(has_text="Athletic tape 1.5in")
+        await approval_card.wait_for(timeout=15000)
+        await approval_card.get_by_role("button", name="View Request", exact=True).click()
         request_dialog = owner_page.get_by_role("dialog")
         await request_dialog.wait_for(timeout=15000)
-        await request_dialog.get_by_role("button", name="Review Request", exact=True).click()
+        await request_dialog.get_by_text(STRUCTURED_ITEM_NAME, exact=True).wait_for(timeout=15000)
+        await request_dialog.get_by_text("Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
+        await request_dialog.get_by_role("button", name="Approve", exact=True).click()
         await request_dialog.wait_for(state="hidden", timeout=15000)
 
-        await owner_page.get_by_role("button", name="Approve or Decline", exact=True).wait_for(timeout=15000)
-        await owner_page.get_by_role("button", name="Approve or Decline", exact=True).click()
-        await request_dialog.wait_for(timeout=15000)
-        await request_dialog.get_by_role("button", name="Approve Request", exact=True).click()
-        await request_dialog.wait_for(state="hidden", timeout=15000)
+        approved_row = rest("supply_requests", {"id": f"eq.{REQ_ID}", "select": "status"})
+        check("one-click decision reaches approved", bool(approved_row) and approved_row[0]["status"] == "approved", approved_row)
+        approval_updates = rest("supply_request_updates", {
+            "supply_request_id": f"eq.{REQ_ID}", "select": "status_from,status_to,author_id", "order": "created_at.asc,status_to.asc"
+        })
+        check("approval records submitted to under_review audit", any(
+            row["status_from"] == "submitted" and row["status_to"] == "under_review" for row in approval_updates
+        ), approval_updates)
+        check("approval records under_review to approved audit", any(
+            row["status_from"] == "under_review" and row["status_to"] == "approved" for row in approval_updates
+        ), approval_updates)
+        check("approval creates exactly two lifecycle audits", len(approval_updates) == 2, approval_updates)
+        approval_items_after = rest("supply_request_items", {
+            "supply_request_id": f"eq.{REQ_ID}",
+            "select": "id,product_id,inventory_item_id,vendor_product_id,catalog_vendor_product_id,free_text_item,quantity,unit",
+            "order": "id.asc",
+        })
+        check("approval leaves every request line unchanged", approval_items_after == approval_items_before, approval_items_after)
+
+        # The requester sees the intermediate approved state before procurement stages.
+        await staff_page.goto(BASE + "/staff/requests")
+        await staff_page.get_by_role("article").filter(has_text="Athletic tape 1.5in").wait_for(timeout=15000)
+        await staff_page.get_by_text("Approved", exact=True).wait_for(timeout=15000)
+        check("staff sees Approved after the admin decision", await staff_page.get_by_text("Approved", exact=True).is_visible())
 
         await owner_page.get_by_role("tab", name="Awaiting Order").click()
-        awaiting_order_item = owner_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True)
+        awaiting_order_item = owner_page.get_by_role("article").filter(has_text="Athletic tape 1.5in")
         await awaiting_order_item.wait_for(timeout=15000)
-        await owner_page.get_by_role("button", name="Mark Ordered", exact=True).click()
+        await awaiting_order_item.get_by_role("button", name="Mark Ordered", exact=True).click()
         await request_dialog.wait_for(timeout=15000)
         await request_dialog.get_by_label("Message to Staff (optional)", exact=True).fill("Ordered from McKesson, ETA 3 days")
         await request_dialog.get_by_role("button", name="Mark Ordered", exact=True).click()
@@ -305,17 +363,19 @@ async def main():
         # Staff sees update
         await staff_page.goto(BASE + "/staff/requests")
         await staff_page.wait_for_load_state("networkidle")
-        staff_request_item = staff_page.get_by_text("Athletic tape 1.5in", exact=True)
+        staff_request_item = staff_page.get_by_role("article").filter(has_text="Athletic tape 1.5in")
         await staff_request_item.wait_for(timeout=15000)
         await staff_page.get_by_text("Ordered", exact=True).wait_for(timeout=15000)
         body = await staff_page.content()
         check("staff sees friendly status 'Ordered'", "ordered" in body.lower())
-        await staff_request_item.click()
+        await staff_request_item.get_by_role("link").click()
         await staff_page.wait_for_url("**/staff/requests/*", timeout=20000)
-        await staff_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
+        await staff_page.get_by_role("heading", name="2 items", exact=True, level=1).wait_for(timeout=15000)
         # A fresh document at the detail URL must mount the nested route too.
         await staff_page.reload()
-        await staff_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
+        await staff_page.get_by_role("heading", name="2 items", exact=True, level=1).wait_for(timeout=15000)
+        await staff_page.get_by_text(STRUCTURED_ITEM_NAME, exact=True).wait_for(timeout=15000)
+        await staff_page.get_by_text("Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
         latest_update = staff_page.locator("section").filter(has=staff_page.get_by_text("Latest Update", exact=True))
         staff_message = latest_update.get_by_text("Ordered from McKesson, ETA 3 days", exact=True)
         await staff_message.wait_for(timeout=15000)
@@ -325,6 +385,95 @@ async def main():
         await ordered_event.get_by_text("Ordered", exact=True).wait_for(timeout=15000)
         await ordered_event.get_by_text("Ordered from McKesson, ETA 3 days", exact=True).wait_for(timeout=15000)
         check("staff sees request timeline", await timeline.get_by_role("heading", name="Timeline", exact=True).is_visible() and await ordered_event.is_visible())
+
+        # Separate decline path. The primary request already proves browser submission;
+        # this independent fixture uses the same authenticated staff RPC so the long
+        # acceptance session does not depend on remounting the mobile form twice.
+        staff_api_session = get_session(STAFF_EMAIL)
+        DECLINED_REQ_ID = authenticated_rest(
+            "rpc/submit_supply_request", staff_api_session["access_token"], method="POST",
+            body={
+                "_organization_id": ORG_ID, "_request_type": "new_item",
+                "_team_id": TEAM_ID, "_location_id": LOCATION_ID,
+                "_notes": "Needed for the away kit",
+                "_items": [{"freeTextItem": "Travel sideline repair kit", "quantity": 1}],
+            },
+        )
+        check("authenticated staff submits separate decline fixture", isinstance(DECLINED_REQ_ID, str), DECLINED_REQ_ID)
+        await staff_page.goto(BASE + "/staff/requests")
+        await staff_page.get_by_text("Travel sideline repair kit", exact=True).wait_for(timeout=15000)
+        declined_requests = rest("supply_requests", {
+            "id": f"eq.{DECLINED_REQ_ID}", "select": "id,status,requested_by,organization_id",
+        })
+        check("separate decline fixture is submitted in the active organization", len(declined_requests) == 1 and
+              declined_requests[0]["status"] == "submitted" and
+              declined_requests[0]["requested_by"] == STAFF_ID and
+              declined_requests[0]["organization_id"] == ORG_ID, declined_requests)
+
+        await owner_page.goto(BASE + "/supply-requests")
+        decline_card = owner_page.get_by_role("article").filter(has_text="Travel sideline repair kit")
+        await decline_card.wait_for(timeout=15000)
+        await decline_card.get_by_role("button", name="View Request", exact=True).click()
+        await request_dialog.wait_for(timeout=15000)
+        await request_dialog.get_by_role("button", name="Decline", exact=True).click()
+        await request_dialog.get_by_role("button", name="Decline Request", exact=True).click()
+        await request_dialog.get_by_role("alert").get_by_text(
+            "Add a short reason so staff understand the decision.", exact=True
+        ).wait_for(timeout=15000)
+        check("decline UI requires a staff-visible reason", True)
+        decline_reason = "This item is already available in the travel storage bin."
+        private_note = "Duplicate request confirmed during private admin review."
+        await request_dialog.get_by_label("Reason for decline (required)", exact=True).fill(decline_reason)
+        await request_dialog.get_by_label("Internal Admin Note", exact=True).fill(private_note)
+        await request_dialog.get_by_role("button", name="Decline Request", exact=True).click()
+        await request_dialog.wait_for(state="hidden", timeout=15000)
+
+        declined_row = rest("supply_requests", {"id": f"eq.{DECLINED_REQ_ID}", "select": "status"})
+        check("decline reaches terminal denied status", bool(declined_row) and declined_row[0]["status"] == "denied", declined_row)
+        decline_updates = rest("supply_request_updates", {
+            "supply_request_id": f"eq.{DECLINED_REQ_ID}",
+            "select": "status_from,status_to,staff_visible_note,internal_note,author_id",
+        })
+        check("decline reason is persisted for staff", len(decline_updates) == 1 and decline_updates[0].get("staff_visible_note") == decline_reason, decline_updates)
+        check("private decline note is persisted for admins", len(decline_updates) == 1 and decline_updates[0].get("internal_note") == private_note, decline_updates)
+
+        # Prove the deployed RLS/API boundary with real authenticated tokens.
+        owner_api_session = get_session(OWNER_EMAIL)
+        owner_update_rows = authenticated_rest("supply_request_updates", owner_api_session["access_token"], {
+            "supply_request_id": f"eq.{DECLINED_REQ_ID}",
+            "select": "staff_visible_note,internal_note",
+        })
+        check("authenticated owner API reads public and private decline notes", len(owner_update_rows) == 1 and
+              owner_update_rows[0].get("staff_visible_note") == decline_reason and
+              owner_update_rows[0].get("internal_note") == private_note, owner_update_rows)
+        staff_direct_updates = authenticated_rest("supply_request_updates", staff_api_session["access_token"], {
+            "supply_request_id": f"eq.{DECLINED_REQ_ID}",
+            "select": "staff_visible_note,internal_note",
+        })
+        check("staff direct table API cannot read the mixed private update row", staff_direct_updates == [], staff_direct_updates)
+        staff_safe_updates = authenticated_rest(
+            "rpc/list_staff_supply_request_updates", staff_api_session["access_token"], method="POST",
+            body={"_organization_id": ORG_ID, "_request_ids": [DECLINED_REQ_ID]},
+        )
+        check("staff safe update API returns the decline reason", isinstance(staff_safe_updates, list) and any(
+            row.get("staff_visible_note") == decline_reason for row in staff_safe_updates
+        ), staff_safe_updates)
+        check("staff safe update API has no internal-note field", isinstance(staff_safe_updates, list) and all(
+            "internal_note" not in row for row in staff_safe_updates
+        ), staff_safe_updates)
+
+        await staff_page.goto(BASE + "/staff/requests")
+        declined_request_item = staff_page.get_by_text("Travel sideline repair kit", exact=True)
+        await declined_request_item.wait_for(timeout=15000)
+        await staff_page.get_by_text("Declined", exact=True).wait_for(timeout=15000)
+        check("staff sees Declined in request history", await staff_page.get_by_text("Declined", exact=True).is_visible())
+        await declined_request_item.click()
+        await staff_page.wait_for_url(f"**/staff/requests/{DECLINED_REQ_ID}", timeout=20000)
+        await staff_page.get_by_role("heading", name="Travel sideline repair kit", exact=True).wait_for(timeout=15000)
+        await staff_page.get_by_text(decline_reason, exact=True).first.wait_for(timeout=15000)
+        decline_body = await staff_page.content()
+        check("staff sees decline reason in request detail", decline_reason in decline_body)
+        check("staff UI never renders private decline note", private_note not in decline_body)
 
         # Route isolation: staff -> admin routes redirect to /staff
         for route in ["/dashboard", "/settings", "/upload", "/purchases", "/invoices", "/products", "/vendors", "/supply-requests"]:

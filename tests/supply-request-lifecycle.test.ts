@@ -80,7 +80,7 @@ test('request update history hides internal notes from staff and verifies owners
   const server = await readFile(new URL('../src/lib/supply-requests.functions.ts', import.meta.url), 'utf8');
   const updates = server.slice(server.indexOf('export const listRequestUpdatesFn'), server.indexOf('export const searchProductsFn'));
   assert.match(updates, /request\.requested_by !== context\.userId/);
-  assert.match(updates, /if \(!isAdmin\) query = query\.not\("staff_visible_note", "is", null\)/);
+  assert.match(updates, /if \(!isAdmin\) \{[\s\S]*rpc\("list_staff_supply_request_updates"/);
   assert.match(updates, /internalNote: isAdmin \? row\.internal_note : undefined/);
 });
 

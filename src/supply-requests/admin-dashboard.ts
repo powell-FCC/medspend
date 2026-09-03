@@ -62,13 +62,13 @@ export type AdminSupplyRequestDashboard = {
 };
 
 const QUEUE_TRANSLATIONS: Readonly<Record<SupplyRequestStatus, AdminQueueTranslation>> = {
-  submitted: { queueGroup: "NEEDS_REVIEW", statusLabel: "Submitted", nextAction: "Review Request" },
-  under_review: { queueGroup: "NEEDS_REVIEW", statusLabel: "Under Review", nextAction: "Approve or Decline" },
+  submitted: { queueGroup: "NEEDS_REVIEW", statusLabel: "Needs decision", nextAction: "View Request" },
+  under_review: { queueGroup: "NEEDS_REVIEW", statusLabel: "In review", nextAction: "View Request" },
   approved: { queueGroup: "AWAITING_ORDER", statusLabel: "Approved", nextAction: "Mark Ordered" },
   ordered: { queueGroup: "AWAITING_DELIVERY", statusLabel: "Ordered", nextAction: "Mark Received" },
   received: { queueGroup: "READY_FOR_STAFF", statusLabel: "Ready for Staff", nextAction: "Complete Request" },
   completed: { queueGroup: "COMPLETED", statusLabel: "Completed", nextAction: null },
-  denied: { queueGroup: "COMPLETED", statusLabel: "Denied", nextAction: null },
+  denied: { queueGroup: "COMPLETED", statusLabel: "Declined", nextAction: null },
 };
 
 const REQUEST_TYPE_LABELS = {

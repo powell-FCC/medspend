@@ -1,11 +1,7 @@
-export function AdminMessagePanel({
-  staffMessage,
-  internalNote,
-  onStaffMessageChange,
-  onInternalNoteChange,
-  staffGuidance,
-  staffPlaceholder,
-  staffMessageRequired = false,
+import type { Ref } from "react";
+
+export function AdminMessagePanel({ staffMessage, internalNote, onStaffMessageChange, onInternalNoteChange,
+  staffGuidance, staffPlaceholder, staffMessageRequired = false, disabled = false, staffMessageRef,
 }: {
   staffMessage: string;
   internalNote: string;
@@ -14,24 +10,23 @@ export function AdminMessagePanel({
   staffGuidance: string;
   staffPlaceholder: string;
   staffMessageRequired?: boolean;
+  disabled?: boolean;
+  staffMessageRef?: Ref<HTMLTextAreaElement>;
 }) {
   return (
-    <section className="space-y-4" aria-labelledby="communication-heading">
+    <fieldset disabled={disabled} className="grid min-w-0 gap-4 sm:grid-cols-2">
       <div>
-        <h3 id="communication-heading" className="font-semibold text-[#102a49]">Communication</h3>
-        <p className="mt-1 text-sm text-[#697687]">Keep requester communication separate from private operational context.</p>
+        <label htmlFor="admin-staff-message" className="text-sm font-semibold text-[#293e55]">
+          {staffMessageRequired ? "Reason for decline (required)" : "Message to Staff (optional)"}
+        </label>
+        <p id="staff-message-guidance" className="mt-1 text-xs leading-5 text-[#697687]">Visible to requester. {staffGuidance}</p>
+        <textarea ref={staffMessageRef} id="admin-staff-message" aria-describedby="staff-message-guidance" rows={3} maxLength={5000} required={staffMessageRequired} value={staffMessage} onChange={(event) => onStaffMessageChange(event.target.value)} placeholder={staffPlaceholder} className="mt-2 w-full resize-y rounded-lg border border-[#ccd5df] bg-white p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#f56600]" />
       </div>
-      <div className="rounded-xl border border-[#f3d1b9] bg-[#fff8f3] p-4">
-        <label htmlFor="admin-staff-message" className="text-sm font-semibold text-[#8d3c08]">Message to Staff{staffMessageRequired ? " (required)" : " (optional)"}</label>
-        <p className="mt-0.5 text-xs text-[#8d674e]">Visible to requester</p>
-        <p className="mt-2 text-sm text-[#6f513d]">{staffGuidance}</p>
-        <textarea id="admin-staff-message" rows={3} required={staffMessageRequired} value={staffMessage} onChange={(event) => onStaffMessageChange(event.target.value)} placeholder={staffPlaceholder} className="mt-3 w-full resize-none rounded-lg border border-[#e8c6ae] bg-white p-3 text-sm outline-none focus:border-[#f56600] focus:ring-2 focus:ring-[#f56600]/15" />
+      <div>
+        <label htmlFor="admin-internal-note" className="text-sm font-semibold text-[#293e55]">Internal Admin Note</label>
+        <p id="internal-note-guidance" className="mt-1 text-xs leading-5 text-[#697687]">Admins only — never visible to staff.</p>
+        <textarea id="admin-internal-note" aria-describedby="internal-note-guidance" rows={3} maxLength={5000} value={internalNote} onChange={(event) => onInternalNoteChange(event.target.value)} placeholder="Optional private context" className="mt-2 w-full resize-y rounded-lg border border-[#ccd5df] bg-[#f8fafc] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#102a49]" />
       </div>
-      <div className="rounded-xl border border-[#dce2e8] bg-[#f7f9fb] p-4">
-        <label htmlFor="admin-internal-note" className="text-sm font-semibold text-[#34465b]">Internal Admin Note</label>
-        <p className="mt-0.5 text-xs text-[#697687]">Admins only — never visible to staff</p>
-        <textarea id="admin-internal-note" rows={3} value={internalNote} onChange={(event) => onInternalNoteChange(event.target.value)} placeholder="Record private operational context" className="mt-3 w-full resize-none rounded-lg border border-[#d5dde5] bg-white p-3 text-sm outline-none focus:border-[#102a49] focus:ring-2 focus:ring-[#102a49]/10" />
-      </div>
-    </section>
+    </fieldset>
   );
 }

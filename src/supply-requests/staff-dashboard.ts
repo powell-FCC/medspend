@@ -37,6 +37,11 @@ export type SupplyRequestItemViewModel = {
   name: string;
   quantity: number;
   unit: string | null;
+  freeTextItem?: string | null;
+  manufacturer?: string | null;
+  vendorName?: string | null;
+  vendorSku?: string | null;
+  packageDisplay?: string | null;
 };
 
 export type StaffDashboardViewModel = {
@@ -66,7 +71,7 @@ const STAFF_STATUS: Readonly<Record<SupplyRequestStatus, StaffRequestStatus>> = 
   ordered: { label: "Ordered", group: "ACTIVE" },
   received: { label: "Ready", group: "READY" },
   completed: { label: "Completed", group: "COMPLETED" },
-  denied: { label: "Not Approved", group: "ACTION_REQUIRED" },
+  denied: { label: "Declined", group: "ACTION_REQUIRED" },
 };
 
 export function translateStaffRequestStatus(status: SupplyRequestStatus): StaffRequestStatus {

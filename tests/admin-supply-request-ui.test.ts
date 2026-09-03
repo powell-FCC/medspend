@@ -22,24 +22,26 @@ test("detail workflow sends staff and internal communication through distinct fi
   assert.match(messages, /Internal Admin Note/);
   assert.match(messages, /Admins only — never visible to staff/);
   assert.match(detail, /primaryTransition/);
-  assert.match(detail, /allowedNextSupplyRequestStatuses/);
+  assert.match(route, /decideSupplyRequestFn/);
 });
 
 test("contextual actions preserve the enforced lifecycle order", async () => {
   const detail = await readFile(new URL("../src/components/admin/supply-requests/AdminRequestDetail.tsx", import.meta.url), "utf8");
   for (const transition of [
-    'submitted: "under_review"', 'under_review: "approved"', 'approved: "ordered"',
+    'submitted: "approved"', 'under_review: "approved"', 'approved: "ordered"',
     'ordered: "received"', 'received: "completed"',
   ]) assert.match(detail, new RegExp(transition.replace(/["_]/g, (value) => `\\${value}`)));
   assert.doesNotMatch(detail, /submitted: "completed"|approved: "received"/);
+  const sql = await readFile(new URL("../supabase/migrations/20260903140000_phase5a9_admin_request_decisions.sql", import.meta.url), "utf8");
+  assert.match(sql, /transition_supply_request\(_organization_id, _request_id, 'under_review'\)/);
 });
 
 test("denial requires a requester-visible explanation and communication has stage guidance", async () => {
   const detail = await readFile(new URL("../src/components/admin/supply-requests/AdminRequestDetail.tsx", import.meta.url), "utf8");
   const panel = await readFile(new URL("../src/components/admin/supply-requests/AdminMessagePanel.tsx", import.meta.url), "utf8");
-  assert.match(detail, /if \(!staffMessage\.trim\(\)\)/);
-  assert.match(detail, /Add a message explaining why this request cannot be fulfilled/);
-  for (const example of ["Approved. Ordering today.", "Arriving Friday morning.", "Available in medical storage."]) assert.match(detail, new RegExp(example.replaceAll(".", "\\.")));
+  assert.match(detail, /declining && !staffMessage.trim\(\)/);
+  assert.match(detail, /Add a short reason so staff understand the decision/);
+  assert.match(panel, /Reason for decline \(required\)/);
   assert.match(panel, /Visible to requester/);
   assert.match(panel, /Admins only — never visible to staff/);
 });
