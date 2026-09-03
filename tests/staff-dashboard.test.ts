@@ -66,6 +66,13 @@ test("both staff routes consume the shared dashboard model and request card", as
   }
 });
 
+test("staff request history renders its nested detail route instead of the list", async () => {
+  const route = await readFile(new URL("../src/routes/_authenticated/staff/requests.tsx", import.meta.url), "utf8");
+  assert.match(route, /import \{[^}]*Outlet[^}]*useMatch[^}]*\} from "@tanstack\/react-router"/);
+  assert.match(route, /component: StaffRequests/);
+  assert.match(route, /function StaffRequests\(\) \{\s*const detailMatch = useMatch\(\{\s*from: "\/_authenticated\/staff\/requests\/\$id",\s*shouldThrow: false,?\s*\}\);\s*return detailMatch \? <Outlet \/> : <MyRequests \/>;/);
+});
+
 test("staff request detail enforces ownership and organization boundaries without selecting internal notes", async () => {
   const server = await readFile(new URL("../src/lib/supply-requests.functions.ts", import.meta.url), "utf8");
   const detail = server.slice(

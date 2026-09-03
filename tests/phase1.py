@@ -238,17 +238,27 @@ async def main():
         check("no 'Open requests' widget in staff view", "Open requests" not in body)
 
         # Submit out-of-stock request
+        await staff_page.set_viewport_size({"width": 320, "height": 740})
         await staff_page.goto(BASE + "/staff/request?type=out_of_stock")
         await staff_page.get_by_text("Can't find the item?").click()
         await staff_page.fill('input[placeholder="Enter the item name"]', "Athletic tape 1.5in")
         for _ in range(11):
             await staff_page.get_by_role("button", name="Increase quantity").click()
+        await staff_page.get_by_role("button", name="Add to Request").click()
+        cart_name = staff_page.get_by_text("Athletic tape 1.5in", exact=True)
+        await cart_name.wait_for()
+        assert await cart_name.evaluate("el => el.scrollWidth <= el.clientWidth"), "Staff cart truncates the item name at 320px"
+        assert await staff_page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Staff cart overflows at 320px"
+        for action in ["Decrease", "Increase", "Remove"]:
+            target = await staff_page.get_by_role("button", name=f"{action} Athletic tape 1.5in", exact=True).bounding_box()
+            assert target and target["width"] >= 44 and target["height"] >= 44, f"{action} cart touch target is too small"
         await staff_page.fill('textarea', "Urgent — pregame")
         await staff_page.get_by_role("button", name="Submit Request").click()
         await staff_page.get_by_role("heading", name="Request Submitted").wait_for()
         await staff_page.get_by_role("link", name="View My Requests").click()
         await staff_page.wait_for_url("**/staff/requests", timeout=20000)
         await staff_page.wait_for_load_state("networkidle")
+        await staff_page.get_by_text("Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
         await staff_page.screenshot(path=str(SHOTS/"03_staff_submitted.png"))
 
         srs = rest("supply_requests", {"organization_id": f"eq.{ORG_ID}", "select": "id,organization_id,requested_by,request_type,status,team_id"})
@@ -259,18 +269,32 @@ async def main():
         check("request requested_by == STAFF_ID", bool(srs) and srs[0]["requested_by"] == STAFF_ID)
         check("request type = out_of_stock", bool(srs) and srs[0]["request_type"] == "out_of_stock")
         body = await staff_page.content()
-        check("staff sees request in /staff/requests", "Athletic tape" in body)
+        check("staff sees request in /staff/requests", "Athletic tape 1.5in" in body)
 
         # Owner reviews and updates
         await owner_page.goto(BASE + "/supply-requests")
-        await owner_page.wait_for_selector('td:has-text("Athletic tape")', timeout=15000)
-        await owner_page.get_by_role("button", name="Review").click()
-        await owner_page.wait_for_selector('textarea')
-        await owner_page.fill('textarea', "Ordered from McKesson, ETA 3 days")
-        await owner_page.get_by_role("button", name="under_review", exact=True).click()
-        await owner_page.get_by_role("button", name="approved", exact=True).click()
-        await owner_page.get_by_role("button", name="ordered", exact=True).click()
-        await owner_page.wait_for_timeout(1500)
+        await owner_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
+        await owner_page.get_by_role("button", name="Review Request", exact=True).click()
+        request_dialog = owner_page.get_by_role("dialog")
+        await request_dialog.wait_for(timeout=15000)
+        await request_dialog.get_by_role("button", name="Review Request", exact=True).click()
+        await request_dialog.wait_for(state="hidden", timeout=15000)
+
+        await owner_page.get_by_role("button", name="Approve or Decline", exact=True).wait_for(timeout=15000)
+        await owner_page.get_by_role("button", name="Approve or Decline", exact=True).click()
+        await request_dialog.wait_for(timeout=15000)
+        await request_dialog.get_by_role("button", name="Approve Request", exact=True).click()
+        await request_dialog.wait_for(state="hidden", timeout=15000)
+
+        await owner_page.get_by_role("tab", name="Awaiting Order").click()
+        awaiting_order_item = owner_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True)
+        await awaiting_order_item.wait_for(timeout=15000)
+        await owner_page.get_by_role("button", name="Mark Ordered", exact=True).click()
+        await request_dialog.wait_for(timeout=15000)
+        await request_dialog.get_by_label("Message to Staff (optional)", exact=True).fill("Ordered from McKesson, ETA 3 days")
+        await request_dialog.get_by_role("button", name="Mark Ordered", exact=True).click()
+        await request_dialog.wait_for(state="hidden", timeout=15000)
+        await awaiting_order_item.wait_for(state="hidden", timeout=15000)
         await owner_page.screenshot(path=str(SHOTS/"04_owner_review.png"))
         srs2 = rest("supply_requests", {"id": f"eq.{REQ_ID}", "select": "status,ordered_at"})
         check("status updated to ordered", bool(srs2) and srs2[0]["status"] == "ordered", srs2)
@@ -281,13 +305,26 @@ async def main():
         # Staff sees update
         await staff_page.goto(BASE + "/staff/requests")
         await staff_page.wait_for_load_state("networkidle")
+        staff_request_item = staff_page.get_by_text("Athletic tape 1.5in", exact=True)
+        await staff_request_item.wait_for(timeout=15000)
+        await staff_page.get_by_text("Ordered", exact=True).wait_for(timeout=15000)
         body = await staff_page.content()
         check("staff sees friendly status 'Ordered'", "ordered" in body.lower())
-        await staff_page.get_by_text("Athletic tape 1.5in").click()
+        await staff_request_item.click()
         await staff_page.wait_for_url("**/staff/requests/*", timeout=20000)
-        body = await staff_page.content()
-        check("staff sees staff-visible update in request detail", "Ordered from McKesson" in body)
-        check("staff sees request timeline", "Timeline" in body and "Ordered" in body)
+        await staff_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
+        # A fresh document at the detail URL must mount the nested route too.
+        await staff_page.reload()
+        await staff_page.get_by_role("heading", name="Athletic tape 1.5in", exact=True).wait_for(timeout=15000)
+        latest_update = staff_page.locator("section").filter(has=staff_page.get_by_text("Latest Update", exact=True))
+        staff_message = latest_update.get_by_text("Ordered from McKesson, ETA 3 days", exact=True)
+        await staff_message.wait_for(timeout=15000)
+        check("staff sees staff-visible update in request detail", await staff_message.is_visible())
+        timeline = staff_page.locator("section").filter(has=staff_page.get_by_role("heading", name="Timeline", exact=True))
+        ordered_event = timeline.get_by_role("listitem").filter(has=staff_page.get_by_text("Ordered", exact=True))
+        await ordered_event.get_by_text("Ordered", exact=True).wait_for(timeout=15000)
+        await ordered_event.get_by_text("Ordered from McKesson, ETA 3 days", exact=True).wait_for(timeout=15000)
+        check("staff sees request timeline", await timeline.get_by_role("heading", name="Timeline", exact=True).is_visible() and await ordered_event.is_visible())
 
         # Route isolation: staff -> admin routes redirect to /staff
         for route in ["/dashboard", "/settings", "/upload", "/purchases", "/invoices", "/products", "/vendors", "/supply-requests"]:

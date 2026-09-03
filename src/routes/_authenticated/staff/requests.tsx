@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useActiveOrg } from "@/hooks/use-active-org";
@@ -8,8 +8,16 @@ import { StaffEmptyState } from "@/components/staff/StaffEmptyState";
 
 export const Route = createFileRoute("/_authenticated/staff/requests")({
   head: () => ({ meta: [{ title: "My requests — MedSpend" }, { name: "robots", content: "noindex" }] }),
-  component: MyRequests,
+  component: StaffRequests,
 });
+
+function StaffRequests() {
+  const detailMatch = useMatch({
+    from: "/_authenticated/staff/requests/$id",
+    shouldThrow: false,
+  });
+  return detailMatch ? <Outlet /> : <MyRequests />;
+}
 
 function MyRequests() {
   const { active } = useActiveOrg();

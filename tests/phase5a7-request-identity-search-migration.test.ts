@@ -269,7 +269,7 @@ test("search ranking, identity-only dedupe, and package trust remain conservativ
   assert.doesNotMatch(searchRpc, /package_quantity::integer/);
 });
 
-test("backend plumbing preserves new IDs without implementing the search UI", () => {
+test("backend plumbing preserves new IDs and powers the Phase 5A.8 search UI", () => {
   for (const property of ["inventoryItemId", "vendorProductId", "catalogVendorProductId"]) {
     assert.match(validation, new RegExp(`${property}: z\\.string\\(\\)\\.uuid\\(\\)`));
     assert.match(server, new RegExp(property));
@@ -279,7 +279,8 @@ test("backend plumbing preserves new IDs without implementing the search UI", ()
   assert.match(server, /export const searchSupplyRequestProductsFn/);
   assert.match(server, /unifiedSupplyRequestSearchResultSchema\.array\(\)\.parse/);
   assert.match(server, /rpc\(\s*"search_supply_request_products"/);
-  assert.doesNotMatch(staffRoute, /searchSupplyRequestProductsFn/);
+  assert.match(staffRoute, /useServerFn\(searchSupplyRequestProductsFn\)/);
+  assert.doesNotMatch(staffRoute, /\bsearchProductsFn\b/);
 });
 
 test("generated database types expose the added line columns and search RPC", () => {
