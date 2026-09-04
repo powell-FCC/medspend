@@ -142,3 +142,1427 @@
     color: var(--color-foreground);
   }
 }
+
+/* Public SportSpend marketing and authentication surfaces. These tokens are
+ * intentionally scoped so the authenticated product UI is not restyled. */
+.sportspend-public,
+.sportspend-auth {
+  --sp-navy: #0b1d33;
+  --sp-navy-soft: #173552;
+  --sp-sage: #637d70;
+  --sp-sage-dark: #3f695d;
+  --sp-orange: #e76f2e;
+  --sp-cream: #f7f5f0;
+  --sp-white: #fffefa;
+  --sp-gray: #6b7280;
+  --sp-line: #d9ddd9;
+  color: var(--sp-navy);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+.sportspend-public {
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--sp-cream);
+}
+
+.sp-header,
+.sp-hero,
+.sp-features,
+.sp-product,
+.sp-footer {
+  width: min(100% - 3rem, 1280px);
+  margin-inline: auto;
+}
+
+.sp-header {
+  min-height: 96px;
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr auto;
+  align-items: center;
+  gap: 2.25rem;
+}
+
+.sp-brand-link {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 56px;
+  align-items: center;
+  border-radius: 10px;
+}
+
+.sp-brand-link:focus-visible,
+.sp-nav a:focus-visible,
+.sp-sign-in:focus-visible,
+.sp-footer a:focus-visible {
+  outline: 2px solid var(--sp-orange);
+  outline-offset: 4px;
+}
+
+.sp-header-logo {
+  display: block;
+  width: 292px;
+  height: auto;
+}
+
+.sp-nav,
+.sp-header-actions,
+.sp-hero-actions,
+.sp-footer nav {
+  display: flex;
+  align-items: center;
+}
+
+.sp-nav {
+  justify-content: flex-end;
+  gap: clamp(1.2rem, 2.5vw, 2.5rem);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.sp-nav a,
+.sp-nav span,
+.sp-footer a,
+.sp-footer span {
+  color: var(--sp-navy);
+  text-decoration: none;
+}
+
+.sp-nav a {
+  transition: color 160ms ease;
+}
+
+.sp-nav a:hover {
+  color: var(--sp-sage-dark);
+}
+
+.sp-nav span[aria-disabled="true"],
+.sp-footer span[aria-disabled="true"] {
+  cursor: default;
+}
+
+.sp-header-actions {
+  gap: 1.25rem;
+}
+
+.sp-sign-in {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sp-navy);
+  font-size: 0.875rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.sp-button {
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  border-radius: 9px;
+  padding: 0.8rem 1.75rem;
+  border: 1px solid transparent;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.sp-button-primary {
+  background: #087d64;
+  color: white;
+  box-shadow: 0 7px 18px rgb(11 29 51 / 10%);
+}
+
+.sp-button-primary:hover {
+  background: #066b56;
+  transform: translateY(-1px);
+}
+
+.sp-button:focus-visible {
+  outline: 3px solid rgb(231 111 46 / 35%);
+  outline-offset: 3px;
+}
+
+.sp-button-secondary {
+  border-color: #8aaba1;
+  background: transparent;
+  color: var(--sp-navy);
+}
+
+.sp-button-secondary:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.sp-play {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #8aaba1;
+  border-radius: 50%;
+}
+
+.sp-play svg {
+  width: 14px;
+  height: 14px;
+  fill: var(--sp-navy);
+}
+
+.sp-hero {
+  min-height: 620px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.93fr) minmax(520px, 1.07fr);
+  align-items: center;
+  gap: clamp(2rem, 4vw, 5rem);
+  padding-block: 3.5rem 2.5rem;
+}
+
+.sp-hero-copy {
+  position: relative;
+  z-index: 2;
+}
+
+.sp-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  color: var(--sp-navy);
+  font-size: 0.77rem;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.sp-eyebrow span {
+  width: 44px;
+  height: 2px;
+  flex: 0 0 auto;
+  background: var(--sp-orange);
+}
+
+.sp-hero h1 {
+  margin: 1.25rem 0 0;
+  font-size: clamp(3.35rem, 5.15vw, 5.45rem);
+  font-weight: 760;
+  letter-spacing: -0.065em;
+  line-height: 0.96;
+}
+
+.sp-hero h1 span {
+  display: block;
+}
+
+.sp-hero h1 span:last-child {
+  margin-top: 0.28em;
+  color: var(--sp-sage-dark);
+}
+
+.sp-hero-body {
+  max-width: 650px;
+  margin: 1.35rem 0 0;
+  color: #31445a;
+  font-size: 1.06rem;
+  line-height: 1.55;
+}
+
+.sp-hero-actions {
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1.8rem;
+}
+
+.sp-hero-visual {
+  position: relative;
+  min-height: 530px;
+  margin: 0 -5vw 0 -2rem;
+  isolation: isolate;
+}
+
+.sp-hero-visual::after {
+  content: "";
+  position: absolute;
+  inset: 8% auto 1% 2%;
+  z-index: -1;
+  width: 35%;
+  background: rgb(99 125 112 / 28%);
+  clip-path: polygon(36% 0, 100% 0, 64% 100%, 0 100%);
+}
+
+.sp-hero-visual img {
+  position: absolute;
+  inset: 0 0 0 9%;
+  width: 91%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 58% center;
+  clip-path: polygon(18% 0, 100% 0, 100% 100%, 0 100%);
+}
+
+.sp-hero-accent {
+  position: absolute;
+  inset: 15% auto 2% 0;
+  z-index: 1;
+  width: 29%;
+  border-left: 1px solid rgb(247 245 240 / 65%);
+  background: rgb(247 245 240 / 35%);
+  clip-path: polygon(42% 0, 100% 0, 58% 100%, 0 100%);
+  pointer-events: none;
+}
+
+.sp-features {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-block: 1px solid var(--sp-line);
+}
+
+.sp-feature {
+  min-height: 210px;
+  padding: 2.3rem 2rem 2.1rem;
+  text-align: center;
+}
+
+.sp-feature + .sp-feature {
+  border-left: 1px solid var(--sp-line);
+}
+
+.sp-feature-icon {
+  height: 46px;
+  display: grid;
+  place-items: center;
+  color: var(--sp-navy);
+}
+
+.sp-feature-icon svg {
+  width: 40px;
+  height: 40px;
+  stroke-width: 1.8;
+}
+
+.sp-feature h2 {
+  margin: 0.9rem 0 0;
+  font-size: 1.05rem;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+
+.sp-feature p {
+  max-width: 230px;
+  margin: 0.55rem auto 0;
+  color: #506176;
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+
+.sp-product {
+  display: grid;
+  grid-template-columns: minmax(0, 1.48fr) minmax(310px, 0.52fr);
+  align-items: center;
+  gap: clamp(2.5rem, 5vw, 5.5rem);
+  padding-block: clamp(5rem, 8vw, 8rem);
+}
+
+.sp-product-visual {
+  position: relative;
+  min-height: 540px;
+}
+
+.sp-desktop-frame {
+  position: absolute;
+  inset: 0 5% 5% 0;
+  overflow: hidden;
+  border: 7px solid #182026;
+  border-bottom-width: 16px;
+  border-radius: 16px 16px 9px 9px;
+  background: #f5f7f9;
+  box-shadow: 0 22px 40px rgb(11 29 51 / 16%);
+}
+
+.sp-desktop-camera {
+  position: absolute;
+  z-index: 2;
+  top: -1px;
+  left: 50%;
+  width: 62px;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 0 0 10px 10px;
+  background: #182026;
+}
+
+.sp-app-preview {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 29% 1fr;
+  background: #f5f7f9;
+}
+
+.sp-app-preview aside {
+  padding: 0.75rem 0.7rem;
+  background: #0b2741;
+  color: #d8e1e7;
+}
+
+.sp-preview-logo {
+  width: 140px;
+  max-width: 100%;
+  margin: -0.35rem auto 0.25rem;
+  border-radius: 5px;
+  padding-inline: 0.25rem;
+  background: var(--sp-cream);
+}
+
+.sp-app-preview aside > div {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 36px;
+  margin-top: 0.25rem;
+  padding: 0 0.65rem;
+  border-radius: 7px;
+  font-size: clamp(0.54rem, 0.75vw, 0.72rem);
+}
+
+.sp-app-preview aside > div svg {
+  width: 15px;
+  height: 15px;
+}
+
+.sp-app-preview aside > div.active {
+  background: #0b8068;
+  color: white;
+}
+
+.sp-preview-content {
+  min-width: 0;
+  padding: 1.4rem 1.4rem 1rem;
+}
+
+.sp-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sp-preview-toolbar > span {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #e0e6ea;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  color: #8792a0;
+  background: white;
+  font-size: clamp(0.52rem, 0.7vw, 0.68rem);
+}
+
+.sp-preview-toolbar svg,
+.sp-preview-toolbar button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.sp-preview-toolbar button,
+.sp-phone-screen > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 0;
+  border-radius: 7px;
+  background: #0b8068;
+  color: white;
+  font-weight: 700;
+}
+
+.sp-preview-toolbar button {
+  min-height: 34px;
+  padding: 0 0.7rem;
+  font-size: clamp(0.5rem, 0.7vw, 0.65rem);
+}
+
+.sp-preview-kicker,
+.sp-phone-kicker {
+  margin: 1.35rem 0 0;
+  color: #718092;
+  font-size: 0.55rem;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.sp-preview-content h3 {
+  margin: 0.25rem 0 0;
+  font-size: clamp(1.05rem, 1.55vw, 1.45rem);
+  letter-spacing: -0.04em;
+}
+
+.sp-preview-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.sp-preview-metrics span {
+  border: 1px solid #dfe5eb;
+  border-radius: 8px;
+  padding: 0.65rem;
+  background: white;
+  color: #667384;
+  font-size: clamp(0.5rem, 0.65vw, 0.62rem);
+}
+
+.sp-preview-metrics b {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: #102a49;
+  font-size: clamp(1.1rem, 1.5vw, 1.4rem);
+}
+
+.sp-request-list {
+  overflow: hidden;
+  margin-top: 0.75rem;
+  border: 1px solid #dfe5eb;
+  border-radius: 8px;
+  background: white;
+}
+
+.sp-preview-request {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid #e6eaee;
+  font-size: clamp(0.48rem, 0.66vw, 0.64rem);
+}
+
+.sp-preview-request:last-child {
+  border-bottom: 0;
+}
+
+.sp-preview-request > span,
+.sp-preview-request strong,
+.sp-preview-request small {
+  min-width: 0;
+  display: block;
+}
+
+.sp-preview-request strong {
+  overflow: hidden;
+  color: #102a49;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-preview-request small {
+  margin-top: 0.2rem;
+  color: #75808e;
+}
+
+.sp-preview-request > b {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 0.35rem 0.5rem;
+  background: #eaf4ef;
+  color: #356655;
+  font-size: 0.55rem;
+}
+
+.sp-preview-request > b[data-status="Needs review"] {
+  background: #fff1e7;
+  color: #a14e17;
+}
+
+.sp-phone-frame {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: 0;
+  width: 29%;
+  min-width: 180px;
+  height: 79%;
+  overflow: hidden;
+  border: 7px solid #151b20;
+  border-radius: 34px;
+  background: white;
+  box-shadow: 0 22px 40px rgb(11 29 51 / 24%);
+}
+
+.sp-phone-speaker {
+  position: absolute;
+  z-index: 4;
+  top: 5px;
+  left: 50%;
+  width: 45%;
+  height: 17px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: #151b20;
+}
+
+.sp-phone-screen {
+  height: 100%;
+  position: relative;
+  padding: 1.4rem 0.75rem 3.5rem;
+  background: #f7f9fa;
+}
+
+.sp-phone-logo {
+  width: 122px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.sp-phone-kicker {
+  margin-top: 0.75rem;
+}
+
+.sp-phone-screen h3 {
+  margin: 0.2rem 0 0;
+  font-size: 1rem;
+  letter-spacing: -0.035em;
+}
+
+.sp-phone-screen > button {
+  width: 100%;
+  min-height: 40px;
+  justify-content: center;
+  margin-top: 0.8rem;
+  font-size: 0.67rem;
+}
+
+.sp-phone-screen > button svg {
+  width: 15px;
+}
+
+.sp-phone-card {
+  margin-top: 0.7rem;
+  border: 1px solid #dfe5eb;
+  border-radius: 9px;
+  padding: 0.7rem;
+  background: white;
+}
+
+.sp-phone-card span,
+.sp-phone-card strong,
+.sp-phone-card small {
+  display: block;
+}
+
+.sp-phone-card span {
+  color: #7a8592;
+  font-size: 0.52rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sp-phone-card strong {
+  margin-top: 0.3rem;
+  color: #102a49;
+  font-size: 0.72rem;
+}
+
+.sp-phone-card small {
+  margin-top: 0.4rem;
+  color: #a14e17;
+  font-size: 0.58rem;
+}
+
+.sp-phone-screen nav {
+  position: absolute;
+  inset: auto 0 0;
+  height: 51px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid #dfe4ea;
+  background: white;
+}
+
+.sp-phone-screen nav span {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.1rem;
+  color: #7a8592;
+  font-size: 0.48rem;
+  font-weight: 650;
+}
+
+.sp-phone-screen nav svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sp-phone-screen nav span.active {
+  color: var(--sp-orange);
+}
+
+.sp-product-copy h2 {
+  margin: 1.1rem 0 0;
+  font-size: clamp(2.35rem, 3.7vw, 3.65rem);
+  font-weight: 760;
+  letter-spacing: -0.06em;
+  line-height: 1.02;
+}
+
+.sp-product-copy > p:not(.sp-eyebrow) {
+  margin: 1.25rem 0 0;
+  color: #3d4f63;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.sp-product-copy ul {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.45rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sp-product-copy li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #243b51;
+  font-size: 0.95rem;
+}
+
+.sp-product-copy li span {
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--sp-sage-dark);
+  color: white;
+}
+
+.sp-product-copy li svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 3;
+}
+
+.sp-cta {
+  position: relative;
+  min-height: 340px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background-image:
+    linear-gradient(rgb(5 25 41 / 88%), rgb(5 25 41 / 92%)),
+    url("/brand/sportspend-stadium-hero.png");
+  background-position: center 65%;
+  background-size: cover;
+}
+
+.sp-cta::before,
+.sp-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sp-cta::before {
+  background: repeating-linear-gradient(90deg, transparent 0 79px, rgb(255 255 255 / 3%) 80px);
+}
+
+.sp-cta::after {
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--sp-orange);
+}
+
+.sp-cta-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 1.5rem;
+  width: min(92%, 620px);
+}
+
+.sp-cta-logo-wrap {
+  display: grid;
+  place-items: center;
+  width: min(100%, 520px);
+  min-height: 150px;
+  padding: 0.45rem 1rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 12px;
+  background: rgb(247 245 240 / 95%);
+}
+
+.sp-cta-logo {
+  width: 460px;
+  max-width: 100%;
+}
+
+.sp-footer {
+  min-height: 120px;
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 1fr auto;
+  align-items: center;
+  gap: 2rem;
+}
+
+.sp-footer-logo {
+  width: 235px;
+  max-width: 100%;
+}
+
+.sp-footer nav {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 1.45rem;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.sp-footer p {
+  margin: 0;
+  color: #73808d;
+  font-size: 0.73rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 1080px) {
+  .sp-header {
+    grid-template-columns: minmax(200px, 270px) 1fr auto;
+    gap: 1rem;
+  }
+
+  .sp-header-logo {
+    width: 245px;
+  }
+
+  .sp-nav {
+    gap: 1rem;
+  }
+
+  .sp-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 0.9fr);
+  }
+
+  .sp-product {
+    grid-template-columns: minmax(0, 1.25fr) minmax(290px, 0.75fr);
+  }
+
+  .sp-product-visual {
+    min-height: 470px;
+  }
+
+  .sp-footer {
+    grid-template-columns: 220px 1fr;
+  }
+
+  .sp-footer p {
+    grid-column: 1 / -1;
+    margin-top: -1.5rem;
+    padding-bottom: 1.5rem;
+    text-align: center;
+  }
+}
+
+@media (max-width: 850px) {
+  .sp-header,
+  .sp-hero,
+  .sp-features,
+  .sp-product,
+  .sp-footer {
+    width: min(100% - 2rem, 720px);
+  }
+
+  .sp-header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .sp-nav {
+    display: none;
+  }
+
+  .sp-hero {
+    grid-template-columns: 1fr;
+    gap: 2.5rem;
+    padding-top: 3rem;
+  }
+
+  .sp-hero h1 {
+    max-width: 700px;
+  }
+
+  .sp-hero-visual {
+    min-height: 440px;
+    margin: 0 -8vw;
+  }
+
+  .sp-features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .sp-feature:nth-child(3) {
+    border-left: 0;
+  }
+
+  .sp-feature:nth-child(n + 3) {
+    border-top: 1px solid var(--sp-line);
+  }
+
+  .sp-product {
+    grid-template-columns: 1fr;
+  }
+
+  .sp-product-copy {
+    max-width: 590px;
+  }
+
+  .sp-product-visual {
+    min-height: 540px;
+  }
+
+  .sp-footer {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 1rem;
+    padding-block: 1.5rem;
+  }
+
+  .sp-footer p {
+    grid-column: auto;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .sp-header {
+    min-height: 82px;
+  }
+
+  .sp-header-logo {
+    width: 185px;
+  }
+
+  .sp-header-actions {
+    gap: 0.35rem;
+  }
+
+  .sp-sign-in {
+    padding-inline: 0.55rem;
+  }
+
+  .sp-header-actions .sp-button {
+    display: none;
+  }
+
+  .sp-hero {
+    min-height: 0;
+    padding-block: 2.4rem 2rem;
+  }
+
+  .sp-eyebrow {
+    gap: 0.55rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+  }
+
+  .sp-eyebrow span {
+    width: 28px;
+  }
+
+  .sp-hero h1 {
+    font-size: clamp(2.75rem, 13vw, 4.1rem);
+    line-height: 0.98;
+  }
+
+  .sp-hero-body {
+    font-size: 1rem;
+  }
+
+  .sp-hero-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sp-button {
+    min-height: 52px;
+  }
+
+  .sp-hero-visual {
+    min-height: 335px;
+    margin-inline: -2.5rem;
+  }
+
+  .sp-features {
+    grid-template-columns: 1fr;
+  }
+
+  .sp-feature {
+    min-height: 185px;
+  }
+
+  .sp-feature + .sp-feature {
+    border-top: 1px solid var(--sp-line);
+    border-left: 0;
+  }
+
+  .sp-product {
+    padding-block: 4rem;
+  }
+
+  .sp-product-visual {
+    min-height: 380px;
+  }
+
+  .sp-desktop-frame {
+    inset: 0 0 8% 0;
+  }
+
+  .sp-app-preview {
+    grid-template-columns: 27% 1fr;
+  }
+
+  .sp-preview-content {
+    padding: 1rem 0.7rem;
+  }
+
+  .sp-preview-toolbar button,
+  .sp-preview-metrics span:nth-child(3),
+  .sp-request-list .sp-preview-request:nth-child(3) {
+    display: none;
+  }
+
+  .sp-preview-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .sp-phone-frame {
+    right: -4%;
+    width: 42%;
+    min-width: 150px;
+    height: 70%;
+    border-width: 5px;
+    border-radius: 26px;
+  }
+
+  .sp-phone-screen {
+    padding-inline: 0.6rem;
+  }
+
+  .sp-phone-logo {
+    width: 100px;
+  }
+
+  .sp-cta {
+    min-height: 300px;
+  }
+
+  .sp-cta-logo-wrap {
+    min-height: 130px;
+  }
+
+  .sp-footer nav {
+    gap: 0.9rem 1.2rem;
+  }
+
+  .sp-footer p {
+    white-space: normal;
+    text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-button,
+  .sp-nav a {
+    transition: none;
+  }
+}
+
+.sportspend-auth {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(380px, 0.9fr) minmax(480px, 1.1fr);
+  background: var(--sp-cream);
+}
+
+.sp-auth-story {
+  position: relative;
+  overflow: hidden;
+  background-image:
+    linear-gradient(rgb(5 25 41 / 82%), rgb(5 25 41 / 92%)),
+    url("/brand/sportspend-stadium-hero.png");
+  background-position: 58% center;
+  background-size: cover;
+  color: white;
+}
+
+.sp-auth-story::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-right: 2px solid var(--sp-orange);
+  background: repeating-linear-gradient(90deg, transparent 0 109px, rgb(255 255 255 / 2.5%) 110px);
+  pointer-events: none;
+}
+
+.sp-auth-story-inner {
+  position: relative;
+  z-index: 1;
+  width: min(100% - 4rem, 620px);
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  margin-inline: auto;
+  padding-block: 3.5rem 5rem;
+}
+
+.sp-auth-logo-link {
+  width: fit-content;
+  display: block;
+  border-radius: 10px;
+  background: rgb(247 245 240 / 94%);
+}
+
+.sp-auth-logo-link:focus-visible,
+.sp-auth-back:focus-visible,
+.sp-confirm-panel > a:focus-visible {
+  outline: 3px solid rgb(231 111 46 / 45%);
+  outline-offset: 4px;
+}
+
+.sp-auth-story-logo {
+  display: block;
+  width: 330px;
+  max-width: 44vw;
+}
+
+.sp-auth-story-copy {
+  max-width: 580px;
+}
+
+.sp-auth-story-copy .sp-eyebrow {
+  color: #d9e6df;
+}
+
+.sp-auth-story-copy h1 {
+  margin: 1.25rem 0 0;
+  color: white;
+  font-size: clamp(2.8rem, 4.5vw, 4.9rem);
+  font-weight: 750;
+  letter-spacing: -0.062em;
+  line-height: 0.98;
+}
+
+.sp-auth-story-copy > p:last-child {
+  max-width: 480px;
+  margin: 1.25rem 0 0;
+  color: #d5dfdf;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.sp-auth-main {
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  padding: 3rem;
+}
+
+.sp-auth-panel {
+  width: min(100%, 440px);
+}
+
+.sp-auth-back {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 3.5rem;
+  color: #516073;
+  font-size: 0.86rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.sp-auth-back svg {
+  width: 17px;
+  height: 17px;
+}
+
+.sp-auth-mobile-logo {
+  display: none;
+}
+
+.sp-auth-heading {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.sp-auth-heading > span {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid #b9cac3;
+  border-radius: 50%;
+  color: var(--sp-sage-dark);
+}
+
+.sp-auth-heading svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sp-auth-heading p {
+  margin: 0 0 0.2rem;
+  color: var(--sp-sage-dark);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sp-auth-heading h1 {
+  margin: 0;
+  color: var(--sp-navy);
+  font-size: clamp(1.75rem, 3vw, 2.3rem);
+  font-weight: 750;
+  letter-spacing: -0.045em;
+}
+
+.sp-auth-intro {
+  margin: 1.1rem 0 0;
+  color: #5c6878;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.sp-auth-google,
+.sp-auth-submit {
+  width: 100%;
+  min-height: 50px;
+  border-radius: 8px;
+  font-size: 0.91rem;
+  font-weight: 700;
+}
+
+.sp-auth-google {
+  margin-top: 2rem;
+  border: 1px solid #cfd6d7;
+  background: var(--sp-white);
+  color: var(--sp-navy);
+}
+
+.sp-auth-google:hover {
+  border-color: #95a9a2;
+  background: white;
+}
+
+.sp-auth-divider {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  margin-block: 1.4rem;
+  color: #79838e;
+  font-size: 0.72rem;
+}
+
+.sp-auth-divider div {
+  height: 1px;
+  background: #d8dddc;
+}
+
+.sp-auth-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.sp-auth-form label {
+  display: grid;
+  gap: 0.45rem;
+  color: #30445a;
+  font-size: 0.79rem;
+  font-weight: 700;
+}
+
+.sp-auth-form input {
+  width: 100%;
+  min-height: 50px;
+  border: 1px solid #cfd6d7;
+  border-radius: 8px;
+  padding: 0 0.85rem;
+  background: var(--sp-white);
+  color: var(--sp-navy);
+  font-size: 1rem;
+  font-weight: 450;
+}
+
+.sp-auth-form input::placeholder {
+  color: #939ba3;
+}
+
+.sp-auth-form input:focus,
+.sp-auth-google:focus-visible,
+.sp-auth-submit:focus-visible,
+.sp-auth-mode:focus-visible {
+  outline: 3px solid rgb(231 111 46 / 28%);
+  outline-offset: 2px;
+  border-color: var(--sp-orange);
+}
+
+.sp-auth-submit {
+  margin-top: 0.2rem;
+  border: 0;
+  background: #087d64;
+  color: white;
+}
+
+.sp-auth-submit:hover {
+  background: #066b56;
+}
+
+.sp-auth-submit:disabled,
+.sp-auth-mode:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.sp-auth-mode {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0.6rem;
+  border: 0;
+  background: transparent;
+  color: var(--sp-sage-dark);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.sp-auth-success,
+.sp-auth-error {
+  border-radius: 8px;
+  padding: 0.8rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.sp-auth-success {
+  border: 1px solid #bdd5c9;
+  background: #ecf5f0;
+  color: #2d5f4d;
+}
+
+.sp-auth-error {
+  border: 1px solid #ecc5c5;
+  background: #fff1f1;
+  color: #9b2f2f;
+}
+
+.sp-confirm-page {
+  display: grid;
+  place-items: center;
+  grid-template-columns: 1fr;
+  padding: 1.5rem;
+  background-image:
+    linear-gradient(rgb(247 245 240 / 92%), rgb(247 245 240 / 96%)),
+    url("/brand/sportspend-stadium-hero.png");
+  background-position: center;
+  background-size: cover;
+}
+
+.sp-confirm-panel {
+  width: min(100%, 440px);
+  border: 1px solid #d6dbd9;
+  border-radius: 14px;
+  padding: 2rem;
+  background: rgb(255 254 250 / 96%);
+  box-shadow: 0 18px 44px rgb(11 29 51 / 10%);
+  text-align: center;
+}
+
+.sp-confirm-panel > a:first-child {
+  display: inline-flex;
+  border-radius: 8px;
+}
+
+.sp-confirm-logo {
+  width: 265px;
+  max-width: 100%;
+}
+
+.sp-confirm-primary,
+.sp-confirm-secondary {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1.25rem;
+  border-radius: 8px;
+  padding: 0.7rem 1.2rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.sp-confirm-primary {
+  background: #087d64;
+  color: white;
+}
+
+.sp-confirm-secondary {
+  border: 1px solid #bfc9c5;
+  color: var(--sp-navy);
+}
+
+@media (max-width: 860px) {
+  .sportspend-auth {
+    grid-template-columns: 1fr;
+  }
+
+  .sp-auth-story {
+    display: none;
+  }
+
+  .sp-auth-main {
+    min-height: 100vh;
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .sp-auth-back {
+    margin-bottom: 1.5rem;
+  }
+
+  .sp-auth-mobile-logo {
+    display: block;
+    width: 250px;
+    max-width: 80vw;
+    margin: 0 auto 2rem;
+  }
+}

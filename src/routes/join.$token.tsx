@@ -7,10 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/join/$token")({
   head: () => ({
-    meta: [
-      { title: "Join organization — MedSpend" },
-      { name: "robots", content: "noindex" },
-    ],
+    meta: [{ title: "Join organization — SportSpend" }, { name: "robots", content: "noindex" }],
   }),
   component: JoinPage,
 });
@@ -20,7 +17,9 @@ function JoinPage() {
   const navigate = useNavigate();
   const accept = useServerFn(acceptInvitationFn);
   const qc = useQueryClient();
-  const [status, setStatus] = useState<"checking" | "need-auth" | "accepting" | "error">("checking");
+  const [status, setStatus] = useState<"checking" | "need-auth" | "accepting" | "error">(
+    "checking",
+  );
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -50,7 +49,9 @@ function JoinPage() {
       <div className="max-w-sm w-full rounded-xl border bg-card p-6 text-center">
         <div className="font-semibold">Join organization</div>
         {status === "checking" && <p className="mt-3 text-sm text-muted-foreground">Checking…</p>}
-        {status === "accepting" && <p className="mt-3 text-sm text-muted-foreground">Accepting invitation…</p>}
+        {status === "accepting" && (
+          <p className="mt-3 text-sm text-muted-foreground">Accepting invitation…</p>
+        )}
         {status === "need-auth" && (
           <div className="mt-4">
             <p className="text-sm text-muted-foreground">Sign in to accept your invitation.</p>

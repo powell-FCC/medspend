@@ -78,9 +78,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "MedSpend" },
+      { title: "SportSpend" },
       { name: "description", content: "Sports medicine purchasing & supply requests." },
-      { property: "og:title", content: "MedSpend" },
+      { property: "og:title", content: "SportSpend" },
       { property: "og:description", content: "Sports medicine purchasing & supply requests." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

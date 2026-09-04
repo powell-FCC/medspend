@@ -1,6 +1,8 @@
-import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
+import { ArrowLeft, LockKeyhole } from "lucide-react";
+import { SportSpendLogo } from "@/components/brand/SportSpendLogo";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
 import {
@@ -17,8 +19,8 @@ export const Route = createFileRoute("/auth")({
   validateSearch: (s) => searchSchema.parse(s),
   head: () => ({
     meta: [
-      { title: "Sign in — MedSpend" },
-      { name: "description", content: "Sign in to your MedSpend organization." },
+      { title: "Sign in — SportSpend" },
+      { name: "description", content: "Sign in to your SportSpend organization." },
       { name: "robots", content: "noindex" },
     ],
   }),
@@ -94,7 +96,9 @@ function AuthPage() {
 
   async function google() {
     setErr(null);
-    const result = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
+    const result = await lovable.auth.signInWithOAuth("google", {
+      redirect_uri: window.location.origin,
+    });
     if (result.error) setErr(String(result.error.message ?? "Google sign-in failed"));
     if (result.redirected) return;
     const { data } = await supabase.auth.getSession();
@@ -102,63 +106,108 @@ function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-6">
-          <div className="font-semibold tracking-tight text-lg">MedSpend</div>
-          <p className="text-sm text-muted-foreground mt-1">
-            {mode === "signin" ? "Sign in to your account" : "Create your account"}
-          </p>
+    <div className="sportspend-auth">
+      <aside className="sp-auth-story" aria-label="SportSpend">
+        <div className="sp-auth-story-inner">
+          <Link to="/" className="sp-auth-logo-link" aria-label="Back to SportSpend home">
+            <SportSpendLogo className="sp-auth-story-logo" />
+          </Link>
+          <div className="sp-auth-story-copy">
+            <p className="sp-eyebrow">
+              <span />
+              Built for athletic operations
+            </p>
+            <h1>Keep every request, approval, and purchase moving.</h1>
+            <p>One clear workspace for staff and sports operations leaders.</p>
+          </div>
         </div>
-        <div className="rounded-xl border bg-card p-6 shadow-sm">
-          <button
-            onClick={google}
-            className="w-full rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
-          >
+      </aside>
+
+      <main className="sp-auth-main">
+        <div className="sp-auth-panel">
+          <Link to="/" className="sp-auth-back">
+            <ArrowLeft aria-hidden="true" />
+            Back to home
+          </Link>
+          <SportSpendLogo className="sp-auth-mobile-logo" />
+          <div className="sp-auth-heading">
+            <span>
+              <LockKeyhole aria-hidden="true" />
+            </span>
+            <div>
+              <p>{mode === "signin" ? "Welcome back" : "Get started"}</p>
+              <h1>{mode === "signin" ? "Sign in to SportSpend" : "Create your account"}</h1>
+            </div>
+          </div>
+          <p className="sp-auth-intro">
+            {mode === "signin"
+              ? "Access your organization’s supply workspace."
+              : "Create your login, then set up or join your organization."}
+          </p>
+          <button onClick={google} className="sp-auth-google">
             Continue with Google
           </button>
-          <div className="my-4 flex items-center gap-2 text-xs text-muted-foreground">
-            <div className="flex-1 h-px bg-border" /> or <div className="flex-1 h-px bg-border" />
+          <div className="sp-auth-divider">
+            <div /> <span>or continue with email</span> <div />
           </div>
-          <form onSubmit={submit} className="space-y-3" noValidate>
+          <form onSubmit={submit} className="sp-auth-form" noValidate>
             {mode === "signup" && (
+              <label>
+                <span>Full name</span>
+                <input
+                  autoComplete="name"
+                  placeholder="Your full name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                />
+              </label>
+            )}
+            <label>
+              <span>Email</span>
               <input
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                placeholder="Full name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
+                autoComplete="email"
+                type="email"
+                placeholder="you@organization.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                type="password"
+                placeholder="At least 6 characters"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                minLength={6}
+                required
+              />
+            </label>
+            {success && (
+              <div role="status" className="sp-auth-success">
+                {success}
+              </div>
             )}
-            <input
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-            <input
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              minLength={6}
-              required
-            />
-            {success && <div role="status" className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">{success}</div>}
-            {err && <div role="alert" className="text-xs text-destructive">{err}</div>}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium disabled:opacity-60"
-            >
-              {loading ? (mode === "signin" ? "Signing in…" : "Creating account…") : mode === "signin" ? "Sign in" : "Create account"}
+            {err && (
+              <div role="alert" className="sp-auth-error">
+                {err}
+              </div>
+            )}
+            <button type="submit" disabled={loading} className="sp-auth-submit">
+              {loading
+                ? mode === "signin"
+                  ? "Signing in…"
+                  : "Creating account…"
+                : mode === "signin"
+                  ? "Sign in"
+                  : "Create account"}
             </button>
           </form>
           <button
-            className="mt-4 w-full text-xs text-muted-foreground hover:text-foreground"
+            className="sp-auth-mode"
             disabled={loading}
             onClick={() => {
               setMode(mode === "signin" ? "signup" : "signin");
@@ -169,7 +218,7 @@ function AuthPage() {
             {mode === "signin" ? "Need an account? Sign up" : "Have an account? Sign in"}
           </button>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
