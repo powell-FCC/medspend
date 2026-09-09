@@ -1,0 +1,32 @@
+/* Beta-only layout adjustments; the commercial and auth styles stay intact. */
+.sp-internal-beta {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+}
+
+.sp-internal-beta .sp-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.sp-internal-beta main {
+  flex: 1;
+  display: grid;
+  align-content: center;
+}
+
+.sp-internal-beta .sp-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 1px solid var(--sp-line);
+  padding-block: 1.5rem;
+}
+
+.sp-internal-beta .sp-footer p {
+  margin: 0;
+  padding: 0;
+  white-space: normal;
+  font-size: 0.8125rem;
+}
