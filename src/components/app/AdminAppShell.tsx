@@ -2,6 +2,7 @@ import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import {
   LayoutDashboard,
+  Wallet,
   Upload,
   ShoppingCart,
   Package,
@@ -18,6 +19,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/budget", label: "Budget", icon: Wallet },
   { to: "/inventory", label: "Inventory", icon: Package, ownerOnly: true },
   { to: "/purchases", label: "Orders", icon: ShoppingCart },
   { to: "/vendors", label: "Vendors", icon: Building2 },

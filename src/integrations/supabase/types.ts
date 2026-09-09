@@ -14,6 +14,13 @@ export type Database = {
   }
   public: {
     Tables: {
+      organization_budgets: {
+        Row: { id: string; organization_id: string; name: string; period_start: string; period_end: string; amount: number; active: boolean; created_at: string; updated_at: string }
+        Insert: { id?: string; organization_id: string; name: string; period_start: string; period_end: string; amount: number; active?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; organization_id?: string; name?: string; period_start?: string; period_end?: string; amount?: number; active?: boolean; created_at?: string; updated_at?: string }
+        Relationships: [{ foreignKeyName: "organization_budgets_organization_id_fkey"; columns: ["organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] }]
+      }
+
       catalog_categories: {
         Row: {
           active: boolean
@@ -2155,6 +2162,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_budget_summary: {
+        Args: { _organization_id: string; _budget_id: string }
+        Returns: { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; remaining_amount: number; posted_invoice_count: number }[]
+      }
+
       decide_supply_request: {
         Args: {
           _organization_id: string
