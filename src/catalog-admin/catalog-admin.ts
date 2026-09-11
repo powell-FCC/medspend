@@ -81,6 +81,7 @@ export interface CatalogAdminVerificationDecision {
 
 export interface CatalogAdminDetail {
   catalogVendorProductId: string;
+  effectiveSpecification: string | null;
   product: {
     id: string;
     name: string;

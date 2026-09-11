@@ -568,6 +568,7 @@ function CatalogDetail({ detail }: { detail: CatalogAdminDetail }) {
         <DetailGrid
           entries={[
             ["Product", detail.product.name],
+            ["Specification", detail.effectiveSpecification],
             ["Manufacturer", detail.product.manufacturer],
             ["Description", detail.product.description],
             ["Verification", detail.product.verificationStatus],

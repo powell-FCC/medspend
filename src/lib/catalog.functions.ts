@@ -154,6 +154,7 @@ const catalogAdminSearchInput = z.object({
 const catalogAdminDetailSchema = z
   .object({
     catalogVendorProductId: z.string().uuid(),
+    effectiveSpecification: z.string().trim().min(1).nullable(),
     product: z
       .object({
         id: z.string().uuid(),
