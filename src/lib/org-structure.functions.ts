@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrganizationAdmin } from "@/organization/access";
+import { structureNameSchema } from "@/organization/management";
 
 const kindEnum = z.enum(["teams", "locations"]);
 
@@ -29,7 +31,11 @@ export const listOrgStructureFn = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    await assertMember(context.supabase as never, context.userId, data.organizationId);
+    if (data.includeArchived) {
+      await requireOrganizationAdmin(context.supabase, context.userId, data.organizationId);
+    } else {
+      await assertMember(context.supabase as never, context.userId, data.organizationId);
+    }
     const pull = async (table: "teams" | "locations") => {
       let q = context.supabase
         .from(table)
@@ -48,12 +54,11 @@ export const createOrgStructureFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
-      .object({ organizationId: z.string().uuid(), kind: kindEnum, name: z.string().min(1).max(120) })
+      .object({ organizationId: z.string().uuid(), kind: kindEnum, name: structureNameSchema })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const role = await assertMember(context.supabase as never, context.userId, data.organizationId);
-    if (role !== "owner" && role !== "admin") throw new Error("Forbidden");
+    await requireOrganizationAdmin(context.supabase, context.userId, data.organizationId);
     const { data: row, error } = await context.supabase
       .from(data.kind)
       .insert({ organization_id: data.organizationId, name: data.name.trim() })
@@ -71,23 +76,25 @@ export const updateOrgStructureFn = createServerFn({ method: "POST" })
         organizationId: z.string().uuid(),
         kind: kindEnum,
         id: z.string().uuid(),
-        name: z.string().min(1).max(120).optional(),
+        name: structureNameSchema.optional(),
         active: z.boolean().optional(),
       })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const role = await assertMember(context.supabase as never, context.userId, data.organizationId);
-    if (role !== "owner" && role !== "admin") throw new Error("Forbidden");
+    await requireOrganizationAdmin(context.supabase, context.userId, data.organizationId);
     const patch: { name?: string; active?: boolean } = {};
     if (data.name !== undefined) patch.name = data.name.trim();
     if (data.active !== undefined) patch.active = data.active;
     if (!Object.keys(patch).length) return { ok: true };
-    const { error } = await context.supabase
+    const { data: row, error } = await context.supabase
       .from(data.kind)
       .update(patch)
       .eq("id", data.id)
-      .eq("organization_id", data.organizationId);
+      .eq("organization_id", data.organizationId)
+      .select("id")
+      .maybeSingle();
     if (error) throw new Error(error.message);
+    if (!row) throw new Error("Record not found in this organization");
     return { ok: true };
   });

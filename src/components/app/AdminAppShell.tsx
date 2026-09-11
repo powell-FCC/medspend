@@ -26,7 +26,7 @@ const nav = [
   { to: "/products", label: "Catalog", icon: LibraryBig },
   { to: "/upload", label: "Upload Invoice", icon: Upload, ownerOnly: true },
   { to: "/invoices", label: "Invoices", icon: FileText, ownerOnly: true },
-  { to: "/supply-requests", label: "Staff", icon: Users },
+  { to: "/supply-requests", label: "Supply Requests", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

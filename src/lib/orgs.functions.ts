@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrganizationAdmin } from "@/organization/access";
+import { memberUpdateSchema } from "@/organization/management";
 
 export const createOrganizationFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -101,9 +103,10 @@ export const listOrgMembersFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ organizationId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
+    await requireOrganizationAdmin(context.supabase, context.userId, data.organizationId);
     const { data: rows, error } = await context.supabase
       .from("organization_memberships")
-      .select("id, user_id, role, active, joined_at")
+      .select("id, user_id, role, active, joined_at, default_team_id, default_location_id")
       .eq("organization_id", data.organizationId);
     if (error) throw new Error(error.message);
     const { data: identities, error: identityError } = await context.supabase
@@ -116,7 +119,23 @@ export const listOrgMembersFn = createServerFn({ method: "POST" })
       role: r.role,
       active: r.active,
       joinedAt: r.joined_at,
+      defaultTeamId: r.default_team_id,
+      defaultLocationId: r.default_location_id,
       fullName: identityByUser.get(r.user_id)?.display_name ?? `Member ${r.user_id.slice(0, 8)}`,
       email: identityByUser.get(r.user_id)?.email ?? null,
     }));
+  });
+
+export const updateOrgMemberFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: unknown) => memberUpdateSchema.parse(data))
+  .handler(async ({ data, context }) => {
+    await requireOrganizationAdmin(context.supabase, context.userId, data.organizationId);
+    const { error } = await context.supabase.rpc("update_organization_member", {
+      _organization_id: data.organizationId,
+      _membership_id: data.id,
+      _changes: data.changes,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });

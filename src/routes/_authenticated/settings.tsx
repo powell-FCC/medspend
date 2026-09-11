@@ -4,11 +4,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { createInvitationFn, listOrgInvitesFn, listOrgMembersFn, revokeInvitationFn } from "@/lib/orgs.functions";
-import {
-  createOrgStructureFn,
-  listOrgStructureFn,
-  updateOrgStructureFn,
-} from "@/lib/org-structure.functions";
+import { listOrgStructureFn } from "@/lib/org-structure.functions";
+import { ConfirmOrganizationAction, MembersSection, StructureSection } from "@/components/settings/OrganizationManagement";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({ meta: [{ title: "Settings — MedSpend" }, { name: "robots", content: "noindex" }] }),
@@ -17,6 +14,12 @@ export const Route = createFileRoute("/_authenticated/settings")({
 
 function Page() {
   const { active } = useActiveOrg();
+  if (!active || (active.role !== "owner" && active.role !== "admin")) return null;
+  return <SettingsContent key={active.organizationId} />;
+}
+
+function SettingsContent() {
+  const { active } = useActiveOrg();
   const listInvites = useServerFn(listOrgInvitesFn);
   const listMembers = useServerFn(listOrgMembersFn);
   const create = useServerFn(createInvitationFn);
@@ -24,6 +27,8 @@ function Page() {
   const listStructure = useServerFn(listOrgStructureFn);
   const qc = useQueryClient();
 
+  const [revoking, setRevoking] = useState<{ id: string; email: string } | null>(null);
+  const [inviting, setInviting] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState<"staff" | "admin">("staff");
@@ -43,7 +48,7 @@ function Page() {
     enabled: !!active,
   });
   const structureQ = useQuery({
-    queryKey: ["org", active?.organizationId, "structure"],
+    queryKey: ["org", active?.organizationId, "structure", "active"],
     queryFn: () => listStructure({ data: { organizationId: active!.organizationId, includeArchived: false } }),
     enabled: !!active,
   });
@@ -51,6 +56,7 @@ function Page() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setInviting(true);
     try {
       const res = await create({
         data: {
@@ -71,13 +77,15 @@ function Page() {
       await qc.invalidateQueries({ queryKey: ["org", active?.organizationId, "invites"] });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to create invitation");
+    } finally {
+      setInviting(false);
     }
   }
 
   if (!active) return null;
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
+    <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
       <div>
         <h1 className="text-2xl font-semibold">Settings</h1>
         <div className="text-sm text-muted-foreground">{active.organizationName}</div>
@@ -116,9 +124,9 @@ function Page() {
             <option value="">No default location</option>
             {structureQ.data?.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
-          <button className="rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm">Create invite</button>
+          <button disabled={inviting || !structureQ.isSuccess} className="rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm disabled:opacity-50">{inviting ? "Creating…" : "Create invite"}</button>
         </form>
-        {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+        {(err || structureQ.error) && <div role="alert" className="mt-2 text-xs text-destructive">{err ?? structureQ.error?.message}</div>}
         {lastLink && (
           <div className="mt-3 rounded-md border border-dashed bg-muted p-3 text-xs break-all">
             <div className="font-medium mb-1">Share this one-time invitation link:</div>
@@ -131,6 +139,7 @@ function Page() {
 
       <section className="rounded-xl border bg-card p-5">
         <h2 className="font-medium">Pending invitations</h2>
+        {invitesQ.error && <p role="alert" className="mt-2 text-sm text-destructive">{invitesQ.error.message}</p>}
         <ul className="mt-3 divide-y">
           {(invitesQ.data ?? [])
             .filter((i) => !i.accepted_at && !i.revoked_at)
@@ -144,10 +153,7 @@ function Page() {
                 </div>
                 <button
                   className="text-xs underline text-destructive"
-                  onClick={async () => {
-                    await revoke({ data: { id: i.id } });
-                    await qc.invalidateQueries({ queryKey: ["org", active.organizationId, "invites"] });
-                  }}
+                  onClick={() => setRevoking({ id: i.id, email: i.invited_email })}
                 >
                   Revoke
                 </button>
@@ -159,115 +165,21 @@ function Page() {
         </ul>
       </section>
 
-      <section className="rounded-xl border bg-card p-5">
-        <h2 className="font-medium">Members</h2>
-        <ul className="mt-3 divide-y">
-          {(membersQ.data ?? []).map((m) => (
-            <li key={m.id} className="py-2 flex items-center justify-between text-sm">
-              <div>
-                <div>{m.fullName}</div>
-                <div className="text-xs text-muted-foreground">{m.email}</div>
-              </div>
-              <div className="text-xs uppercase tracking-wider text-primary">{m.role}</div>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <MembersSection organizationId={active.organizationId} actor={active} members={membersQ.data ?? []} loading={membersQ.isLoading} error={membersQ.error} />
+      {revoking && <ConfirmOrganizationAction
+        title={`Revoke invitation for ${revoking.email}?`}
+        description="This invitation link will no longer grant access to the organization."
+        action="Revoke invitation"
+        onClose={() => setRevoking(null)}
+        onConfirm={async () => {
+          await revoke({ data: { id: revoking.id } });
+          setLastLink(null);
+          await qc.invalidateQueries({ queryKey: ["org", active.organizationId, "invites"] });
+        }}
+      />}
 
       <StructureSection kind="teams" title="Teams" organizationId={active.organizationId} />
       <StructureSection kind="locations" title="Locations" organizationId={active.organizationId} />
     </div>
-  );
-}
-
-function StructureSection({
-  kind,
-  title,
-  organizationId,
-}: {
-  kind: "teams" | "locations";
-  title: string;
-  organizationId: string;
-}) {
-  const list = useServerFn(listOrgStructureFn);
-  const create = useServerFn(createOrgStructureFn);
-  const update = useServerFn(updateOrgStructureFn);
-  const qc = useQueryClient();
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const key = ["org", organizationId, "structure"];
-  const q = useQuery({
-    queryKey: key,
-    queryFn: () => list({ data: { organizationId, includeArchived: true } }),
-  });
-  const rows = (q.data?.[kind] ?? []) as { id: string; name: string; active: boolean }[];
-
-  async function refresh() {
-    await qc.invalidateQueries({ queryKey: key });
-  }
-
-  return (
-    <section className="rounded-xl border bg-card p-5" data-section={kind}>
-      <h2 className="font-medium">{title}</h2>
-      <form
-        className="mt-3 flex gap-2"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setError(null);
-          try {
-            await create({ data: { organizationId, kind, name } });
-            setName("");
-            await refresh();
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed");
-          }
-        }}
-      >
-        <input
-          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
-          placeholder={kind === "teams" ? "Team name" : "Location name"}
-          required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <button className="rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm">
-          Add {kind === "teams" ? "team" : "location"}
-        </button>
-      </form>
-      {error && <div className="mt-2 text-xs text-destructive">{error}</div>}
-      <ul className="mt-3 divide-y">
-        {rows.map((r) => (
-          <li key={r.id} className="py-2 flex items-center justify-between text-sm">
-            <span className={r.active ? "" : "text-muted-foreground line-through"}>{r.name}</span>
-            <span className="flex items-center gap-3 text-xs">
-              <button
-                className="underline"
-                onClick={async () => {
-                  const next = window.prompt("Rename", r.name);
-                  if (!next?.trim()) return;
-                  await update({ data: { organizationId, kind, id: r.id, name: next } });
-                  await refresh();
-                }}
-              >
-                Rename
-              </button>
-              <button
-                className="underline text-destructive"
-                onClick={async () => {
-                  await update({ data: { organizationId, kind, id: r.id, active: !r.active } });
-                  await refresh();
-                }}
-              >
-                {r.active ? "Archive" : "Restore"}
-              </button>
-            </span>
-          </li>
-        ))}
-        {rows.length === 0 && (
-          <li className="py-2 text-sm text-muted-foreground">None yet.</li>
-        )}
-      </ul>
-    </section>
   );
 }

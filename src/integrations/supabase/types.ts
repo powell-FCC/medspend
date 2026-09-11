@@ -2271,6 +2271,10 @@ export type Database = {
           user_id: string
         }[]
       }
+      update_organization_member: {
+        Args: { _organization_id: string; _membership_id: string; _changes: Json }
+        Returns: undefined
+      }
       normalize_catalog_sku: { Args: { _value: string }; Returns: string }
       normalize_catalog_sku_match_key: {
         Args: { _value: string }
