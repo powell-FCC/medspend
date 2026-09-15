@@ -20,6 +20,18 @@ export type Database = {
         Update: { id?: string; organization_id?: string; name?: string; period_start?: string; period_end?: string; amount?: number; active?: boolean; created_at?: string; updated_at?: string }
         Relationships: [{ foreignKeyName: "organization_budgets_organization_id_fkey"; columns: ["organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] }]
       }
+      supply_request_commitments: {
+        Row: { id: string; organization_id: string; supply_request_id: string; amount: number; currency_code: string; total_item_count: number; priced_item_count: number; pricing_status: string; status: string; committed_at: string; committed_by: string | null; released_at: string | null; released_by: string | null; release_kind: string | null; release_reason: string | null; created_at: string }
+        Insert: { id?: string; organization_id: string; supply_request_id: string; amount: number; currency_code?: string; total_item_count: number; priced_item_count: number; pricing_status: string; status?: string; committed_at?: string; committed_by?: string | null; released_at?: string | null; released_by?: string | null; release_kind?: string | null; release_reason?: string | null; created_at?: string }
+        Update: { id?: string; organization_id?: string; supply_request_id?: string; amount?: number; currency_code?: string; total_item_count?: number; priced_item_count?: number; pricing_status?: string; status?: string; committed_at?: string; committed_by?: string | null; released_at?: string | null; released_by?: string | null; release_kind?: string | null; release_reason?: string | null; created_at?: string }
+        Relationships: []
+      }
+      supply_request_commitment_items: {
+        Row: { id: string; organization_id: string; commitment_id: string; supply_request_item_id: string; quantity_snapshot: number; unit_cost_snapshot: number | null; line_amount_snapshot: number | null; currency_code: string | null; price_source: string; price_reference_id: string | null; created_at: string }
+        Insert: { id?: string; organization_id: string; commitment_id: string; supply_request_item_id: string; quantity_snapshot: number; unit_cost_snapshot?: number | null; line_amount_snapshot?: number | null; currency_code?: string | null; price_source: string; price_reference_id?: string | null; created_at?: string }
+        Update: { id?: string; organization_id?: string; commitment_id?: string; supply_request_item_id?: string; quantity_snapshot?: number; unit_cost_snapshot?: number | null; line_amount_snapshot?: number | null; currency_code?: string | null; price_source?: string; price_reference_id?: string | null; created_at?: string }
+        Relationships: []
+      }
 
       catalog_categories: {
         Row: {
@@ -2164,7 +2176,16 @@ export type Database = {
     Functions: {
       get_budget_summary: {
         Args: { _organization_id: string; _budget_id: string }
-        Returns: { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; remaining_amount: number; posted_invoice_count: number }[]
+        Returns: { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; committed_spend: number; available_amount: number; remaining_amount: number; posted_invoice_count: number; active_commitment_count: number; incomplete_commitment_count: number }[]
+      }
+
+      get_supply_request_budget_impact: {
+        Args: { _organization_id: string; _request_id: string }
+        Returns: { request_id: string; request_status: Database["public"]["Enums"]["supply_request_status"]; estimated_amount: number; pricing_status: string; total_item_count: number; priced_item_count: number; commitment_status: string | null; commitment_release_reason: string | null; budget_id: string | null; budget_name: string | null; budget_amount: number | null; actual_spend: number | null; committed_spend: number | null; available_amount: number | null; projected_available_after_approval: number | null }[]
+      }
+      release_supply_request_commitment: {
+        Args: { _organization_id: string; _request_id: string; _release_kind: string; _release_reason: string }
+        Returns: Json
       }
 
       decide_supply_request: {

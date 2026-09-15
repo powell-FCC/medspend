@@ -13,7 +13,7 @@ const path = new URL('../src/components/budget/BudgetOverview.tsx', import.meta.
 const compiled = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS } }).outputText;
 const exports: any = {};
 new Function('require', 'exports', compiled)(createRequire(path), exports);
-const summary = { budget_id: 'budget', budget_name: 'Operating 2026', period_start: '2026-01-01', period_end: '2026-12-31', budget_amount: 1000, actual_spend: 250, remaining_amount: 750, posted_invoice_count: 2 };
+const summary = { budget_id: 'budget', budget_name: 'Operating 2026', period_start: '2026-01-01', period_end: '2026-12-31', budget_amount: 1000, actual_spend: 250, committed_spend: 100, available_amount: 650, remaining_amount: 750, posted_invoice_count: 2, active_commitment_count: 1, incomplete_commitment_count: 0 };
 const render = (value = summary) => renderToStaticMarkup(createElement(exports.BudgetOverview, { summary: value }));
 const fields = { name: 'Operating', amount: '0', period_start: '2026-01-01', period_end: '2026-12-31' };
 const org = '00000000-0000-4000-8000-000000000001';
@@ -22,7 +22,7 @@ const id = '00000000-0000-4000-8000-000000000002';
 test('no-budget state provides setup and create action', () => {
   const html = renderToStaticMarkup(createElement(exports.BudgetEmptyState, { action: createElement('button', null, 'Create budget') }));
   assert.match(html, /Set your operating budget/);
-  assert.match(html, /Track actual posted spend against a defined budget period/);
+  assert.match(html, /Track actual and committed spend against a defined budget period/);
   assert.match(html, /Create budget/);
 });
 test('creation validation rejects missing, negative, invalid and reversed fields', () => {
@@ -32,23 +32,28 @@ test('creation validation rejects missing, negative, invalid and reversed fields
   }
   assert.equal(budgetInputSchema.safeParse({ ...fields, amount: -1, organizationId: org }).success, false);
 });
-test('summary renders RPC values, USD, period, and posted count', () => {
+test('summary renders budget, actual, committed, available, period, and counts', () => {
   const html = render();
-  for (const text of ['Operating 2026', '$1,000.00', '$250.00', '$750.00', 'Jan 1, 2026 – Dec 31, 2026', '2 posted invoices']) assert.ok(html.includes(text), text);
+  for (const text of ['Operating 2026', '$1,000.00', '$250.00', '$100.00', '$650.00', 'Jan 1, 2026 – Dec 31, 2026', '2 posted invoices', '1 active commitment']) assert.ok(html.includes(text), text);
   assert.equal(formatUSD(12345.6), '$12,345.60');
   assert.equal(formatPeriod('2026-01-01', '2026-01-01'), 'Jan 1, 2026 – Jan 1, 2026');
 });
-test('negative remaining remains negative and identifies overage', () => {
-  const html = render({ ...summary, actual_spend: 1100, remaining_amount: -100 });
+test('negative available remains negative and identifies actual plus commitment overage', () => {
+  const html = render({ ...summary, actual_spend: 900, committed_spend: 200, available_amount: -100, remaining_amount: 100 });
   assert.match(html, /-\$100\.00/);
-  assert.match(html, /exceeds this budget by \$100\.00/);
+  assert.match(html, /Actual and committed spend exceed this budget by \$100\.00/);
 });
 test('zero budgets do not display percentages or non-finite values', () => {
   for (const actual_spend of [0, 100]) {
-    const html = render({ ...summary, budget_amount: 0, actual_spend, remaining_amount: -actual_spend });
+    const html = render({ ...summary, budget_amount: 0, actual_spend, committed_spend: 0, available_amount: -actual_spend, remaining_amount: -actual_spend });
     assert.match(html, /\$0\.00/);
     assert.doesNotMatch(html, /NaN|Infinity|%/);
   }
+});
+test('incomplete commitment warning explains that only known costs are subtracted', () => {
+  const html = render({ ...summary, incomplete_commitment_count: 2, active_commitment_count: 3 });
+  assert.match(html, /2 active commitments have unpriced items/);
+  assert.match(html, /subtracts known committed costs only/);
 });
 test('selection ignores inactive budgets and chooses current then latest start deterministically', () => {
   const b = (id: string, start: string, end: string, active = true) => ({ id, name: id, amount: 100, period_start: start, period_end: end, active });

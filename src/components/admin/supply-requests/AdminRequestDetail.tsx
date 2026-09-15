@@ -6,6 +6,8 @@ import { AdminMessagePanel } from "@/components/admin/supply-requests/AdminMessa
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 import { translateAdminRequestStatus, type AdminSupplyRequestViewModel } from "@/supply-requests/admin-dashboard";
 import { requestItemIsCustom, requestTimestamp } from "@/supply-requests/admin-request-inbox";
+import { formatUSD } from "@/budget/budget";
+import { pricingDescription, type CommitmentReleaseKind, type RequestBudgetImpact } from "@/supply-requests/commitments";
 
 type Update = {
   id: string;
@@ -26,26 +28,37 @@ const primaryActionLabel: Partial<Record<SupplyRequestStatus, string>> = {
 };
 
 export function AdminRequestDetail({ request, updates, loadingUpdates, updatesError, onRetryUpdates,
-  busy, error, onClose, onTransition,
+  budgetImpact, loadingBudgetImpact, budgetImpactError, onRetryBudgetImpact,
+  busy, error, onClose, onTransition, onReleaseCommitment,
 }: {
   request: AdminSupplyRequestViewModel;
   updates: Update[];
   loadingUpdates: boolean;
   updatesError: boolean;
   onRetryUpdates: () => void;
+  budgetImpact: RequestBudgetImpact | undefined;
+  loadingBudgetImpact: boolean;
+  budgetImpactError: boolean;
+  onRetryBudgetImpact: () => void;
   busy: boolean;
   error: string | null;
   onClose: () => void;
   onTransition: (status: SupplyRequestStatus, staffMessage: string, internalNote: string) => void;
+  onReleaseCommitment: (kind: CommitmentReleaseKind, reason: string) => void;
 }) {
   const [staffMessage, setStaffMessage] = useState("");
   const [internalNote, setInternalNote] = useState("");
   const [mode, setMode] = useState<"review" | "decline">("review");
   const [denialError, setDenialError] = useState<string | null>(null);
+  const [releaseMode, setReleaseMode] = useState(false);
+  const [releaseKind, setReleaseKind] = useState<CommitmentReleaseKind>("settled");
+  const [releaseReason, setReleaseReason] = useState("");
+  const [releaseError, setReleaseError] = useState<string | null>(null);
   const messageRef = useRef<HTMLTextAreaElement>(null);
   const pending = request.lifecycleStatus === "submitted" || request.lifecycleStatus === "under_review";
   const declining = pending && mode === "decline";
   const nextStatus = primaryTransition[request.lifecycleStatus];
+  const commitmentActive = budgetImpact?.commitmentStatus === "active";
 
   useEffect(() => {
     if (declining) messageRef.current?.focus();
@@ -61,6 +74,16 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
     }
     setDenialError(null);
     onTransition(declining ? "denied" : nextStatus, staffMessage, internalNote);
+  }
+
+  function releaseCommitment() {
+    if (busy || !commitmentActive) return;
+    if (!releaseReason.trim()) {
+      setReleaseError("Explain why this commitment no longer needs to reserve budget.");
+      return;
+    }
+    setReleaseError(null);
+    onReleaseCommitment(releaseKind, releaseReason.trim());
   }
 
   return (
@@ -103,6 +126,22 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                 </ul>
               </section>
 
+              <FinancialContext impact={budgetImpact} loading={loadingBudgetImpact} error={budgetImpactError} onRetry={onRetryBudgetImpact} />
+
+              {releaseMode && commitmentActive && <section aria-labelledby="release-commitment-heading" className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <h3 id="release-commitment-heading" className="text-sm font-semibold text-amber-950">Release this commitment</h3>
+                <p className="mt-1 text-xs leading-5 text-amber-900">Release only after the cost is represented by posted actual spend, or when the purchase will no longer occur. SportSpend does not match invoices to requests automatically.</p>
+                <label htmlFor="commitment-release-kind" className="mt-3 block text-xs font-semibold text-amber-950">Reason type</label>
+                <select id="commitment-release-kind" value={releaseKind} disabled={busy} onChange={(event) => setReleaseKind(event.target.value as CommitmentReleaseKind)} className="mt-1 min-h-11 w-full rounded-md border border-amber-300 bg-white px-3 text-sm">
+                  <option value="settled">Covered by posted actual spend</option>
+                  <option value="cancelled">Purchase cancelled</option>
+                  <option value="adjustment">Accounting adjustment</option>
+                  <option value="other">Other</option>
+                </select>
+                <label htmlFor="commitment-release-reason" className="mt-3 block text-xs font-semibold text-amber-950">Explanation</label>
+                <textarea id="commitment-release-reason" value={releaseReason} maxLength={1000} disabled={busy} onChange={(event) => { setReleaseReason(event.target.value); if (event.target.value.trim()) setReleaseError(null); }} placeholder="Example: Invoice INV-1042 was posted on Sep 14." className="mt-1 min-h-24 w-full rounded-md border border-amber-300 bg-white p-3 text-sm" />
+              </section>}
+
               <section aria-labelledby="staff-note-heading">
                 <h3 id="staff-note-heading" className="text-sm font-semibold text-[#102a49]">Staff note</h3>
                 <p className="mt-2 whitespace-pre-wrap rounded-lg bg-[#f5f7f9] p-3 text-sm leading-6 text-[#526174] [overflow-wrap:anywhere]">{request.staffNote || "No note provided."}</p>
@@ -131,8 +170,13 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
               </details>
             </div>
             <footer className="shrink-0 border-t border-[#dfe5eb] bg-white px-5 py-4">
-              {(error || denialError) && <p role="alert" className="mb-3 rounded-lg bg-[#fff0f1] p-3 text-sm text-[#a83340]">{error ?? denialError}</p>}
+              {(error || denialError || releaseError) && <p role="alert" className="mb-3 rounded-lg bg-[#fff0f1] p-3 text-sm text-[#a83340]">{error ?? denialError ?? releaseError}</p>}
               <div className="flex flex-wrap items-center justify-end gap-2">
+                {commitmentActive && !releaseMode && <AdminActionButton variant="secondary" disabled={busy} onClick={() => setReleaseMode(true)}>Release Commitment</AdminActionButton>}
+                {commitmentActive && releaseMode && <>
+                  <AdminActionButton variant="secondary" disabled={busy} onClick={() => { setReleaseMode(false); setReleaseError(null); }}>Cancel Release</AdminActionButton>
+                  <AdminActionButton variant="danger" disabled={busy} onClick={releaseCommitment}>{busy ? "Releasing…" : "Confirm Release"}</AdminActionButton>
+                </>}
                 {pending && !declining && <AdminActionButton variant="danger" disabled={busy} onClick={() => setMode("decline")}>Decline</AdminActionButton>}
                 {declining && <AdminActionButton variant="secondary" disabled={busy} onClick={() => { setMode("review"); setDenialError(null); }}>Cancel</AdminActionButton>}
                 {nextStatus && <AdminActionButton type="submit" variant={declining ? "danger" : "primary"} disabled={busy}>{busy ? "Saving…" : declining ? "Decline Request" : primaryActionLabel[request.lifecycleStatus]}</AdminActionButton>}
@@ -144,6 +188,33 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+function FinancialContext({ impact, loading, error, onRetry }: { impact: RequestBudgetImpact | undefined; loading: boolean; error: boolean; onRetry: () => void }) {
+  return <section aria-labelledby="financial-context-heading" className="rounded-lg border border-[#dfe5eb] bg-[#f8fafc] p-4">
+    <h3 id="financial-context-heading" className="text-sm font-semibold text-[#102a49]">Budget impact · Admin only</h3>
+    {loading && <p role="status" className="mt-3 text-sm text-[#697687]">Loading financial context…</p>}
+    {error && <p role="alert" className="mt-3 text-sm text-[#a83340]">Could not load budget impact. <button type="button" onClick={onRetry} className="min-h-11 underline">Try again</button></p>}
+    {impact && <>
+      <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+        <FinancialDetail label={impact.pricingStatus === "partially_priced" ? "Known request subtotal" : "Estimated request cost"} value={impact.pricingStatus === "unpriced" ? "Unavailable" : formatUSD(impact.estimatedAmount)} />
+        {impact.budgetId ? <>
+          <FinancialDetail label="Budget" value={formatUSD(impact.budgetAmount!)} />
+          <FinancialDetail label="Actual spend" value={formatUSD(impact.actualSpend!)} />
+          <FinancialDetail label="Committed spend" value={formatUSD(impact.committedSpend!)} />
+          <FinancialDetail label="Available budget" value={formatUSD(impact.availableAmount!)} />
+          {impact.projectedAvailableAfterApproval !== null && <FinancialDetail label="Available after approval" value={formatUSD(impact.projectedAvailableAfterApproval)} />}
+        </> : <div className="col-span-2 sm:col-span-2"><dt className="text-xs text-[#697687]">Current budget</dt><dd className="mt-1 font-medium text-[#293e55]">No active budget covers today.</dd></div>}
+      </dl>
+      <p className="mt-3 text-xs leading-5 text-[#697687]">{pricingDescription(impact)}</p>
+      {impact.commitmentStatus === "active" && <p className="mt-2 text-xs leading-5 text-[#526174]">This request is actively reserving budget. Receiving or completing it does not release the commitment automatically.</p>}
+      {impact.commitmentStatus === "released" && <p className="mt-2 text-xs leading-5 text-[#526174]">Commitment released{impact.commitmentReleaseReason ? `: ${impact.commitmentReleaseReason}` : "."}</p>}
+    </>}
+  </section>;
+}
+
+function FinancialDetail({ label, value }: { label: string; value: string }) {
+  return <div><dt className="text-xs text-[#697687]">{label}</dt><dd className="mt-1 font-semibold tabular-nums text-[#293e55]">{value}</dd></div>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

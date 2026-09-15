@@ -5,6 +5,7 @@ import { SUPPLY_REQUEST_STATUSES } from "@/supply-requests/lifecycle";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 import { multiItemSupplyRequestInputSchema } from "@/supply-requests/validation";
 import { adminRequestDecisionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
+import { releaseCommitmentSchema, type RequestBudgetImpact } from "@/supply-requests/commitments";
 import {
   summarizeStaffRequests,
   translateStaffRequestStatus,
@@ -570,6 +571,57 @@ export const decideSupplyRequestFn = createServerFn({ method: "POST" })
       _decision: data.decision,
       ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
       ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
+    });
+    if (error) throw new Error(error.message);
+    return result;
+  });
+
+export const getSupplyRequestBudgetImpactFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => z.object({
+    organizationId: z.string().uuid(),
+    requestId: z.string().uuid(),
+  }).parse(value))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    const { data: rows, error } = await context.supabase.rpc("get_supply_request_budget_impact", {
+      _organization_id: data.organizationId,
+      _request_id: data.requestId,
+    });
+    if (error) throw new Error(error.message);
+    const row = rows?.[0];
+    if (!row) throw new Error("Request budget impact is unavailable. Refresh and try again.");
+    return {
+      requestId: row.request_id,
+      requestStatus: row.request_status,
+      estimatedAmount: Number(row.estimated_amount),
+      pricingStatus: row.pricing_status,
+      totalItemCount: row.total_item_count,
+      pricedItemCount: row.priced_item_count,
+      commitmentStatus: row.commitment_status,
+      commitmentReleaseReason: row.commitment_release_reason,
+      budgetId: row.budget_id,
+      budgetName: row.budget_name,
+      budgetAmount: row.budget_amount === null ? null : Number(row.budget_amount),
+      actualSpend: row.actual_spend === null ? null : Number(row.actual_spend),
+      committedSpend: row.committed_spend === null ? null : Number(row.committed_spend),
+      availableAmount: row.available_amount === null ? null : Number(row.available_amount),
+      projectedAvailableAfterApproval: row.projected_available_after_approval === null
+        ? null
+        : Number(row.projected_available_after_approval),
+    } as RequestBudgetImpact;
+  });
+
+export const releaseSupplyRequestCommitmentFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => releaseCommitmentSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    const { data: result, error } = await context.supabase.rpc("release_supply_request_commitment", {
+      _organization_id: data.organizationId,
+      _request_id: data.requestId,
+      _release_kind: data.releaseKind,
+      _release_reason: data.releaseReason,
     });
     if (error) throw new Error(error.message);
     return result;

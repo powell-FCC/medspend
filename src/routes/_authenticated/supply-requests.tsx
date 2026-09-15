@@ -7,11 +7,12 @@ import { AdminQueueTabs, adminQueueLabel, type AdminQueueKey } from "@/component
 import { AdminRequestCard } from "@/components/admin/supply-requests/AdminRequestCard";
 import { AdminRequestDetail } from "@/components/admin/supply-requests/AdminRequestDetail";
 import { useActiveOrg } from "@/hooks/use-active-org";
-import { decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, listRequestUpdatesFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
+import { decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyRequestBudgetImpactFn, listRequestUpdatesFn, releaseSupplyRequestCommitmentFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
+import type { CommitmentReleaseKind } from "@/supply-requests/commitments";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 
 export const Route = createFileRoute("/_authenticated/supply-requests")({
-  head: () => ({ meta: [{ title: "Request Inbox — MedSpend" }, { name: "robots", content: "noindex" }] }),
+  head: () => ({ meta: [{ title: "Request Inbox — SportSpend" }, { name: "robots", content: "noindex" }] }),
   component: Page,
 });
 
@@ -21,6 +22,8 @@ function Page() {
   const fetchUpdates = useServerFn(listRequestUpdatesFn);
   const updateStatus = useServerFn(updateRequestStatusFn);
   const decide = useServerFn(decideSupplyRequestFn);
+  const fetchBudgetImpact = useServerFn(getSupplyRequestBudgetImpactFn);
+  const releaseCommitment = useServerFn(releaseSupplyRequestCommitmentFn);
   const queryClient = useQueryClient();
   const [queue, setQueue] = useState<AdminQueueKey>("needsReview");
   const [selection, setSelection] = useState<{ organizationId: string; id: string } | null>(null);
@@ -39,6 +42,11 @@ function Page() {
   const updates = useQuery({
     queryKey: ["org", active?.organizationId, "requests", selected?.id, "updates"],
     queryFn: () => fetchUpdates({ data: { requestId: selected!.id } }),
+    enabled: !!active && !!selected,
+  });
+  const budgetImpact = useQuery({
+    queryKey: ["org", active?.organizationId, "requests", selected?.id, "budget-impact"],
+    queryFn: () => fetchBudgetImpact({ data: { organizationId: active!.organizationId, requestId: selected!.id } }),
     enabled: !!active && !!selected,
   });
 
@@ -64,6 +72,7 @@ function Page() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["org", organizationId, "requests"] }),
         queryClient.invalidateQueries({ queryKey: ["me", organizationId, "requests"] }),
+        queryClient.invalidateQueries({ queryKey: ["budget-summary", organizationId] }),
       ]);
       setSelection(null);
       setFeedback(status === "approved" ? "Request approved. Staff can see the decision."
@@ -71,6 +80,33 @@ function Page() {
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : "The request could not be updated.");
       await queryClient.invalidateQueries({ queryKey: ["org", organizationId, "requests"] });
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function release(kind: CommitmentReleaseKind, reason: string) {
+    if (!selected || !active || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setMutationError(null);
+    setFeedback(null);
+    const organizationId = active.organizationId;
+    try {
+      await releaseCommitment({ data: {
+        organizationId,
+        requestId: selected.id,
+        releaseKind: kind,
+        releaseReason: reason,
+      } });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["org", organizationId, "requests", selected.id, "budget-impact"] }),
+        queryClient.invalidateQueries({ queryKey: ["budget-summary", organizationId] }),
+      ]);
+      setFeedback("Commitment released. Budget availability now reflects the audited release.");
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : "The commitment could not be released.");
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -108,7 +144,7 @@ function Page() {
           </div>}
         </section>
       </div>
-      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} />}
+      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} budgetImpact={budgetImpact.data} loadingBudgetImpact={budgetImpact.isLoading} budgetImpactError={budgetImpact.isError} onRetryBudgetImpact={() => void budgetImpact.refetch()} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} onReleaseCommitment={release} />}
     </div>
   );
 }

@@ -14,7 +14,7 @@ export const budgetFormSchema = budgetFieldsSchema.extend({
 }).refine((value) => value.period_end >= value.period_start, { path: ['period_end'], message: 'Period end cannot precede period start.' });
 export type BudgetInput = z.infer<typeof budgetInputSchema>;
 export type Budget = z.infer<typeof budgetFieldsSchema> & { id: string; active: boolean };
-export type BudgetSummary = { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; remaining_amount: number; posted_invoice_count: number };
+export type BudgetSummary = { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; committed_spend: number; available_amount: number; remaining_amount: number; posted_invoice_count: number; active_commitment_count: number; incomplete_commitment_count: number };
 export const canAccessBudget = (role: string | undefined) => role === 'owner' || role === 'admin';
 export const formatUSD = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 export const formatPeriod = (start: string, end: string) => {
