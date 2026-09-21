@@ -2174,6 +2174,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_product_price_intelligence: {
+        Args: { _organization_id: string; _product_id: string }
+        Returns: Json
+      }
       get_budget_summary: {
         Args: { _organization_id: string; _budget_id: string }
         Returns: { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; committed_spend: number; available_amount: number; remaining_amount: number; posted_invoice_count: number; active_commitment_count: number; incomplete_commitment_count: number }[]

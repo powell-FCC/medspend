@@ -9,6 +9,7 @@ import {
   CatalogStockDialog,
   type CatalogStockSubmission,
 } from "@/components/catalog/CatalogStockDialog";
+import { ProductPriceIntelligence } from "@/components/catalog/ProductPriceIntelligence";
 import {
   Sheet,
   SheetContent,
@@ -549,13 +550,27 @@ function CatalogDetailSheet({
               : "Unable to load catalog detail."}
           </p>
         )}
-        {detailQuery.data && <CatalogDetail detail={detailQuery.data} />}
+        {detailQuery.data && (
+          <CatalogDetail
+            detail={detailQuery.data}
+            organizationId={organizationId}
+            organizationProductId={row?.organizationProductId ?? null}
+          />
+        )}
       </SheetContent>
     </Sheet>
   );
 }
 
-function CatalogDetail({ detail }: { detail: CatalogAdminDetail }) {
+function CatalogDetail({
+  detail,
+  organizationId,
+  organizationProductId,
+}: {
+  detail: CatalogAdminDetail;
+  organizationId: string;
+  organizationProductId: string | null;
+}) {
   const packageInfo = catalogPackagePresentation({
     packageStatus: detail.package.status,
     packageDescription: detail.package.rawDescription,
@@ -611,6 +626,7 @@ function CatalogDetail({ detail }: { detail: CatalogAdminDetail }) {
           </p>
         )}
       </DetailSection>
+      <ProductPriceIntelligence organizationId={organizationId} productId={organizationProductId} />
       <DetailSection title="Lifecycle">
         <DetailGrid
           entries={[
