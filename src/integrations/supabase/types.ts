@@ -2202,6 +2202,7 @@ export type Database = {
           _decision: Database["public"]["Enums"]["supply_request_status"]
           _staff_visible_note?: string
           _internal_note?: string
+          _expected_updated_at?: string
         }
         Returns: Json
       }

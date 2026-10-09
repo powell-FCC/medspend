@@ -61,6 +61,10 @@ Migration: `supabase/migrations/20261009120000_phase6c_staff_request_forgiveness
 | `update_submitted_supply_request(org, request, type, team, location, notes, items)` | new RPC, returns `jsonb` | `authenticated` only |
 | `supply_request_updates.event_kind` | new nullable column + check constraint | existing RLS |
 | `list_staff_supply_request_updates(org, ids)` | recreated with an `event_kind` result column | unchanged (`authenticated`) |
+| `decide_supply_request(org, request, decision, staff_note, internal_note, expected_updated_at)` | recreated with an appended version parameter and stale-version guard; now the only approve/deny path for pending requests | unchanged (`authenticated`; `PUBLIC`/`anon` revoked) |
+| `apply_supply_request_transition(org, request, status, internal_note, staff_note)` | new private helper: the Phase 6A.2 transition body, verbatim | revoked from `PUBLIC`, `anon`, `authenticated` |
+| `transition_supply_request(...)` | same signature; now refuses pending → approved/denied, then delegates to the helper | unchanged (`authenticated`) |
+| `supply_requests_lifecycle_guard` trigger | new: direct API writes cannot create a non-`submitted` request or change `status` | n/a |
 
 ### Shared validation (no parallel request system)
 
@@ -106,7 +110,54 @@ Scenario: the requester opens a submitted request; an admin moves it to `under_r
 
 This was verified with two concurrent database sessions against a disposable database: the requester's save blocked on the admin's open transaction, then failed with the message above once the admin committed; the line set and audit history were unchanged.
 
-**Known limitation (unchanged approval semantics):** if a requester's edit commits *before* an admin acts, an admin who loaded the request earlier and then approves from a stale screen approves — and commits — the current (edited) contents. The edit is visible in the admin activity log as "Requester edited request". Closing this fully requires an optimistic version check on the approval RPC, which this phase deliberately does not change. See follow-ups.
+### Admin decisions on a changed request
+
+The opposite race: the admin opens a submitted request (Item A ×2, Item B ×1), the requester edits it (Item A ×10, Item B removed), and the admin approves from the screen that still shows the old contents. Without a guard, the approval and its 6A.2 commitment would cover contents the admin never saw.
+
+Phase 6C closes this with optimistic concurrency on the decision RPC.
+
+**Version token: `supply_requests.updated_at`.** No new column. The `sr_updated_at` trigger (`NEW.updated_at = now()`) stamps every write to the request row. Every change that should invalidate a decision writes that row:
+
+- requester edits always update the parent row (team/location/note/type and the first-line mirror), even when only lines change;
+- every lifecycle transition updates `status`;
+- request lines have no other write path: staff have no line-write policy and lines are only written by the submission and edit RPCs.
+
+The admin inbox already loads `updated_at` with the same row and the same line query it renders. It reaches the browser as an exact ISO string (microsecond precision) and is sent back unchanged.
+
+**`decide_supply_request` changes** (recreated in this migration, because a parameter is added):
+
+- new final parameter `_expected_updated_at timestamptz DEFAULT NULL`. Existing named arguments keep their meaning.
+- order inside the single transaction:
+  1. admin authorization and input validation (unchanged);
+  2. `SELECT … FOR UPDATE` of the organization-scoped request (unchanged);
+  3. a same-decision retry still returns `alreadyDecided` (unchanged, so retries stay idempotent even though the first decision advanced the version);
+  4. a terminal request still raises `This request has already been decided. Refresh the inbox.` (unchanged);
+  5. **new:** if `_expected_updated_at` is missing or differs from the locked row's `updated_at`, raise `This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.` (`SQLSTATE 40001`);
+  6. the existing `transition_supply_request` calls, which write the audit rows and, on approval, create the 6A.2 commitment (unchanged).
+- because step 5 runs under the lock and before step 6, a stale decision writes no status change, no decision audit row, and creates or releases no commitment.
+- a missing version is treated as stale, so no client can decide without naming the version it reviewed.
+
+**Admin UI.** Approve/Decline sends `expectedUpdatedAt` from the same request object the detail panel is rendering. On rejection the panel stays open and shows the message. The inbox, activity and budget-impact queries refetch, so the panel shows the latest contents. The buttons stay disabled until that refresh completes. Nothing is resubmitted automatically: the admin must review the refreshed request and choose Approve or Decline again.
+
+**Starting review (`under_review`) is not separately version-checked.** Moving a request to `under_review` makes no financial or final decision: it freezes requester edits and creates no commitment. The admin inbox has no separate "start review" action. `under_review` is entered inside `decide_supply_request` after the version check. A direct transition to `under_review` does advance `updated_at`, so any decision prepared on a screen loaded before review started is rejected as stale and must be re-made from the frozen, refreshed contents.
+
+Verified with real concurrent sessions against a disposable database. The admin loaded the version, the requester's edit held the row lock, and the admin's approval waited for it. Once the edit committed, the approval was rejected as stale with zero commitments and zero decision audit rows. After a reload, approval succeeded and the commitment snapshotted the edited line (qty 10) exactly once.
+
+### Canonical decision path
+
+`decide_supply_request` is the only way to approve or deny a pending request:
+
+```
+submitted / under_review --decide_supply_request--> approved | denied
+approved --transition_supply_request--> ordered --> received --> completed
+approved / ordered --transition_supply_request--> denied   (cancellation; releases the 6A.2 commitment)
+submitted --transition_supply_request--> under_review
+```
+
+- **Private helper, no duplicated logic.** The Phase 6A.2 `transition_supply_request` body (the transition matrix, status and timestamp update, audit insert, commitment create/release) moved verbatim into `apply_supply_request_transition`, which API clients cannot execute. A test asserts the copy is identical to the 6A.2 definition.
+- **Public wrapper.** `transition_supply_request` keeps its signature, grants, and admin check. It locks the request and raises `Approve or decline this request through the request decision workflow.` (`42501`) for submitted/under_review → approved/denied. Every other step is delegated unchanged to the helper, so invalid backward or skipped transitions still raise the existing `Invalid supply request transition: X to Y`.
+- **Decision RPC.** `decide_supply_request` calls the private helper for its `under_review` step and its decision step. Its authorization, version check, decline-reason rule, audit rows, 6A.2 commitment semantics, and idempotency are unchanged.
+- **Direct writes.** Before this change, the table grants and RLS let an admin `UPDATE supply_requests SET status = 'approved'` through the API, with no audit, commitment, or version. They also let any member `INSERT` a request with `status = 'approved'`. A narrow `BEFORE INSERT OR UPDATE OF status` trigger now rejects both when the writer is the `authenticated` or `anon` API role. The lifecycle RPCs are `SECURITY DEFINER`, so they run as the function owner and are unaffected; trusted `service_role` maintenance is also unaffected. Non-status columns keep their existing grants and policies.
 
 ## Audit behavior
 
@@ -158,7 +209,7 @@ Withdrawal/cancellation needs its own status and terminal semantics, admin queue
 
 Editing a `submitted` request is pre-review and pre-financial-commitment. Phase 6C does not change:
 
-- approval behavior or the `decide_supply_request` / `transition_supply_request` RPCs;
+- approval behavior. `decide_supply_request` keeps its authorization, locking, retry, terminal-state and commitment semantics, and only gains the stale-version guard. `transition_supply_request` keeps every operational step and only refuses pending approve/deny, which must use `decide_supply_request`;
 - 6A budget math or `get_budget_summary`;
 - 6A.2 commitment creation, immutability, or manual release (an edit never creates a commitment; approval still snapshots the request's lines at approval time, exactly once);
 - purchasing/ordering, receiving, or invoice handling;
@@ -180,16 +231,31 @@ The admin budget-impact preview for a `submitted` request already reads live lin
 ## Tests
 
 - `tests/phase6c-staff-request-forgiveness.test.ts` — helpers (eligibility, preload/round-trip of identities, request-type derivation, context resolution, confirmation copy), payload validation, and structural checks of the migration, server functions, composer, staff detail, and admin activity log.
-- `supabase/tests/phase6c_staff_request_forgiveness_behavior.sql` — rollback-only behavioral coverage (35 checks): refactored submission; same ID/status/no duplicate; quantity change, line removal, mixed structured + custom additions; note/team/location edits and context preservation; stored-identity round trip; invalid quantities, identities, teams, and locations with exact messages; atomic failure; every locked status; ownership, cross-organization, and deactivated-member denials; no bypass via private helpers or direct table writes; audit events for admin and staff; no internal notes for staff; stale save after review; no commitment before approval and an unchanged 6A.2 approval snapshot of the edited lines afterward; audit constraint.
+- `supabase/tests/phase6c_staff_request_forgiveness_behavior.sql` — rollback-only behavioral coverage (71 checks). Canonical decision path:
+  - `transition_supply_request` refuses submitted/under_review → approved/denied;
+  - the private helper is not executable by API clients;
+  - admin direct status updates and staff direct approved inserts are rejected, while non-status admin updates still work;
+  - staff and cross-organization callers are still denied;
+  - decide approves from `under_review` and declines from `submitted` (no commitment, reason audited);
+  - approved → ordered → received → completed still works and keeps the commitment active;
+  - denial after approval still releases the commitment;
+  - backward, skipped, and terminal transitions are still rejected.
+
+  Decision concurrency: stale approve/decline rejected after a requester edit with no status, audit, or commitment writes; a missing version and another request's version are rejected; a cross-organization admin is denied; approve/decline succeed with the matching or reloaded version; the commitment snapshots the latest lines exactly once; retries stay idempotent with old or new versions; a pre-review screen is rejected after `under_review`. Requester editing: refactored submission; same ID/status/no duplicate; quantity change, line removal, mixed structured + custom additions; note/team/location edits and context preservation; stored-identity round trip; invalid quantities, identities, teams, and locations with exact messages; atomic failure; every locked status; ownership, cross-organization, and deactivated-member denials; no bypass via private helpers or direct table writes; audit events for admin and staff; no internal notes for staff; stale save after review; no commitment before approval and an unchanged 6A.2 approval snapshot of the edited lines afterward; audit constraint.
 
 ## Deployment (not performed)
 
 1. Review and apply `20261009120000_phase6c_staff_request_forgiveness.sql` (single transaction with a preflight guard).
 2. Regenerate Supabase types and compare with the hand-edited `src/integrations/supabase/types.ts` changes (`event_kind`, `update_submitted_supply_request`, `list_staff_supply_request_updates.event_kind`).
-3. Run `supabase/tests/phase6c_staff_request_forgiveness_behavior.sql` and the existing request behavior suites against a disposable migrated database.
-4. Deploy the application only after the migration is live: the new staff UI calls `update_submitted_supply_request` and reads `event_kind`.
+3. Run `supabase/tests/phase6c_staff_request_forgiveness_behavior.sql` and the existing request behavior suites against a disposable migrated database. The 5A.9 and 6A.2 suites now pass the reviewed version on their first-time decisions.
+4. Ship the migration and the application together. The new staff UI calls `update_submitted_supply_request` and reads `event_kind`. Also, after the migration an older admin UI that sends no version has every Approve/Decline rejected with the refresh message until the new UI is live. Lifecycle steps after approval (ordered/received/completed) are unaffected.
 
 ## Follow-ups
 
-- Optional optimistic concurrency for admin decisions (e.g. pass the `updated_at` the admin reviewed) so an approval made from a stale screen is rejected after a requester edit.
 - Requester withdrawal as its own phase.
+- Remaining direct-write capabilities that are not decision paths but may deserve hardening:
+  - members can still `INSERT` a `submitted` request directly, skipping `submit_supply_request` line validation (it would have no lines);
+  - admins can `DELETE` requests directly (committed requests are protected by `ON DELETE RESTRICT`);
+  - admins can write `supply_request_updates` directly (`sru_write_admin` is `FOR ALL`), so audit rows can be forged or edited;
+  - admins can update `ordered_at`/`received_at` directly.
+- Denial after approval (approved/ordered → denied) is an operational cancellation through `transition_supply_request`. It needs no version because the requester can no longer edit by then, and it keeps the 6A.2 commitment release.

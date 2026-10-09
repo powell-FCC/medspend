@@ -232,7 +232,8 @@ BEGIN
   _result := public.decide_supply_request(
     '5a9a0000-0000-4000-8000-000000000101',
     '5a9a0000-0000-4000-8000-000000000901', 'approved',
-    'Approved for staff', 'Admin-only approval note'
+    'Approved for staff', 'Admin-only approval note',
+    _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '5a9a0000-0000-4000-8000-000000000901')
   );
   IF _result->>'status' IS DISTINCT FROM 'approved'
      OR (_result->>'alreadyDecided')::boolean THEN
@@ -319,7 +320,8 @@ INSERT INTO phase5a9_checks VALUES
 -- An under-review request performs only its remaining valid transition.
 SELECT public.decide_supply_request(
   '5a9a0000-0000-4000-8000-000000000101',
-  '5a9a0000-0000-4000-8000-000000000904', 'approved'
+  '5a9a0000-0000-4000-8000-000000000904', 'approved',
+  _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '5a9a0000-0000-4000-8000-000000000904')
 );
 DO $phase5a9_under_review$
 BEGIN
@@ -352,7 +354,8 @@ BEGIN
   _result := public.decide_supply_request(
     '5a9a0000-0000-4000-8000-000000000101',
     '5a9a0000-0000-4000-8000-000000000902', 'denied',
-    'This item is already available in storage.', 'Duplicate request; verified by admin.'
+    'This item is already available in storage.', 'Duplicate request; verified by admin.',
+    _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '5a9a0000-0000-4000-8000-000000000902')
   );
   IF _result->>'status' IS DISTINCT FROM 'denied'
      OR (SELECT status FROM public.supply_requests WHERE id = '5a9a0000-0000-4000-8000-000000000902') <> 'denied' THEN
@@ -401,7 +404,8 @@ BEGIN
     PERFORM public.decide_supply_request(
       '5a9a0000-0000-4000-8000-000000000101',
       '5a9a0000-0000-4000-8000-000000000903', 'approved',
-      'Phase 5A.9 forced failure'
+      'Phase 5A.9 forced failure',
+      _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '5a9a0000-0000-4000-8000-000000000903')
     );
     RAISE EXCEPTION 'Forced second-transition failure unexpectedly succeeded';
   EXCEPTION WHEN raise_exception THEN

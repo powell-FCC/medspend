@@ -65,7 +65,10 @@ function Page() {
     try {
       const pending = selected.lifecycleStatus === "submitted" || selected.lifecycleStatus === "under_review";
       if (pending && (status === "approved" || status === "denied")) {
-        await decide({ data: { ...data, decision: status } });
+        // Decide exactly the version this screen rendered. If the request changed, the
+        // server rejects the decision and the refresh below shows the latest details;
+        // the admin must review and choose again.
+        await decide({ data: { ...data, decision: status, expectedUpdatedAt: selected.updatedAt } });
       } else {
         await updateStatus({ data: { ...data, status } });
       }

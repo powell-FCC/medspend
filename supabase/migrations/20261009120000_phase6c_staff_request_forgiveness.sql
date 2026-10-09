@@ -7,6 +7,14 @@
 -- Submission and editing share one context helper and one line helper, so both paths
 -- apply exactly the Phase 5A.7 identity, quantity, team, and location rules. Neither
 -- path touches commitments, budgets, purchasing, receiving, invoices, or pricing.
+--
+-- Because a submitted request can now change, an admin approve/decline must name the
+-- request version (supply_requests.updated_at) it reviewed. A decision made from a
+-- stale screen is rejected before any lifecycle, audit, or commitment write.
+--
+-- decide_supply_request is the only path for approval and denial of a pending request:
+-- transition_supply_request refuses submitted/under_review -> approved/denied, and
+-- direct table writes can no longer set or change a request's status.
 
 BEGIN;
 
@@ -21,6 +29,16 @@ BEGIN
     'public.list_staff_supply_request_updates(uuid,uuid[])'
   ) IS NULL THEN
     RAISE EXCEPTION 'Phase 6C requires the existing list_staff_supply_request_updates RPC';
+  END IF;
+  IF pg_catalog.to_regprocedure(
+    'public.decide_supply_request(uuid,uuid,public.supply_request_status,text,text)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'Phase 6C requires the existing Phase 6A.2 decide_supply_request RPC';
+  END IF;
+  IF pg_catalog.to_regprocedure(
+    'public.transition_supply_request(uuid,uuid,public.supply_request_status,text,text)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'Phase 6C requires the existing Phase 6A.2 transition_supply_request RPC';
   END IF;
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -39,7 +57,9 @@ BEGIN
       AND procedure.proname IN (
         'update_submitted_supply_request',
         'resolve_supply_request_context',
-        'replace_supply_request_items'
+        'replace_supply_request_items',
+        'apply_supply_request_transition',
+        'guard_supply_request_lifecycle'
       )
   ) THEN
     RAISE EXCEPTION 'Phase 6C request edit functions already exist unexpectedly';
@@ -554,5 +574,249 @@ $$;
 
 REVOKE ALL ON FUNCTION public.list_staff_supply_request_updates(uuid, uuid[]) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.list_staff_supply_request_updates(uuid, uuid[]) TO authenticated;
+
+-- Canonical lifecycle. The Phase 6A.2 transition body moves verbatim into a private
+-- helper so decide_supply_request can still run its decision transitions (including
+-- 6A.2 commitment creation and denial release) without a public route to them.
+CREATE FUNCTION public.apply_supply_request_transition(
+  _organization_id uuid,
+  _request_id uuid,
+  _status public.supply_request_status,
+  _internal_note text DEFAULT NULL,
+  _staff_visible_note text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _request public.supply_requests%ROWTYPE;
+  _allowed boolean := false;
+BEGIN
+  IF NOT public.has_org_role(
+    _organization_id, auth.uid(), ARRAY['owner','admin']::public.org_role[]
+  ) THEN
+    RAISE EXCEPTION 'Forbidden: administrator access required';
+  END IF;
+
+  SELECT * INTO _request
+  FROM public.supply_requests
+  WHERE id = _request_id AND organization_id = _organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Supply request not found'; END IF;
+
+  _allowed := CASE _request.status
+    WHEN 'submitted' THEN _status IN ('under_review', 'denied')
+    WHEN 'under_review' THEN _status IN ('approved', 'denied')
+    WHEN 'approved' THEN _status IN ('ordered', 'denied')
+    WHEN 'ordered' THEN _status IN ('received', 'denied')
+    WHEN 'received' THEN _status = 'completed'
+    ELSE false
+  END;
+  IF NOT _allowed THEN
+    RAISE EXCEPTION 'Invalid supply request transition: % to %', _request.status, _status;
+  END IF;
+
+  UPDATE public.supply_requests SET
+    status = _status,
+    ordered_at = CASE
+      WHEN _status = 'ordered' THEN coalesce(ordered_at, now())
+      ELSE ordered_at
+    END,
+    received_at = CASE
+      WHEN _status = 'received' THEN coalesce(received_at, now())
+      ELSE received_at
+    END
+  WHERE id = _request.id;
+
+  INSERT INTO public.supply_request_updates
+    (organization_id, supply_request_id, author_id, status_from, status_to,
+     internal_note, staff_visible_note)
+  VALUES
+    (_organization_id, _request.id, auth.uid(), _request.status, _status,
+     nullif(btrim(_internal_note), ''), nullif(btrim(_staff_visible_note), ''));
+
+  IF _status = 'approved' THEN
+    PERFORM public.create_supply_request_commitment(
+      _organization_id, _request.id, now(), auth.uid()
+    );
+  ELSIF _status = 'denied' AND EXISTS (
+    SELECT 1 FROM public.supply_request_commitments commitment
+    WHERE commitment.supply_request_id = _request.id
+      AND commitment.organization_id = _organization_id
+      AND commitment.status = 'active'
+  ) THEN
+    PERFORM public.release_supply_request_commitment(
+      _organization_id, _request.id, 'denied', 'Request denied through request lifecycle'
+    );
+  END IF;
+
+  SELECT * INTO _request FROM public.supply_requests WHERE id = _request.id;
+  RETURN jsonb_build_object(
+    'id', _request.id,
+    'status', _request.status,
+    'orderedAt', _request.ordered_at,
+    'receivedAt', _request.received_at
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.apply_supply_request_transition(
+  uuid, uuid, public.supply_request_status, text, text
+) FROM PUBLIC, anon, authenticated;
+
+-- The public lifecycle RPC keeps its signature and its operational steps
+-- (submitted -> under_review, approved -> ordered -> received -> completed, and
+-- denial after approval), but a pending request can only be approved or denied
+-- through decide_supply_request, which enforces the reviewed-version check.
+CREATE OR REPLACE FUNCTION public.transition_supply_request(
+  _organization_id uuid,
+  _request_id uuid,
+  _status public.supply_request_status,
+  _internal_note text DEFAULT NULL,
+  _staff_visible_note text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _request public.supply_requests%ROWTYPE;
+BEGIN
+  IF NOT public.has_org_role(
+    _organization_id, auth.uid(), ARRAY['owner','admin']::public.org_role[]
+  ) THEN
+    RAISE EXCEPTION 'Forbidden: administrator access required';
+  END IF;
+
+  SELECT * INTO _request
+  FROM public.supply_requests
+  WHERE id = _request_id AND organization_id = _organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Supply request not found'; END IF;
+
+  IF _request.status IN ('submitted', 'under_review') AND _status IN ('approved', 'denied') THEN
+    RAISE EXCEPTION 'Approve or decline this request through the request decision workflow.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN public.apply_supply_request_transition(
+    _organization_id, _request_id, _status, _internal_note, _staff_visible_note
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.transition_supply_request(
+  uuid, uuid, public.supply_request_status, text, text
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.transition_supply_request(
+  uuid, uuid, public.supply_request_status, text, text
+) TO authenticated;
+
+-- Direct API writes (PostgREST runs them as authenticated/anon) can no longer create a
+-- request in, or move a request to, any lifecycle status. The lifecycle RPCs are
+-- SECURITY DEFINER, so their writes run as the function owner and are unaffected.
+-- Other columns keep their existing grants and RLS policies.
+CREATE FUNCTION public.guard_supply_request_lifecycle()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') THEN
+    IF TG_OP = 'INSERT' AND NEW.status IS DISTINCT FROM 'submitted' THEN
+      RAISE EXCEPTION 'New requests must start as submitted' USING ERRCODE = '42501';
+    END IF;
+    IF TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status THEN
+      RAISE EXCEPTION 'Request status can only change through the request lifecycle workflow'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.guard_supply_request_lifecycle() FROM PUBLIC, anon, authenticated;
+
+CREATE TRIGGER supply_requests_lifecycle_guard
+  BEFORE INSERT OR UPDATE OF status ON public.supply_requests
+  FOR EACH ROW EXECUTE FUNCTION public.guard_supply_request_lifecycle();
+
+-- Optimistic concurrency for admin decisions. supply_requests.updated_at is the version:
+-- sr_updated_at bumps it on every request write, including requester edits (which always
+-- update the parent row) and every lifecycle transition. Phase 6A.2 semantics are
+-- otherwise unchanged: same lock, same authorization, same same-decision retry result,
+-- same terminal-state error, same commitment creation inside the (now private)
+-- transition body.
+-- The version parameter is appended so existing named arguments keep their meaning; a
+-- missing version is treated as stale, so no caller can decide without naming what it
+-- reviewed. Adding a parameter requires a drop/recreate inside this transaction.
+DROP FUNCTION public.decide_supply_request(
+  uuid, uuid, public.supply_request_status, text, text
+);
+CREATE FUNCTION public.decide_supply_request(
+  _organization_id uuid,
+  _request_id uuid,
+  _decision public.supply_request_status,
+  _staff_visible_note text DEFAULT NULL,
+  _internal_note text DEFAULT NULL,
+  _expected_updated_at timestamptz DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _request public.supply_requests%ROWTYPE;
+  _result jsonb;
+BEGIN
+  IF NOT public.is_org_admin(_organization_id, auth.uid()) THEN
+    RAISE EXCEPTION 'Forbidden: administrator access required' USING ERRCODE = '42501';
+  END IF;
+  IF _decision IS NULL OR _decision NOT IN ('approved', 'denied') THEN
+    RAISE EXCEPTION 'Choose approve or decline' USING ERRCODE = '22023';
+  END IF;
+  IF _decision = 'denied' AND nullif(btrim(_staff_visible_note), '') IS NULL THEN
+    RAISE EXCEPTION 'A staff-visible reason is required to decline a request' USING ERRCODE = '22023';
+  END IF;
+  IF length(_staff_visible_note) > 5000 OR length(_internal_note) > 5000 THEN
+    RAISE EXCEPTION 'Request messages must be at most 5000 characters' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO _request FROM public.supply_requests
+  WHERE id = _request_id AND organization_id = _organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Supply request not found' USING ERRCODE = 'P0002'; END IF;
+  -- Competing decisions serialize. Same-decision retries add no audit events and stay
+  -- idempotent even though the first decision advanced the version.
+  IF _request.status = _decision THEN
+    RETURN jsonb_build_object('id', _request.id, 'status', _request.status, 'alreadyDecided', true);
+  END IF;
+  IF _request.status NOT IN ('submitted', 'under_review') THEN
+    RAISE EXCEPTION 'This request has already been decided. Refresh the inbox.' USING ERRCODE = '22023';
+  END IF;
+  -- Checked under the row lock, before any transition, audit row, or commitment.
+  IF _expected_updated_at IS NULL OR _request.updated_at IS DISTINCT FROM _expected_updated_at THEN
+    RAISE EXCEPTION 'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.'
+      USING ERRCODE = '40001';
+  END IF;
+  IF _decision = 'approved' AND _request.status = 'submitted' THEN
+    PERFORM public.apply_supply_request_transition(_organization_id, _request_id, 'under_review');
+  END IF;
+  _result := public.apply_supply_request_transition(
+    _organization_id, _request_id, _decision, _internal_note, _staff_visible_note
+  );
+  RETURN _result || jsonb_build_object('alreadyDecided', false);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.decide_supply_request(
+  uuid, uuid, public.supply_request_status, text, text, timestamptz
+) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.decide_supply_request(
+  uuid, uuid, public.supply_request_status, text, text, timestamptz
+) TO authenticated;
 
 COMMIT;

@@ -7,6 +7,9 @@ export const adminRequestDecisionSchema = z.object({
   decision: z.enum(["approved", "denied"]),
   staffVisibleNote: z.string().trim().max(5000).nullable().optional(),
   internalNote: z.string().trim().max(5000).nullable().optional(),
+  // Phase 6C: the request version (supply_requests.updated_at, as loaded) the admin
+  // reviewed. The decision RPC rejects the decision if the request changed since.
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
 }).refine((value) => value.decision !== "denied" || !!value.staffVisibleNote, {
   path: ["staffVisibleNote"],
   message: "A staff-visible reason is required to decline a request.",

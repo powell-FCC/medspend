@@ -552,7 +552,11 @@ $phase6c_staff_privacy$;
 -- Approval keeps 6A.2 behavior and snapshots the edited (current) lines exactly once.
 SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000001', true);
 SELECT public.decide_supply_request(
-  '6c6c0000-0000-4000-8000-000000000101', current_setting('phase6c.request_id')::uuid, 'approved'
+  '6c6c0000-0000-4000-8000-000000000101', current_setting('phase6c.request_id')::uuid, 'approved',
+  _expected_updated_at => (
+    SELECT updated_at FROM public.supply_requests
+    WHERE id = current_setting('phase6c.request_id')::uuid
+  )
 );
 DO $phase6c_commitment$
 DECLARE
@@ -631,6 +635,552 @@ BEGIN
 END
 $phase6c_event_constraint$;
 
-SELECT 35 AS checks_passed, 0 AS checks_failed;
+-- ---------------------------------------------------------------------------
+-- Admin decisions are version-checked (optimistic concurrency).
+--
+-- now() is constant inside this rollback-only transaction, so every UPDATE here
+-- stamps the same updated_at. Fixtures therefore start with distinct backdated
+-- versions standing in for "the version the admin screen loaded earlier"; the
+-- first write to each request then moves it to now(). Versions round-trip through
+-- text exactly as the admin UI's JSON string does.
+-- ---------------------------------------------------------------------------
+INSERT INTO public.supply_requests (
+  id, organization_id, requested_by, request_type, team_id, location_id, status, updated_at
+)
+SELECT
+  fixture.id::uuid, '6c6c0000-0000-4000-8000-000000000101',
+  '6c6c0000-0000-4000-8000-000000000003', 'reorder',
+  '6c6c0000-0000-4000-8000-000000000111', '6c6c0000-0000-4000-8000-000000000121',
+  fixture.status::public.supply_request_status, now() - fixture.age::interval
+FROM (VALUES
+  ('6c6c0000-0000-4000-8000-000000000911', 'submitted', '10 minutes 0.000123 seconds'),
+  ('6c6c0000-0000-4000-8000-000000000912', 'submitted', '9 minutes'),
+  ('6c6c0000-0000-4000-8000-000000000913', 'submitted', '8 minutes'),
+  ('6c6c0000-0000-4000-8000-000000000914', 'submitted', '7 minutes'),
+  ('6c6c0000-0000-4000-8000-000000000915', 'submitted', '6 minutes')
+) AS fixture(id, status, age);
+INSERT INTO public.supply_request_items (
+  organization_id, supply_request_id, catalog_vendor_product_id, free_text_item, quantity
+)
+VALUES
+  -- 911: the reviewed version is "Item A (cold pack) x2, Item B x1".
+  ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', '6c6c0000-0000-4000-8000-000000000402', NULL, 2),
+  ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', NULL, 'Item B', 1),
+  ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000912', NULL, 'Decline me', 1),
+  ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', NULL, 'Request X', 1),
+  ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', NULL, 'Request Y', 1),
+  ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', NULL, 'Review started', 1);
+
+-- Runs as the caller's role; asserts the decision is rejected with the exact message
+-- and SQLSTATE, and that nothing about the request changed.
+CREATE FUNCTION pg_temp.phase6c_expect_decision_error(
+  _organization_id uuid,
+  _request_id uuid,
+  _decision public.supply_request_status,
+  _expected_version text,
+  _expected_message text,
+  _expected_state text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  _status_before public.supply_request_status;
+  _version_before timestamptz;
+  _updates_before bigint;
+  _commitments_before bigint;
+BEGIN
+  SELECT status, updated_at INTO _status_before, _version_before
+  FROM public.supply_requests WHERE id = _request_id;
+  SELECT count(*) INTO _updates_before FROM public.supply_request_updates WHERE supply_request_id = _request_id;
+  SELECT count(*) INTO _commitments_before FROM public.supply_request_commitments WHERE supply_request_id = _request_id;
+  BEGIN
+    PERFORM public.decide_supply_request(
+      _organization_id, _request_id, _decision,
+      CASE WHEN _decision = 'denied' THEN 'Declined from a stale screen' END,
+      'Stale internal note',
+      _expected_updated_at => _expected_version::timestamptz
+    );
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM <> _expected_message OR SQLSTATE <> _expected_state THEN
+      RAISE EXCEPTION 'Expected "%" (%), got "%" (%)', _expected_message, _expected_state, SQLERRM, SQLSTATE;
+    END IF;
+    IF _status_before IS NOT NULL AND (
+      (SELECT status FROM public.supply_requests WHERE id = _request_id) IS DISTINCT FROM _status_before
+      OR (SELECT updated_at FROM public.supply_requests WHERE id = _request_id) IS DISTINCT FROM _version_before
+      OR (SELECT count(*) FROM public.supply_request_updates WHERE supply_request_id = _request_id) <> _updates_before
+      OR (SELECT count(*) FROM public.supply_request_commitments WHERE supply_request_id = _request_id) <> _commitments_before
+    ) THEN
+      RAISE EXCEPTION 'A rejected decision wrote state for request %', _request_id;
+    END IF;
+    RETURN;
+  END;
+  RAISE EXCEPTION 'Decision unexpectedly succeeded; expected "%"', _expected_message;
+END;
+$$;
+
+SET LOCAL ROLE authenticated;
+
+-- The admin screen loads every request's current version.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000001', true);
+SELECT pg_catalog.set_config('phase6c.v911_loaded', (SELECT updated_at::text FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000911'), true);
+SELECT pg_catalog.set_config('phase6c.v912_loaded', (SELECT updated_at::text FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000912'), true);
+SELECT pg_catalog.set_config('phase6c.v913_loaded', (SELECT updated_at::text FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000913'), true);
+SELECT pg_catalog.set_config('phase6c.v914_loaded', (SELECT updated_at::text FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000914'), true);
+SELECT pg_catalog.set_config('phase6c.v915_loaded', (SELECT updated_at::text FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000915'), true);
+
+-- Microsecond versions survive the text round trip exactly.
+DO $phase6c_version_roundtrip$
+BEGIN
+  IF current_setting('phase6c.v911_loaded')::timestamptz IS DISTINCT FROM (
+    SELECT updated_at FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000911'
+  ) THEN
+    RAISE EXCEPTION 'Version text round trip lost precision';
+  END IF;
+END
+$phase6c_version_roundtrip$;
+
+-- Requester edits 911 after the admin loaded it: Item A x10, Item B removed.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000003', true);
+SELECT public.update_submitted_supply_request(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', NULL, NULL, NULL, NULL,
+  '[{"catalogVendorProductId":"6c6c0000-0000-4000-8000-000000000402","quantity":10}]'
+);
+-- Requester edits 912 after the admin loaded it.
+SELECT public.update_submitted_supply_request(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000912', NULL, NULL, NULL, NULL,
+  '[{"freeTextItem":"Decline me - changed","quantity":3}]'
+);
+
+-- Stale approval and stale decline are rejected with no lifecycle, audit, or commitment write.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000001', true);
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'approved',
+  current_setting('phase6c.v911_loaded'),
+  'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
+  '40001');
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'denied',
+  current_setting('phase6c.v911_loaded'),
+  'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
+  '40001');
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000912', 'denied',
+  current_setting('phase6c.v912_loaded'),
+  'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
+  '40001');
+-- A decision that names no version is treated as stale.
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'approved',
+  NULL,
+  'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
+  '40001');
+-- Another request's version cannot authorize this request.
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'approved',
+  current_setting('phase6c.v914_loaded'),
+  'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
+  '40001');
+
+DO $phase6c_stale_no_writes$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.supply_request_commitments
+    WHERE supply_request_id IN ('6c6c0000-0000-4000-8000-000000000911', '6c6c0000-0000-4000-8000-000000000912', '6c6c0000-0000-4000-8000-000000000913')
+  ) THEN
+    RAISE EXCEPTION 'A stale decision created a commitment';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.supply_request_updates
+    WHERE supply_request_id IN ('6c6c0000-0000-4000-8000-000000000911', '6c6c0000-0000-4000-8000-000000000912', '6c6c0000-0000-4000-8000-000000000913')
+      AND (status_to IS NOT NULL OR internal_note IS NOT NULL OR staff_visible_note IS NOT NULL)
+  ) THEN
+    RAISE EXCEPTION 'A stale decision wrote an approval or decline audit event';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.supply_requests
+    WHERE id IN ('6c6c0000-0000-4000-8000-000000000911', '6c6c0000-0000-4000-8000-000000000912', '6c6c0000-0000-4000-8000-000000000913')
+      AND status <> 'submitted'
+  ) THEN
+    RAISE EXCEPTION 'A stale decision changed request status';
+  END IF;
+END
+$phase6c_stale_no_writes$;
+
+-- Cross-organization admins cannot decide this organization's request, even with the
+-- request's real current version.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000004', true);
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'approved',
+  current_setting('phase6c.v913_loaded'), 'Forbidden: administrator access required', '42501');
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000102', '6c6c0000-0000-4000-8000-000000000913', 'approved',
+  current_setting('phase6c.v913_loaded'), 'Supply request not found', 'P0002');
+
+-- After reload, the admin decides the latest version normally.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000001', true);
+SELECT pg_catalog.set_config('phase6c.v911_reloaded', (SELECT updated_at::text FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000911'), true);
+DO $phase6c_reloaded_approval$
+DECLARE
+  _result jsonb;
+  _approvals_before bigint;
+BEGIN
+  IF current_setting('phase6c.v911_reloaded') = current_setting('phase6c.v911_loaded') THEN
+    RAISE EXCEPTION 'Requester edit did not advance the request version';
+  END IF;
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'approved',
+    'Approved after review', NULL,
+    _expected_updated_at => current_setting('phase6c.v911_reloaded')::timestamptz
+  );
+  IF _result->>'status' <> 'approved' OR (_result->>'alreadyDecided')::boolean THEN
+    RAISE EXCEPTION 'Reloaded approval failed: %', _result;
+  END IF;
+
+  -- 6A.2 snapshots exactly the latest reviewed line set, once.
+  IF (SELECT count(*) FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911') <> 1
+     OR NOT EXISTS (
+       SELECT 1 FROM public.supply_request_commitments
+       WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911'
+         AND status = 'active' AND amount = 250
+         AND total_item_count = 1 AND priced_item_count = 1 AND pricing_status = 'fully_priced'
+     )
+     OR (
+       SELECT count(*) FROM public.supply_request_commitment_items item
+       JOIN public.supply_request_commitments commitment ON commitment.id = item.commitment_id
+       WHERE commitment.supply_request_id = '6c6c0000-0000-4000-8000-000000000911'
+         AND item.quantity_snapshot = 10 AND item.line_amount_snapshot = 250
+     ) <> 1
+     OR (
+       SELECT count(*) FROM public.supply_request_commitment_items item
+       JOIN public.supply_request_commitments commitment ON commitment.id = item.commitment_id
+       WHERE commitment.supply_request_id = '6c6c0000-0000-4000-8000-000000000911'
+     ) <> 1 THEN
+    RAISE EXCEPTION 'Commitment did not snapshot the latest reviewed lines exactly once';
+  END IF;
+  IF (
+    SELECT count(*) FROM public.supply_request_updates
+    WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911'
+      AND ((status_from = 'submitted' AND status_to = 'under_review')
+        OR (status_from = 'under_review' AND status_to = 'approved'))
+  ) <> 2 THEN
+    RAISE EXCEPTION 'Approval audit transitions are incorrect';
+  END IF;
+
+  -- Retry idempotency is unchanged, with either the stale or the reloaded version.
+  SELECT count(*) INTO _approvals_before FROM public.supply_request_updates
+  WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911';
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'approved',
+    _expected_updated_at => current_setting('phase6c.v911_reloaded')::timestamptz
+  );
+  IF NOT (_result->>'alreadyDecided')::boolean THEN RAISE EXCEPTION 'Retry was not idempotent: %', _result; END IF;
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'approved',
+    _expected_updated_at => current_setting('phase6c.v911_loaded')::timestamptz
+  );
+  IF NOT (_result->>'alreadyDecided')::boolean THEN RAISE EXCEPTION 'Stale-version retry was not idempotent: %', _result; END IF;
+  IF (SELECT count(*) FROM public.supply_request_updates WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911') <> _approvals_before
+     OR (SELECT count(*) FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911') <> 1 THEN
+    RAISE EXCEPTION 'A decision retry added audit rows or commitments';
+  END IF;
+END
+$phase6c_reloaded_approval$;
+
+-- The opposite decision after approval keeps its existing terminal-state error.
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'denied',
+  current_setting('phase6c.v911_reloaded'),
+  'This request has already been decided. Refresh the inbox.', '22023');
+
+-- Decline with the matching (reloaded) version succeeds and creates no commitment.
+DO $phase6c_reloaded_decline$
+DECLARE
+  _result jsonb;
+BEGIN
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000912', 'denied',
+    'Already in storage', 'Checked shelf',
+    _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000912')
+  );
+  IF _result->>'status' <> 'denied'
+     OR (SELECT count(*) FROM public.supply_request_updates
+         WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000912' AND status_to = 'denied') <> 1
+     OR EXISTS (SELECT 1 FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000912') THEN
+    RAISE EXCEPTION 'Matching-version decline is incorrect: %', _result;
+  END IF;
+END
+$phase6c_reloaded_decline$;
+
+-- An unedited request decided with its own loaded version succeeds (approve path).
+DO $phase6c_matching_approval$
+DECLARE
+  _result jsonb;
+BEGIN
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'approved',
+    _expected_updated_at => current_setting('phase6c.v913_loaded')::timestamptz
+  );
+  IF _result->>'status' <> 'approved'
+     OR (SELECT count(*) FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000913') <> 1 THEN
+    RAISE EXCEPTION 'Matching-version approval is incorrect: %', _result;
+  END IF;
+END
+$phase6c_matching_approval$;
+
+-- Review starting (under_review) advances the version too: a decision prepared on a
+-- screen loaded before review began must be re-made from the refreshed screen.
+SELECT public.transition_supply_request(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'under_review'
+);
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'approved',
+  current_setting('phase6c.v915_loaded'),
+  'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
+  '40001');
+DO $phase6c_under_review_reloaded$
+DECLARE
+  _result jsonb;
+BEGIN
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'approved',
+    _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000915')
+  );
+  IF _result->>'status' <> 'approved'
+     OR (SELECT count(*) FROM public.supply_request_updates
+         WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000915' AND status_to = 'approved') <> 1 THEN
+    RAISE EXCEPTION 'Under-review approval after reload is incorrect: %', _result;
+  END IF;
+END
+$phase6c_under_review_reloaded$;
+
+RESET ROLE;
+
+-- ---------------------------------------------------------------------------
+-- decide_supply_request is the exclusive approve/deny path for pending requests.
+-- ---------------------------------------------------------------------------
+INSERT INTO public.supply_requests (
+  id, organization_id, requested_by, request_type, team_id, location_id, status, updated_at
+)
+VALUES ('6c6c0000-0000-4000-8000-000000000916', '6c6c0000-0000-4000-8000-000000000101',
+  '6c6c0000-0000-4000-8000-000000000003', 'reorder',
+  '6c6c0000-0000-4000-8000-000000000111', '6c6c0000-0000-4000-8000-000000000121',
+  'submitted', now() - interval '5 minutes');
+INSERT INTO public.supply_request_items (organization_id, supply_request_id, free_text_item, quantity)
+VALUES ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000916', 'Pending decision', 1);
+
+-- Runs as the caller's role; asserts a transition is rejected with the exact message
+-- and SQLSTATE and leaves the request, its audit trail, and commitments unchanged.
+CREATE FUNCTION pg_temp.phase6c_expect_transition_error(
+  _organization_id uuid,
+  _request_id uuid,
+  _status public.supply_request_status,
+  _expected_message text,
+  _expected_state text DEFAULT NULL
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  _status_before public.supply_request_status;
+  _updates_before bigint;
+  _commitment_before text;
+BEGIN
+  SELECT status INTO _status_before FROM public.supply_requests WHERE id = _request_id;
+  SELECT count(*) INTO _updates_before FROM public.supply_request_updates WHERE supply_request_id = _request_id;
+  SELECT coalesce(string_agg(status, ','), '') INTO _commitment_before
+  FROM public.supply_request_commitments WHERE supply_request_id = _request_id;
+  BEGIN
+    PERFORM public.transition_supply_request(
+      _organization_id, _request_id, _status, 'Bypass attempt', 'Bypass attempt'
+    );
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM <> _expected_message OR (_expected_state IS NOT NULL AND SQLSTATE <> _expected_state) THEN
+      RAISE EXCEPTION 'Expected "%" (%), got "%" (%)',
+        _expected_message, coalesce(_expected_state, 'any'), SQLERRM, SQLSTATE;
+    END IF;
+    IF _status_before IS NOT NULL AND (
+      (SELECT status FROM public.supply_requests WHERE id = _request_id) IS DISTINCT FROM _status_before
+      OR (SELECT count(*) FROM public.supply_request_updates WHERE supply_request_id = _request_id) <> _updates_before
+      OR (SELECT coalesce(string_agg(status, ','), '') FROM public.supply_request_commitments WHERE supply_request_id = _request_id) <> _commitment_before
+    ) THEN
+      RAISE EXCEPTION 'A rejected transition wrote state for request %', _request_id;
+    END IF;
+    RETURN;
+  END;
+  RAISE EXCEPTION 'Transition to % unexpectedly succeeded; expected "%"', _status, _expected_message;
+END;
+$$;
+
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000001', true);
+
+-- Direct decision transitions are refused for submitted and under_review requests.
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000916', 'approved',
+  'Approve or decline this request through the request decision workflow.', '42501');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000916', 'denied',
+  'Approve or decline this request through the request decision workflow.', '42501');
+-- Starting review is still an ordinary operational transition.
+SELECT public.transition_supply_request(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', 'under_review'
+);
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', 'approved',
+  'Approve or decline this request through the request decision workflow.', '42501');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', 'denied',
+  'Approve or decline this request through the request decision workflow.', '42501');
+
+-- The private transition body cannot be called by API clients.
+DO $phase6c_private_transition$
+BEGIN
+  BEGIN
+    PERFORM public.apply_supply_request_transition(
+      '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', 'approved'
+    );
+    RAISE EXCEPTION 'Private transition helper was executable by an admin client';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$phase6c_private_transition$;
+
+-- Direct table writes cannot set or change status, for admins or staff.
+DO $phase6c_direct_status_write$
+DECLARE
+  _changed integer;
+BEGIN
+  BEGIN
+    UPDATE public.supply_requests SET status = 'approved'
+    WHERE id = '6c6c0000-0000-4000-8000-000000000914';
+    RAISE EXCEPTION 'Admin direct status update succeeded';
+  EXCEPTION WHEN insufficient_privilege THEN
+    IF SQLERRM <> 'Request status can only change through the request lifecycle workflow' THEN RAISE; END IF;
+  END;
+  BEGIN
+    UPDATE public.supply_requests SET status = 'denied'
+    WHERE id = '6c6c0000-0000-4000-8000-000000000916';
+    RAISE EXCEPTION 'Admin direct denial succeeded';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- Non-lifecycle admin edits keep their existing behavior.
+  UPDATE public.supply_requests SET assigned_to = '6c6c0000-0000-4000-8000-000000000001'
+  WHERE id = '6c6c0000-0000-4000-8000-000000000916';
+  GET DIAGNOSTICS _changed = ROW_COUNT;
+  IF _changed <> 1 THEN RAISE EXCEPTION 'Admin non-lifecycle update regressed'; END IF;
+  IF (SELECT status FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000914') <> 'under_review'
+     OR (SELECT status FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000916') <> 'submitted' THEN
+    RAISE EXCEPTION 'A direct write changed request status';
+  END IF;
+END
+$phase6c_direct_status_write$;
+
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000003', true);
+DO $phase6c_staff_direct_writes$
+DECLARE
+  _changed integer;
+BEGIN
+  BEGIN
+    INSERT INTO public.supply_requests (organization_id, requested_by, request_type, team_id, location_id, status)
+    VALUES ('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000003', 'reorder',
+      '6c6c0000-0000-4000-8000-000000000111', '6c6c0000-0000-4000-8000-000000000121', 'approved');
+    RAISE EXCEPTION 'Staff inserted an already-approved request';
+  EXCEPTION WHEN insufficient_privilege THEN
+    IF SQLERRM <> 'New requests must start as submitted' THEN RAISE; END IF;
+  END;
+  UPDATE public.supply_requests SET status = 'approved'
+  WHERE id = '6c6c0000-0000-4000-8000-000000000916';
+  GET DIAGNOSTICS _changed = ROW_COUNT;
+  IF _changed <> 0 THEN RAISE EXCEPTION 'Staff updated request status directly'; END IF;
+END
+$phase6c_staff_direct_writes$;
+
+-- Staff and cross-organization callers gain no transition or decision authority.
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', 'approved',
+  'Forbidden: administrator access required');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'ordered',
+  'Forbidden: administrator access required');
+SELECT pg_temp.phase6c_expect_decision_error(
+  '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', 'approved',
+  (SELECT updated_at::text FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000914'),
+  'Forbidden: administrator access required', '42501');
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000004', true);
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'ordered',
+  'Forbidden: administrator access required');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000102', '6c6c0000-0000-4000-8000-000000000911', 'ordered',
+  'Supply request not found');
+
+-- The canonical path still decides both pending states with a matching version.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c6c0000-0000-4000-8000-000000000001', true);
+DO $phase6c_canonical_decisions$
+DECLARE
+  _result jsonb;
+BEGIN
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000914', 'approved',
+    _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000914')
+  );
+  IF _result->>'status' <> 'approved'
+     OR (SELECT count(*) FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000914' AND status = 'active') <> 1 THEN
+    RAISE EXCEPTION 'Canonical approval from under_review failed: %', _result;
+  END IF;
+  _result := public.decide_supply_request(
+    '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000916', 'denied',
+    'Not needed', NULL,
+    _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000916')
+  );
+  IF _result->>'status' <> 'denied'
+     OR EXISTS (SELECT 1 FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000916')
+     OR (SELECT count(*) FROM public.supply_request_updates
+         WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000916'
+           AND status_from = 'submitted' AND status_to = 'denied' AND staff_visible_note = 'Not needed') <> 1 THEN
+    RAISE EXCEPTION 'Canonical decline from submitted failed: %', _result;
+  END IF;
+END
+$phase6c_canonical_decisions$;
+
+-- Operational steps after a decision still run through transition_supply_request.
+SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'ordered');
+SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'received');
+SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'completed');
+-- Denial after approval (a cancellation of an approved request) keeps 6A.2 release semantics.
+SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'denied', NULL, 'No longer needed');
+DO $phase6c_operational_transitions$
+BEGIN
+  IF (SELECT status FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000911') <> 'completed'
+     OR (SELECT ordered_at IS NULL OR received_at IS NULL FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000911')
+     OR (SELECT count(*) FROM public.supply_request_updates
+         WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911'
+           AND status_to IN ('ordered', 'received', 'completed')) <> 3
+     OR (SELECT status FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911') <> 'active'
+     OR (SELECT count(*) FROM public.supply_request_commitments WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000911') <> 1 THEN
+    RAISE EXCEPTION 'approved -> ordered -> received -> completed regressed';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.supply_request_commitments
+    WHERE supply_request_id = '6c6c0000-0000-4000-8000-000000000913'
+      AND status = 'released' AND release_kind = 'denied'
+  ) OR (SELECT status FROM public.supply_requests WHERE id = '6c6c0000-0000-4000-8000-000000000913') <> 'denied' THEN
+    RAISE EXCEPTION 'Denial after approval no longer releases its commitment';
+  END IF;
+END
+$phase6c_operational_transitions$;
+
+-- Backward, skipped, and terminal transitions remain invalid.
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'received',
+  'Invalid supply request transition: approved to received');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'submitted',
+  'Invalid supply request transition: approved to submitted');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'under_review',
+  'Invalid supply request transition: approved to under_review');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'ordered',
+  'Invalid supply request transition: completed to ordered');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'denied',
+  'Invalid supply request transition: completed to denied');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000916', 'approved',
+  'Invalid supply request transition: denied to approved');
+SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000916', 'submitted',
+  'Invalid supply request transition: denied to submitted');
+
+RESET ROLE;
+
+SELECT 71 AS checks_passed, 0 AS checks_failed;
 
 ROLLBACK;

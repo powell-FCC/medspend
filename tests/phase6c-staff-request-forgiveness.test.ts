@@ -22,6 +22,7 @@ import {
   multiItemSupplyRequestInputSchema,
   updateSubmittedSupplyRequestInputSchema,
 } from "../src/supply-requests/validation.ts";
+import { adminRequestDecisionSchema } from "../src/supply-requests/admin-request-inbox.ts";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const migration = read("../supabase/migrations/20261009120000_phase6c_staff_request_forgiveness.sql");
@@ -31,6 +32,8 @@ const server = read("../src/lib/supply-requests.functions.ts");
 const composer = read("../src/routes/_authenticated/staff/request.tsx");
 const staffDetail = read("../src/routes/_authenticated/staff/requests.$id.tsx");
 const adminDetail = read("../src/components/admin/supply-requests/AdminRequestDetail.tsx");
+const adminRoute = read("../src/routes/_authenticated/supply-requests.tsx");
+const types = read("../src/integrations/supabase/types.ts");
 
 const between = (source: string, start: string, end?: string) => {
   const from = source.indexOf(start);
@@ -49,6 +52,11 @@ const submitFunction = between(
   migration,
   "CREATE OR REPLACE FUNCTION public.submit_supply_request",
   "REVOKE ALL ON FUNCTION public.submit_supply_request",
+);
+const decideFunction = between(
+  migration,
+  "CREATE FUNCTION public.decide_supply_request",
+  "REVOKE ALL ON FUNCTION public.decide_supply_request",
 );
 const lineHelper = between(
   migration,
@@ -351,12 +359,20 @@ test("requester edits are audited in the existing update history without admin n
 });
 
 test("editing has no commitment, budget, purchasing, invoice, or price-intelligence effect", () => {
-  assert.doesNotMatch(migrationCode, /create_supply_request_commitment|release_supply_request_commitment/);
+  // The private transition body is a verbatim copy of the Phase 6A.2 lifecycle body
+  // (asserted below), so it is the only place commitment and lifecycle-timestamp logic
+  // may appear. Everything Phase 6C adds is checked without it.
+  const transitionStart = migrationCode.indexOf("CREATE FUNCTION public.apply_supply_request_transition");
+  const transitionEnd = migrationCode.indexOf("REVOKE ALL ON FUNCTION public.apply_supply_request_transition");
+  assert.ok(transitionStart >= 0 && transitionEnd > transitionStart);
+  const phase6cCode = migrationCode.slice(0, transitionStart) + migrationCode.slice(transitionEnd);
+  assert.doesNotMatch(phase6cCode, /create_supply_request_commitment|release_supply_request_commitment/);
   assert.doesNotMatch(migrationCode, /INSERT INTO public\.supply_request_commitment/);
   assert.doesNotMatch(migrationCode, /\binvoice|organization_budgets|inventory_price_history|price_intelligence/i);
-  assert.doesNotMatch(migrationCode, /transition_supply_request|decide_supply_request/);
+  assert.doesNotMatch(migrationCode, /FUNCTION public\.(?:create|release)_supply_request_commitment/);
+  assert.doesNotMatch(editFunction, /transition_supply_request|decide_supply_request/);
   assert.match(editFunction, /FROM public\.supply_request_commitments commitment/);
-  assert.doesNotMatch(migrationCode, /ordered_at|received_at/);
+  assert.doesNotMatch(phase6cCode, /ordered_at|received_at/);
 });
 
 test("the server function delegates the edit to the RPC with the shared line payload", () => {
@@ -436,4 +452,195 @@ test("SQL behavioral coverage is rollback-only and covers the race and status lo
   }
   assert.match(behavior, /A stale save overwrote the reviewed request/);
   assert.match(behavior, /A requester edit created a commitment/);
+});
+
+const STALE_MESSAGE =
+  "This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.";
+
+test("admin decisions require the reviewed request version", () => {
+  const base = {
+    organizationId,
+    id: requestId,
+    decision: "approved" as const,
+    expectedUpdatedAt: "2026-10-09T17:32:03.560832+00:00",
+  };
+  assert.equal(adminRequestDecisionSchema.safeParse(base).success, true);
+  assert.equal(
+    adminRequestDecisionSchema.safeParse({ ...base, expectedUpdatedAt: "2026-10-09T17:32:03+00:00" }).success,
+    true,
+  );
+  const { expectedUpdatedAt: _omitted, ...withoutVersion } = base;
+  assert.equal(adminRequestDecisionSchema.safeParse(withoutVersion).success, false);
+  for (const expectedUpdatedAt of ["", "yesterday", null]) {
+    assert.equal(adminRequestDecisionSchema.safeParse({ ...base, expectedUpdatedAt }).success, false);
+  }
+  assert.equal(
+    adminRequestDecisionSchema.parse({ ...base, decision: "denied", staffVisibleNote: "In storage" }).expectedUpdatedAt,
+    base.expectedUpdatedAt,
+  );
+});
+
+test("the decision RPC compares the version under the row lock before any write", () => {
+  assert.match(
+    migration,
+    /DROP FUNCTION public\.decide_supply_request\(\s*uuid, uuid, public\.supply_request_status, text, text\s*\);/,
+  );
+  assert.match(decideFunction, /_internal_note text DEFAULT NULL,\s+_expected_updated_at timestamptz DEFAULT NULL\s+\)/);
+  assert.match(decideFunction, /IF NOT public\.is_org_admin\(_organization_id, auth\.uid\(\)\)/);
+  assert.match(decideFunction, /WHERE id = _request_id AND organization_id = _organization_id\s+FOR UPDATE;/);
+  assert.match(
+    decideFunction,
+    /IF _expected_updated_at IS NULL OR _request\.updated_at IS DISTINCT FROM _expected_updated_at THEN/,
+  );
+  assert.ok(decideFunction.includes(`'${STALE_MESSAGE}'`));
+  assert.match(decideFunction, /USING ERRCODE = '40001'/);
+
+  const order = [
+    "is_org_admin",
+    "FOR UPDATE",
+    "IF _request.status = _decision THEN",
+    "IF _request.status NOT IN ('submitted', 'under_review') THEN",
+    "_request.updated_at IS DISTINCT FROM _expected_updated_at",
+    "PERFORM public.apply_supply_request_transition",
+    "_result := public.apply_supply_request_transition(",
+  ].map((marker) => {
+    const position = decideFunction.indexOf(marker);
+    assert.ok(position >= 0, marker);
+    return position;
+  });
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "guard order changed");
+
+  // Commitment creation stays inside the private transition body, after the guard.
+  assert.doesNotMatch(decideFunction, /create_supply_request_commitment|INSERT INTO/);
+  assert.match(
+    migration,
+    /GRANT EXECUTE ON FUNCTION public\.decide_supply_request\(\s*uuid, uuid, public\.supply_request_status, text, text, timestamptz\s*\) TO authenticated;/,
+  );
+  assert.match(
+    migration,
+    /REVOKE ALL ON FUNCTION public\.decide_supply_request\(\s*uuid, uuid, public\.supply_request_status, text, text, timestamptz\s*\) FROM PUBLIC, anon;/,
+  );
+});
+
+test("the admin decision sends the version the screen rendered and refreshes on rejection", () => {
+  const decide = between(server, "export const decideSupplyRequestFn", "export const getSupplyRequestBudgetImpactFn");
+  assert.match(decide, /_expected_updated_at: data\.expectedUpdatedAt/);
+  assert.match(decide, /requireAdmin\(context, data\.organizationId\)/);
+  assert.match(decide, /if \(error\) throw new Error\(error\.message\)/);
+
+  const transition = between(adminRoute, "async function transition(", "async function release(");
+  assert.match(transition, /decide\(\{ data: \{ \.\.\.data, decision: status, expectedUpdatedAt: selected\.updatedAt \} \}\)/);
+  const failure = between(transition, "} catch (error) {", "} finally {");
+  assert.match(failure, /setMutationError\(error instanceof Error \? error\.message/);
+  assert.match(failure, /invalidateQueries\(\{ queryKey: \["org", organizationId, "requests"\] \}\)/);
+  // A rejected decision never retries or re-submits by itself.
+  assert.doesNotMatch(failure, /decide\(|updateStatus\(/);
+
+  const dashboard = between(server, "export const getAdminSupplyRequestDashboardFn", "export const decideSupplyRequestFn");
+  assert.match(dashboard, /updatedAt: row\.updated_at/);
+  assert.match(types, /_internal_note\?: string\n\s+_expected_updated_at\?: string\n/);
+});
+
+test("SQL behavioral coverage exercises stale approve/decline and reload", () => {
+  for (const marker of [
+    "A stale decision created a commitment",
+    "A stale decision wrote an approval or decline audit event",
+    "Requester edit did not advance the request version",
+    "Commitment did not snapshot the latest reviewed lines exactly once",
+    "Stale-version retry was not idempotent",
+    "Matching-version decline is incorrect",
+    "Under-review approval after reload is incorrect",
+    "Version text round trip lost precision",
+  ]) {
+    assert.ok(behavior.includes(marker), marker);
+  }
+  assert.ok(behavior.includes("current_setting('phase6c.v914_loaded')"), "cross-request version check");
+});
+
+const transitionWrapper = between(
+  migration,
+  "CREATE OR REPLACE FUNCTION public.transition_supply_request",
+  "REVOKE ALL ON FUNCTION public.transition_supply_request",
+);
+const privateTransition = between(
+  migration,
+  "CREATE FUNCTION public.apply_supply_request_transition",
+  "REVOKE ALL ON FUNCTION public.apply_supply_request_transition",
+);
+
+test("the private transition body is the unchanged Phase 6A.2 lifecycle body", () => {
+  const phase6a2 = read("../supabase/migrations/20260914120000_phase6a2_request_commitments.sql");
+  const original = between(
+    phase6a2,
+    "CREATE OR REPLACE FUNCTION public.transition_supply_request",
+    "REVOKE ALL ON FUNCTION public.transition_supply_request",
+  );
+  const strip = (definition: string) => definition.slice(definition.indexOf("(")).trim();
+  assert.equal(strip(privateTransition), strip(original));
+  assert.match(privateTransition, /PERFORM public\.create_supply_request_commitment\(/);
+  assert.match(privateTransition, /PERFORM public\.release_supply_request_commitment\(/);
+  assert.match(
+    migration,
+    /REVOKE ALL ON FUNCTION public\.apply_supply_request_transition\(\s*uuid, uuid, public\.supply_request_status, text, text\s*\) FROM PUBLIC, anon, authenticated;/,
+  );
+  assert.doesNotMatch(migration, /GRANT EXECUTE ON FUNCTION public\.apply_supply_request_transition/);
+});
+
+test("transition_supply_request refuses pending approve/deny and delegates everything else", () => {
+  assert.match(transitionWrapper, /SECURITY DEFINER\s+SET search_path = public/);
+  const guard = transitionWrapper.indexOf(
+    "IF _request.status IN ('submitted', 'under_review') AND _status IN ('approved', 'denied') THEN",
+  );
+  const lock = transitionWrapper.indexOf("FOR UPDATE");
+  const auth = transitionWrapper.indexOf("public.has_org_role(");
+  const delegate = transitionWrapper.indexOf("RETURN public.apply_supply_request_transition(");
+  assert.ok(auth >= 0 && auth < lock && lock < guard && guard < delegate, "auth, lock, guard, delegate order");
+  assert.match(transitionWrapper, /'Approve or decline this request through the request decision workflow\.'\s+USING ERRCODE = '42501'/);
+  assert.doesNotMatch(transitionWrapper, /UPDATE public\.supply_requests|INSERT INTO|commitment/);
+  assert.match(
+    migration,
+    /GRANT EXECUTE ON FUNCTION public\.transition_supply_request\(\s*uuid, uuid, public\.supply_request_status, text, text\s*\) TO authenticated;/,
+  );
+  // decide_supply_request no longer calls the public wrapper.
+  assert.doesNotMatch(decideFunction, /public\.transition_supply_request\(/);
+});
+
+test("direct table writes cannot set or change a request's status", () => {
+  const guard = between(migration, "CREATE FUNCTION public.guard_supply_request_lifecycle", "REVOKE ALL ON FUNCTION public.guard_supply_request_lifecycle");
+  assert.doesNotMatch(guard, /SECURITY DEFINER/);
+  assert.match(guard, /IF current_user IN \('authenticated', 'anon'\) THEN/);
+  assert.match(guard, /TG_OP = 'INSERT' AND NEW\.status IS DISTINCT FROM 'submitted'/);
+  assert.match(guard, /TG_OP = 'UPDATE' AND NEW\.status IS DISTINCT FROM OLD\.status/);
+  assert.match(
+    migration,
+    /CREATE TRIGGER supply_requests_lifecycle_guard\s+BEFORE INSERT OR UPDATE OF status ON public\.supply_requests/,
+  );
+});
+
+test("the admin UI routes pending approve/decline only to the decision RPC", () => {
+  const transition = between(adminRoute, "async function transition(", "async function release(");
+  assert.match(
+    transition,
+    /const pending = selected\.lifecycleStatus === "submitted" \|\| selected\.lifecycleStatus === "under_review";\s+if \(pending && \(status === "approved" \|\| status === "denied"\)\) \{/,
+  );
+});
+
+test("SQL behavioral coverage proves decide_supply_request is the exclusive decision path", () => {
+  for (const marker of [
+    "Private transition helper was executable by an admin client",
+    "Admin direct status update succeeded",
+    "Staff inserted an already-approved request",
+    "Canonical approval from under_review failed",
+    "Canonical decline from submitted failed",
+    "approved -> ordered -> received -> completed regressed",
+    "Denial after approval no longer releases its commitment",
+    "Invalid supply request transition: approved to received",
+    "Invalid supply request transition: denied to approved",
+  ]) {
+    assert.ok(behavior.includes(marker), marker);
+  }
+  assert.equal(
+    behavior.match(/'Approve or decline this request through the request decision workflow\.', '42501'\)/g)?.length,
+    4,
+  );
 });

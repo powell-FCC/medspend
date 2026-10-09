@@ -611,6 +611,7 @@ export const decideSupplyRequestFn = createServerFn({ method: "POST" })
       _organization_id: data.organizationId,
       _request_id: data.id,
       _decision: data.decision,
+      _expected_updated_at: data.expectedUpdatedAt,
       ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
       ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
     });
