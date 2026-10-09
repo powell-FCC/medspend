@@ -1749,6 +1749,7 @@ export type Database = {
         Row: {
           author_id: string | null
           created_at: string
+          event_kind: string | null
           id: string
           internal_note: string | null
           organization_id: string
@@ -1762,6 +1763,7 @@ export type Database = {
         Insert: {
           author_id?: string | null
           created_at?: string
+          event_kind?: string | null
           id?: string
           internal_note?: string | null
           organization_id: string
@@ -1777,6 +1779,7 @@ export type Database = {
         Update: {
           author_id?: string | null
           created_at?: string
+          event_kind?: string | null
           id?: string
           internal_note?: string | null
           organization_id?: string
@@ -2199,6 +2202,7 @@ export type Database = {
           _decision: Database["public"]["Enums"]["supply_request_status"]
           _staff_visible_note?: string
           _internal_note?: string
+          _expected_updated_at?: string
         }
         Returns: Json
       }
@@ -2210,6 +2214,7 @@ export type Database = {
           status_from: Database["public"]["Enums"]["supply_request_status"] | null
           status_to: Database["public"]["Enums"]["supply_request_status"] | null
           staff_visible_note: string | null
+          event_kind: string | null
           created_at: string
         }[]
       }
@@ -2413,6 +2418,18 @@ export type Database = {
           _team_id: string
         }
         Returns: string
+      }
+      update_submitted_supply_request: {
+        Args: {
+          _items: Json
+          _location_id: string
+          _notes: string
+          _organization_id: string
+          _request_id: string
+          _request_type: Database["public"]["Enums"]["supply_request_type"]
+          _team_id: string
+        }
+        Returns: Json
       }
       transition_supply_request: {
         Args: {

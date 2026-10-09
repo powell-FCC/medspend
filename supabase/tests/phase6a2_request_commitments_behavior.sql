@@ -90,7 +90,8 @@ $phase6a2_preview$;
 -- Approval creates exactly one immutable item-level snapshot.
 SELECT public.decide_supply_request(
   '6a2a0000-0000-4000-8000-000000000101',
-  '6a2a0000-0000-4000-8000-000000000701', 'approved'
+  '6a2a0000-0000-4000-8000-000000000701', 'approved',
+  _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6a2a0000-0000-4000-8000-000000000701')
 );
 DO $phase6a2_approval$
 BEGIN
@@ -183,8 +184,10 @@ END
 $phase6a2_release$;
 
 -- Partial and unpriced requests preserve missing-cost state.
-SELECT public.decide_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000702', 'approved');
-SELECT public.decide_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000703', 'approved');
+SELECT public.decide_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000702', 'approved',
+  _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6a2a0000-0000-4000-8000-000000000702'));
+SELECT public.decide_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000703', 'approved',
+  _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6a2a0000-0000-4000-8000-000000000703'));
 DO $phase6a2_incomplete$
 BEGIN
   IF NOT EXISTS (
@@ -202,7 +205,8 @@ END
 $phase6a2_incomplete$;
 
 -- Denied-before-approval does not commit; denied-after-approval releases.
-SELECT public.decide_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000704', 'denied', 'Not needed');
+SELECT public.decide_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000704', 'denied', 'Not needed',
+  _expected_updated_at => (SELECT updated_at FROM public.supply_requests WHERE id = '6a2a0000-0000-4000-8000-000000000704'));
 SELECT public.transition_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000702', 'denied');
 DO $phase6a2_denial$
 BEGIN

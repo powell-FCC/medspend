@@ -42,7 +42,7 @@ test("human-readable packages respect verified, source-only, and unknown evidenc
 });
 
 test("decisions accept only approve/decline and require a trimmed public decline reason", () => {
-  const base = { organizationId: id, id, decision: "approved" };
+  const base = { organizationId: id, id, decision: "approved", expectedUpdatedAt: "2026-10-09T17:32:03.560832+00:00" };
   assert.equal(adminRequestDecisionSchema.safeParse(base).success, true);
   for (const staffVisibleNote of [null, undefined, "", "  "]) {
     assert.equal(adminRequestDecisionSchema.safeParse({ ...base, decision: "denied", staffVisibleNote }).success, false);
