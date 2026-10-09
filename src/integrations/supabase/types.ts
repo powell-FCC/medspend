@@ -911,6 +911,8 @@ export type Database = {
           organization_id: string
           package_size: string | null
           product_id: string | null
+          product_match_decided_at: string | null
+          product_match_source: string | null
           quantity: number
           review_status: string
           sku: string | null
@@ -931,6 +933,8 @@ export type Database = {
           organization_id: string
           package_size?: string | null
           product_id?: string | null
+          product_match_decided_at?: string | null
+          product_match_source?: string | null
           quantity: number
           review_status?: string
           sku?: string | null
@@ -951,6 +955,8 @@ export type Database = {
           organization_id?: string
           package_size?: string | null
           product_id?: string | null
+          product_match_decided_at?: string | null
+          product_match_source?: string | null
           quantity?: number
           review_status?: string
           sku?: string | null
@@ -2354,6 +2360,10 @@ export type Database = {
       rematch_invoice_vendor_products: {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: number
+      }
+      resolve_invoice_exact_product_identities: {
+        Args: { _organization_id: string; _source_file_id: string }
+        Returns: Json
       }
       remember_invoice_vendor_signatures: {
         Args: {

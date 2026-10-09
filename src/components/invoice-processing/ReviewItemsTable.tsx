@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { ReviewItem } from '@/types/invoice-processing';
+import { AUTOMATIC_MATCH_LABEL, isAutomaticMatchSource } from '@/invoice/line-match';
 
 export function ReviewItemsTable({ items, completed, onEdit, onRemove, onMatch }: { items: ReviewItem[]; completed: boolean; onEdit: (item: ReviewItem) => void; onRemove: (item: ReviewItem) => void; onMatch: (item: ReviewItem) => void }) {
   if (!items.length)
@@ -47,6 +48,7 @@ export function ReviewItemsTable({ items, completed, onEdit, onRemove, onMatch }
                     {item.productMatch.state === 'UNRESOLVED' ? 'Needs matching' : item.productMatch.state === 'SUGGESTED' ? 'Suggested match' : 'Matched'}
                   </Badge>
                   {item.productMatch.productName && <p className="mt-1 max-w-48 truncate text-xs text-muted-foreground">{item.productMatch.productName}</p>}
+                  {item.productId && isAutomaticMatchSource(item.matchSource) && <p className="mt-0.5 text-xs text-muted-foreground">{AUTOMATIC_MATCH_LABEL}</p>}
                 </button>
               </TableCell>
               <TableCell>{item.manufacturer || '—'}</TableCell>

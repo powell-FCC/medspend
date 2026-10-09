@@ -1,3 +1,5 @@
+import type { InvoiceLineMatchSource } from '@/invoice/line-match';
+
 export type ProcessingStatus = 'uploaded' | 'processing' | 'review_required' | 'completed' | 'failed';
 export type InvoiceItemReviewStatus = 'pending_review' | 'approved' | 'rejected' | 'manual';
 
@@ -23,6 +25,7 @@ export interface ReviewItem {
     score?: number;
     reasons: string[];
   };
+  matchSource: InvoiceLineMatchSource | null;
   reviewStatus: InvoiceItemReviewStatus;
   extractionConfidence?: number;
 }

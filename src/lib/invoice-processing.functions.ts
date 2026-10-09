@@ -10,6 +10,7 @@ import { DeterministicInvoiceExtractionProvider } from '@/extraction/determinist
 import { assessExtractionQuality, validateExtraction } from '@/extraction/validation';
 import { resolveVendor } from '@/extraction/document-identity';
 import { matchInvoiceProduct } from '@/product-identity/matcher';
+import { presentInvoiceLineMatch, toInvoiceLineMatchSource } from '@/invoice/line-match';
 import type { OCRProvider } from '@/extraction/providers';
 import type { InvoiceApprovalResult, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
 
@@ -298,32 +299,18 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
       if (error) throw new Error(error.message);
     }
 
-    const [itemsResult, categoriesResult, vendorsResult, mappingsResult, productsResult, signaturesResult] = await Promise.all([
-      context.supabase
-        .from('invoice_items')
-        .select('id,invoice_id,line_number,sku,description,manufacturer,category,quantity,unit_of_measure,unit_price,total_price,package_size,product_id,vendor_product_id,review_status')
-        .eq('organization_id', data.organizationId)
-        .eq('invoice_id', invoice.id)
-        .order('line_number', { ascending: true })
-        .order('created_at', { ascending: true }),
+    const [categoriesResult, vendorsResult, signaturesResult] = await Promise.all([
       context.supabase.from('inventory_categories').select('name').eq('organization_id', data.organizationId).order('name'),
       context.supabase.from('vendors').select('id,organization_id,name,normalized_name,email,phone,website').eq('organization_id', data.organizationId).eq('active', true).order('name'),
-      context.supabase.from('vendor_products').select('id,organization_id,vendor_id,product_id,vendor_sku,manufacturer_sku,package_size,unit_of_measure').eq('organization_id', data.organizationId).eq('active', true).order('vendor_sku'),
-      context.supabase
-        .from('products')
-        .select('id,organization_id,name,description,manufacturer,internal_item_code,vendor_item_number,preferred_vendor_id,unit_of_measure,pack_size')
-        .eq('organization_id', data.organizationId)
-        .eq('active', true)
-        .order('name'),
       context.supabase.from('vendor_identity_signatures').select('id,organization_id,vendor_id,signature_type,normalized_value').eq('organization_id', data.organizationId).eq('active', true),
     ]);
-    for (const result of [itemsResult, categoriesResult, vendorsResult, mappingsResult, productsResult, signaturesResult]) {
+    for (const result of [categoriesResult, vendorsResult, signaturesResult]) {
       if (result.error) throw new Error(result.error.message);
     }
     const vendorNames = new Map((vendorsResult.data ?? []).map((vendor) => [vendor.id, vendor.name]));
-    const productNames = new Map((productsResult.data ?? []).map((product) => [product.id, product.name]));
     const vendorMatch = invoice.vendor_identity_reviewed ? { state: 'CONFIRMED' as const, vendorId: invoice.vendor_id, confidence: 100, reason: 'OWNER_CONFIRMED', evidence: extraction?.vendorEvidence ?? [] }
       : resolveVendor(data.organizationId, extraction?.vendorEvidence ?? [], (vendorsResult.data ?? []).map((vendor) => ({ id: vendor.id, organizationId: vendor.organization_id, name: vendor.name, normalizedName: vendor.normalized_name, email: vendor.email, phone: vendor.phone, website: vendor.website })), (signaturesResult.data ?? []).map((signature) => ({ id: signature.id, organizationId: signature.organization_id, vendorId: signature.vendor_id, signatureType: signature.signature_type as never, normalizedValue: signature.normalized_value })));
+    let identitiesResolved = false;
     if (!invoice.vendor_identity_reviewed && !invoice.vendor_id && vendorMatch.state === 'MATCHED' && vendorMatch.vendorId) {
       const matchedVendor = (vendorsResult.data ?? []).find((vendor) => vendor.id === vendorMatch.vendorId);
       if (matchedVendor) {
@@ -332,8 +319,37 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         invoice.vendor_id = matchedVendor.id; invoice.vendor_name = matchedVendor.name;
         const { error: rematchError } = await context.supabase.rpc('rematch_invoice_vendor_products', { _organization_id: data.organizationId, _source_file_id: data.sourceFileId });
         if (rematchError) throw new Error(rematchError.message);
+        identitiesResolved = true;
       }
     }
+    // Phase 6C.1: the database links lines whose vendor + SKU name exactly one product and
+    // leaves every other line, and every owner decision, for review. Safe to repeat.
+    if (!completed && invoice.vendor_id && !identitiesResolved) {
+      const { error: resolveError } = await context.supabase.rpc('resolve_invoice_exact_product_identities', { _organization_id: data.organizationId, _source_file_id: data.sourceFileId });
+      if (resolveError) throw new Error(resolveError.message);
+    }
+
+    // Read lines and identities after resolution, which may have adopted catalog products.
+    const [itemsResult, mappingsResult, productsResult] = await Promise.all([
+      context.supabase
+        .from('invoice_items')
+        .select('id,invoice_id,line_number,sku,description,manufacturer,category,quantity,unit_of_measure,unit_price,total_price,package_size,product_id,vendor_product_id,product_match_source,review_status')
+        .eq('organization_id', data.organizationId)
+        .eq('invoice_id', invoice.id)
+        .order('line_number', { ascending: true })
+        .order('created_at', { ascending: true }),
+      context.supabase.from('vendor_products').select('id,organization_id,vendor_id,product_id,vendor_sku,manufacturer_sku,package_size,unit_of_measure').eq('organization_id', data.organizationId).eq('active', true).order('vendor_sku'),
+      context.supabase
+        .from('products')
+        .select('id,organization_id,name,description,manufacturer,internal_item_code,vendor_item_number,preferred_vendor_id,unit_of_measure,pack_size')
+        .eq('organization_id', data.organizationId)
+        .eq('active', true)
+        .order('name'),
+    ]);
+    for (const result of [itemsResult, mappingsResult, productsResult]) {
+      if (result.error) throw new Error(result.error.message);
+    }
+    const productNames = new Map((productsResult.data ?? []).map((product) => [product.id, product.name]));
     const identityProducts = (productsResult.data ?? []).map((product) => ({
       organizationId: product.organization_id,
       id: product.id,
@@ -357,7 +373,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
     }));
     const matchedItems = (itemsResult.data ?? []).map((item) => ({
       item,
-      match: matchInvoiceProduct(
+      match: presentInvoiceLineMatch({ productId: item.product_id, matchSource: item.product_match_source }, matchInvoiceProduct(
         {
           sku: item.sku ?? '',
           description: item.description,
@@ -371,26 +387,8 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         invoice.vendor_id,
         identityProducts,
         identityMappings,
-      ),
+      )),
     }));
-    const automaticLinks = matchedItems
-      .filter(({ item, match }) => !item.product_id && match.state === 'EXACT' && match.productId)
-      .map(({ item, match }) =>
-        context.supabase
-          .from('invoice_items')
-          .update({
-            product_id: match.productId,
-            vendor_product_id: match.vendorProductId,
-          })
-          .eq('id', item.id)
-          .eq('invoice_id', invoice.id)
-          .eq('organization_id', data.organizationId),
-      );
-    if (automaticLinks.length) {
-      const results = await Promise.all(automaticLinks);
-      const failed = results.find((result) => result.error);
-      if (failed?.error) throw new Error(failed.error.message);
-    }
     return {
       header: {
         invoiceId: invoice.id,
@@ -444,11 +442,12 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         totalPrice: item.total_price ?? 0,
         packageSize: item.package_size ?? '',
         vendorProductId: item.vendor_product_id,
-        productId: item.product_id ?? (match.state === 'EXACT' ? match.productId : null),
+        productId: item.product_id,
         productMatch: {
           ...match,
           productName: match.productId ? (productNames.get(match.productId) ?? 'Unknown product') : '',
         },
+        matchSource: toInvoiceLineMatchSource(item.product_match_source),
         reviewStatus: item.review_status as InvoiceItemReviewStatus,
         extractionConfidence:
           extraction?.items[index] && Object.values(extraction.items[index]).some((field) => !field.reviewed)
@@ -570,7 +569,7 @@ export const saveInvoiceItemFn = createServerFn({ method: 'POST' })
     if (data.id) {
       const { data: existing } = await context.supabase
         .from('invoice_items')
-        .select('line_number,sku,description,manufacturer,unit_of_measure,package_size,product_id')
+        .select('line_number,sku,description,manufacturer,unit_of_measure,package_size,product_id,vendor_product_id')
         .eq('id', data.id)
         .eq('invoice_id', invoice.id)
         .eq('organization_id', data.organizationId)
@@ -582,7 +581,11 @@ export const saveInvoiceItemFn = createServerFn({ method: 'POST' })
           (existing.manufacturer ?? '') === data.manufacturer &&
           (existing.unit_of_measure ?? '') === data.unitOfMeasure &&
           (existing.package_size ?? '') === data.packageSize;
-        if (identityUnchanged) payload.product_id = existing.product_id;
+        // Keep the existing link and its mapping so provenance (manual or automatic) is unchanged.
+        if (identityUnchanged) {
+          payload.product_id = existing.product_id;
+          payload.vendor_product_id = existing.vendor_product_id;
+        }
       }
       const { error } = await context.supabase.from('invoice_items').update(payload).eq('id', data.id).eq('invoice_id', invoice.id).eq('organization_id', data.organizationId);
       if (error) throw new Error(error.message);
