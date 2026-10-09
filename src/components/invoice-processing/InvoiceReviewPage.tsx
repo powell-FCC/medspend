@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useActiveOrg } from '@/hooks/use-active-org';
+import { describeInvoiceLineReview } from '@/invoice/line-match';
 import { approveInvoiceFn, confirmInvoiceItemProductFn, createProductFromInvoiceItemFn, deleteInvoiceItemFn, getInvoiceReviewFn, saveInvoiceHeaderFn, saveInvoiceItemFn, unlinkInvoiceItemProductFn } from '@/lib/invoice-processing.functions';
 import type { InvoiceHeaderInput, InvoiceItemInput, ReviewItem } from '@/types/invoice-processing';
 import { InvoiceHeaderForm } from './InvoiceHeaderForm';
@@ -201,7 +202,7 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
         <div>
           <h2 className="text-xl font-semibold">Line items</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {data.items.length} item{data.items.length === 1 ? '' : 's'} ready for review
+            {describeInvoiceLineReview(data.items, completed)}
           </p>
         </div>
         {!completed && (
