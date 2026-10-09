@@ -18,7 +18,8 @@ suite="$root/supabase/tests/phase6c1_invoice_exact_match_auto_resolution_behavio
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# name | exact text in the migration | replacement (replaced everywhere it occurs)
+# name | exact text in the migration | replacement [| more text | replacement ...]
+# Each text is replaced everywhere it occurs.
 mutants=(
   "organization tier ignores the vendor|AND mapping.vendor_id = _vendor_id|"
   "catalog tier ignores the vendor|listing.catalog_vendor_id = _catalog_vendor_id|true"
@@ -41,19 +42,35 @@ mutants=(
   "owner unlink not recorded|product_match_source = 'manual_cleared'|product_match_source = NULL"
   "API can forge provenance|IF current_user IN ('authenticated', 'anon') THEN|IF false THEN"
   "unlinked vendor reaches the catalog|IF _catalog_vendor_id IS NULL THEN|IF false THEN"
+  "posting unresolved-line gate removed|  IF _unresolved > 0 THEN
+    RAISE EXCEPTION 'Match or create a product for every invoice line before approval (% unresolved)', _unresolved
+      USING ERRCODE = '23502';
+  END IF;|"
+  "every posting unresolved-line guard removed|  IF _unresolved > 0 THEN
+    RAISE EXCEPTION 'Match or create a product for every invoice line before approval (% unresolved)', _unresolved
+      USING ERRCODE = '23502';
+  END IF;||    IF _product_id IS NULL THEN
+      RAISE EXCEPTION 'Match or create a product for every invoice line before approval' USING ERRCODE = '23502';
+    END IF;|"
+  "posting accepts a mapping for another product|IF _mapping.product_id IS DISTINCT FROM _product_id THEN|IF false THEN"
+  "legacy Phase 2D posting kept|CREATE OR REPLACE FUNCTION public.post_reviewed_invoice(|CREATE FUNCTION pg_temp.phase6c1_unused_posting("
 )
 
 survived=0
 for entry in "${mutants[@]}"; do
-  name="${entry%%|*}"; rest="${entry#*|}"
-  needle="${rest%%|*}"; replacement="${rest#*|}"
-  python3 - "$migration" "$work/mutant.sql" "$needle" "$replacement" <<'PY'
+  name="${entry%%|*}"
+  python3 - "$migration" "$work/mutant.sql" "${entry#*|}" <<'PY'
 import sys
-source, target, needle, replacement = sys.argv[1:5]
+source, target, spec = sys.argv[1:4]
+parts = spec.split("|")
+if len(parts) % 2:
+    sys.exit(f"mutation needs text|replacement pairs: {spec!r}")
 text = open(source).read()
-if needle not in text:
-    sys.exit(f"mutation target not found: {needle!r}")
-open(target, "w").write(text.replace(needle, replacement))
+for needle, replacement in zip(parts[::2], parts[1::2]):
+    if needle not in text:
+        sys.exit(f"mutation target not found: {needle!r}")
+    text = text.replace(needle, replacement)
+open(target, "w").write(text)
 PY
   db="phase6c1_mutant_$$"
   psql -q -d postgres -c "DROP DATABASE IF EXISTS $db" -c "CREATE DATABASE $db TEMPLATE $template" >/dev/null

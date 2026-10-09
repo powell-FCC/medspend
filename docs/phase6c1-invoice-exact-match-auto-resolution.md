@@ -12,7 +12,7 @@ Three things caused this:
 
 ## Scope
 
-Product identity only. After extraction, each invoice line is linked to a product when, and only when, the invoice vendor plus the line's vendor SKU names exactly one product. Everything else stays for review. Approval and posting remain explicit owner actions and are unchanged.
+Product identity only. After extraction, each invoice line is linked to a product when, and only when, the invoice vendor plus the line's vendor SKU names exactly one product. Everything else stays for review. Approval and posting remain explicit owner actions. Posting is hardened so the database, not the application, guarantees that only reviewed identities are posted (see [Posting boundary](#posting-boundary)); its inventory accounting is unchanged.
 
 ## Trusted matching hierarchy
 
@@ -81,6 +81,36 @@ A check constraint requires automatic sources to carry `product_id`, `vendor_pro
 - Editing a line without changing its identity keeps its existing product and mapping, so its provenance is unchanged. (Previously, an identity-unchanged edit that submitted no vendor mapping cleared `vendor_product_id`.)
 - Changing the invoice vendor still clears vendor-scoped links whose mapping belongs to another vendor (Phase 3A.4.1 behavior, triggered by an explicit owner action). Those lines lose their provenance and are re-resolved under the new vendor. Manual product-only links are untouched.
 
+## Posting boundary
+
+Before 6C.1, the only guarantee that every line had a reviewed product was in the application: `approveInvoiceFn` counted lines with `product_id IS NULL`, then separately called `post_reviewed_invoice`. The two steps were not atomic, and any authenticated owner could call the RPC directly. The Phase 2D function still contained identity inference for lines without a product:
+
+1. a vendor-SKU mapping lookup;
+2. an organization inventory lookup by SKU alone, not scoped to the vendor;
+3. a product lookup by normalized description;
+4. product (and category) creation from the line.
+
+Phase 6C.1 redefines `post_reviewed_invoice` (same signature and grants, plus an `anon` revoke) so the database is the authority:
+
+- **Gate before any write.** After the owner check, the invoice lock, and the unchanged completed-invoice no-op, the function locks every line and raises `Match or create a product for every invoice line before approval (N unresolved)` (`23502`) if any line has no product. Nothing is written: no vendor, product, mapping, inventory item, adjustment, price observation, line, invoice, or job change. A second check inside the loop is a backstop.
+- **Inference removed, not just skipped.** All four branches above are deleted.
+- **A reviewed mapping is validated, not trusted to override.** A line's `vendor_product_id` must belong to the organization and the invoice vendor, be active, and map to the line's own product. Phase 2D silently replaced the line's product with the mapping's product; that now raises `A selected vendor product maps to a different product than the invoice line`.
+- **No silent remembering.** Investigated before changing (reproduced on a disposable database): when a line had a product but no `vendor_product_id`, Phase 2D found or created a mapping for the invoice vendor and line SKU and pointed it at the line's product. For a match confirmed with `rememberVendorSku = false`, posting therefore:
+  - **created** a remembered mapping for a new SKU;
+  - **repointed** an existing remembered mapping for that SKU to the newly chosen product, changing future matches.
+
+  Posting now leaves `vendor_product_id` exactly as reviewed. The review UI always sends `rememberVendorSku = true`, so in the app this affected lines linked without a mapping by other paths: direct API links, and lines linked by the pre-6C.1 browser matcher through internal item codes.
+- **Unchanged:**
+  - vendor resolution and creation from the invoice vendor name;
+  - the empty-invoice check;
+  - the package/unit refresh of a reviewed mapping;
+  - inventory lookup by product, quantity accumulation, inventory item creation;
+  - adjustments with their idempotency keys, price history rows;
+  - line approval, invoice completion, the job status, and the result shape.
+
+  The node suite asserts these statements are identical to Phase 2D.
+- **Price data:** an un-remembered line's price observation has `vendor_product_id = NULL`. Phase 6B already left-joins mappings and groups by vendor, and Phase 6A.2 falls back to product purchase history, so both keep working.
+
 ## Idempotency
 
 Re-running resolution (every review load, header save, or vendor change) skips decided lines, so it writes nothing for them. Their `updated_at` is unchanged. It creates no further products, mappings, or adoptions. A repeated SKU on one invoice reuses the first line's adoption through tier 1.
@@ -101,7 +131,7 @@ Re-running resolution (every review load, header save, or vendor change) skips d
 
 ## Database changes
 
-Migration `supabase/migrations/20261010120000_phase6c1_invoice_exact_match_auto_resolution.sql` (local only, not applied). It is one transaction with a preflight that requires the 3A.4/3A.4.1/5A.4A/5A.5 objects and refuses to run twice. It is safe to paste into the Supabase SQL Editor.
+Migration `supabase/migrations/20261010120000_phase6c1_invoice_exact_match_auto_resolution.sql` (local only, not applied). It is one transaction with a preflight that requires the 2D/3A.4/3A.4.1/5A.4A/5A.5 objects and refuses to run twice. It is safe to paste into the Supabase SQL Editor.
 
 | Object | Change |
 | --- | --- |
@@ -112,8 +142,9 @@ Migration `supabase/migrations/20261010120000_phase6c1_invoice_exact_match_auto_
 | `resolve_invoice_exact_product_identities` | new owner RPC |
 | `rematch_invoice_vendor_products` | same signature; clears provenance on cleared links and delegates matching to the resolver |
 | `confirm_invoice_item_product`, `unlink_invoice_item_product`, `create_product_from_invoice_item` | same bodies plus provenance |
+| `post_reviewed_invoice` | same signature; unresolved-line gate before any write, identity inference and implicit mapping creation removed, reviewed mapping must match the line's product; `anon` revoked |
 
-`post_reviewed_invoice`, `adopt_catalog_vendor_product`, catalog tables, inventory, requests, commitments, budgets, and price intelligence are not modified.
+`adopt_catalog_vendor_product`, catalog tables, inventory schema, requests, commitments, budgets, and price intelligence are not modified.
 
 ## Application changes
 
@@ -124,7 +155,7 @@ Migration `supabase/migrations/20261010120000_phase6c1_invoice_exact_match_auto_
 
 ## Tests
 
-- `supabase/tests/phase6c1_invoice_exact_match_auto_resolution_behavior.sql`: rollback-only, 18 checks with a realistic Henry Schein fixture (invoice `3980143`/`1127149`/`1507581`/`1200685` vs catalog `398-0143`/`112-7149`/`150-7581`/`120-0685`). It covers:
+- `supabase/tests/phase6c1_invoice_exact_match_auto_resolution_behavior.sql`: rollback-only, 24 checks with a realistic Henry Schein fixture (invoice `3980143`/`1127149`/`1507581`/`1200685` vs catalog `398-0143`/`112-7149`/`150-7581`/`120-0685`). It covers:
   - the trusted organization mapping, the catalog-adopted mapping via key, and strict and key catalog adoption;
   - exactly one adoption per listing, with canonical SKU and raw package text untouched;
   - nine exception lines left for review: description-only, manufacturer plus description, package/unit, catalog key collision, pending listing, discontinued listing, organization key collision, deactivated mapping, separator variant;
@@ -140,9 +171,17 @@ Migration `supabase/migrations/20261010120000_phase6c1_invoice_exact_match_auto_
   - complete provenance;
   - organization isolation, plus admin, staff, anon, and private-helper denial;
   - posting still a separate owner action that behaves as before;
-  - completed invoices skipped.
-- `supabase/tests/phase6c1_mutation_check.sh <template_db>`: applies 12 mutants of the migration (dropping vendor scoping at either tier, accepting ambiguity at either tier, allowing the key for SKUs with separators, adopting unverified listings, reusing deactivated mappings, ignoring separator-variant conflicts, revisiting manual decisions, not recording unlinks, letting the API forge provenance, letting unlinked vendors reach the catalog) and requires the behavior suite to fail for each. All 12 are killed.
-- `tests/phase6c1-invoice-exact-match-auto-resolution.test.ts`: presentation helpers (including the legacy matcher's cross-vendor `EXACT` becoming a suggestion), migration structure and grants, server and UI wiring.
+  - completed invoices skipped by the resolver;
+  - a direct owner `post_reviewed_invoice` call on an invoice with unresolved lines fails at the gate. Those lines would each have been resolved by a legacy fallback: SKU mapping, other-vendor inventory SKU, name equality, product creation. Nothing changes (products, vendors, mappings, inventory, adjustments, price history, lines, invoice, job);
+  - posting a completed invoice again is a no-op;
+  - the ordinary reviewed path posts manual (remembered and not), automatic, name-colliding, and SKU-colliding lines with exactly their reviewed product and mapping. One adjustment and one price observation per line. The remembered `1127149` mapping is not repointed, un-remembered SKUs gain no mapping, and other-vendor inventory is untouched;
+  - a reviewed mapping for another product, another vendor, or a deactivated mapping is refused with no side effects.
+- `supabase/tests/phase6c1_mutation_check.sh <template_db>`: applies 16 mutants of the migration and requires the behavior suite to fail for each:
+  - resolution: dropping vendor scoping at either tier, accepting ambiguity at either tier, allowing the key for SKUs with separators, adopting unverified listings, reusing deactivated mappings, ignoring separator-variant conflicts, revisiting manual decisions, not recording unlinks, letting the API forge provenance, letting unlinked vendors reach the catalog;
+  - posting: removing the unresolved-line gate, removing every unresolved-line guard, accepting a mapping for another product, keeping the legacy Phase 2D posting function.
+
+  All 16 are killed. Separately, with the legacy function in place and Check 19 removed from the suite, Check 21 fails on the repointed `1127149` mapping.
+- `tests/phase6c1-invoice-exact-match-auto-resolution.test.ts`: presentation helpers (including the legacy matcher's cross-vendor `EXACT` becoming a suggestion), migration structure and grants, server and UI wiring, the posting gate's position before every write, removal of each Phase 2D inference branch, and byte-identical inventory accounting.
 
 ## Deliberate non-goals
 
@@ -151,12 +190,12 @@ Migration `supabase/migrations/20261010120000_phase6c1_invoice_exact_match_auto_
 - package equivalence, unit-price normalization, cheapest-vendor or savings claims;
 - purchasing automation, PO generation, request-to-invoice matching, receiving, inventory stocking;
 - automatic invoice approval or posting;
-- ToteScan replacement; broad catalog redesign; changes to `post_reviewed_invoice`, whose legacy fallbacks (description-name and vendor-agnostic inventory-SKU lookup) remain unreachable from the app because approval requires every line to be linked first.
+- ToteScan replacement; broad catalog redesign; changes to posting accounting (quantities, adjustments, price history, vendor creation from the invoice name).
 
 ## Deployment (not performed)
 
 1. Apply the migration in a disposable/staging database and run the 6C.1 behavior suite and mutation check, plus the existing 5A.5 adoption, 5A.6 stocking, 6A.2, 6B, and 6C suites.
 2. Apply the migration in production (SQL Editor, single transaction).
 3. Regenerate Supabase types and compare with the hand edits.
-4. Deploy the application. Order matters only loosely: the old UI ignores the new columns, but until the new UI ships its browser-side matcher still writes links (they are now recorded as `manual` by the trigger). Ship the application promptly after the migration.
+4. Deploy the application. The hardened posting function raises the same message the application already shows for unresolved lines, so the old and new app both work against it. Order matters only loosely: the old UI ignores the new columns, but until the new UI ships its browser-side matcher still writes links (they are now recorded as `manual` by the trigger). Ship the application promptly after the migration.
 5. To let Henry Schein lines resolve from the catalog, make sure the organization's Henry Schein vendor is linked to the catalog vendor (adopting any one Henry Schein product in Catalog admin does this).

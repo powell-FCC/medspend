@@ -672,6 +672,238 @@ END
 $phase6c1_check_18$;
 RESET ROLE;
 
-SELECT 18 AS checks_passed, 0 AS checks_failed;
+-- Posting boundary. post_reviewed_invoice must refuse unresolved lines on its own and
+-- must post exactly the identity the owner reviewed, never one inferred from SKU,
+-- inventory, or product names, and never remember a vendor SKU the review left unset.
+CREATE FUNCTION pg_temp.phase6c1_posting_effects()
+RETURNS jsonb
+LANGUAGE sql
+AS $$
+  SELECT jsonb_build_object(
+    'products', (SELECT jsonb_agg(to_jsonb(p) - 'updated_at' ORDER BY p.id) FROM public.products p WHERE p.organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'vendors', (SELECT count(*) FROM public.vendors WHERE organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'vendorProducts', (SELECT jsonb_agg(to_jsonb(vp) - 'updated_at' ORDER BY vp.id) FROM public.vendor_products vp WHERE vp.organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'inventory', (SELECT jsonb_agg(to_jsonb(i) - 'updated_at' ORDER BY i.id) FROM public.inventory_items i WHERE i.organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'adjustments', (SELECT count(*) FROM public.inventory_adjustments WHERE organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'priceHistory', (SELECT count(*) FROM public.inventory_price_history WHERE organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'invoices', (SELECT jsonb_agg(jsonb_build_object('id', id, 'status', processing_status, 'posted', posted_at, 'vendor', vendor_id) ORDER BY id) FROM public.invoices WHERE organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'lines', (SELECT jsonb_agg(jsonb_build_object('id', id, 'product', product_id, 'mapping', vendor_product_id, 'status', review_status) ORDER BY id) FROM public.invoice_items WHERE organization_id = '6c100000-0000-4000-8000-000000000101'),
+    'jobs', (SELECT jsonb_agg(jsonb_build_object('id', id, 'status', status) ORDER BY id) FROM public.invoice_processing_jobs WHERE organization_id = '6c100000-0000-4000-8000-000000000101')
+  )
+$$;
+
+-- An inventory record whose SKU belongs to another vendor's item.
+INSERT INTO public.inventory_items (id, organization_id, product_id, sku, name, unit, quantity, vendor_name)
+VALUES ('6c100000-0000-4000-8000-000000000951', '6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000403', 'XV-INV-1', 'Medline glove stock', 'box', 7, 'Medline');
+
+INSERT INTO public.vendor_invoices (id, organization_id, uploaded_by, storage_path, original_filename, file_size, mime_type)
+SELECT ('6c100000-0000-4000-8000-0000000006' || n)::uuid, '6c100000-0000-4000-8000-000000000101',
+  '6c100000-0000-4000-8000-000000000001', '6c100000-0000-4000-8000-000000000101/phase6c1-post-' || n || '.pdf',
+  'phase6c1-post-' || n || '.pdf', 1024, 'application/pdf'
+FROM generate_series(11, 15) n;
+INSERT INTO public.invoices (id, organization_id, source_file_id, vendor_id, vendor_name, invoice_number, processing_status)
+SELECT ('6c100000-0000-4000-8000-0000000007' || n)::uuid, '6c100000-0000-4000-8000-000000000101',
+  ('6c100000-0000-4000-8000-0000000006' || n)::uuid, '6c100000-0000-4000-8000-000000000301', 'Henry Schein',
+  'HS-6C1-POST-' || n, 'review_required'
+FROM generate_series(11, 15) n;
+
+INSERT INTO public.invoice_items (id, invoice_id, organization_id, line_number, sku, description, quantity, unit_of_measure, unit_price, total_price)
+VALUES
+  -- Invoice 711: every legacy fallback would have produced an identity for these lines.
+  ('6c100000-0000-4000-8000-000000000871', '6c100000-0000-4000-8000-000000000711', '6c100000-0000-4000-8000-000000000101', 1, '1127149', 'Vendor SKU has a remembered mapping', 1, 'EA', 1, 1),
+  ('6c100000-0000-4000-8000-000000000872', '6c100000-0000-4000-8000-000000000711', '6c100000-0000-4000-8000-000000000101', 2, 'XV-INV-1', 'Inventory SKU from another vendor', 1, 'EA', 1, 1),
+  ('6c100000-0000-4000-8000-000000000873', '6c100000-0000-4000-8000-000000000711', '6c100000-0000-4000-8000-000000000101', 3, NULL, 'Canonical Tape', 1, 'EA', 1, 1),
+  ('6c100000-0000-4000-8000-000000000874', '6c100000-0000-4000-8000-000000000711', '6c100000-0000-4000-8000-000000000101', 4, 'BRAND-NEW', 'Brand new product text', 1, 'EA', 1, 1),
+  ('6c100000-0000-4000-8000-000000000875', '6c100000-0000-4000-8000-000000000711', '6c100000-0000-4000-8000-000000000101', 5, '3980143', 'Resolved line on an unresolved invoice', 1, 'BX', 1, 1),
+  -- Invoice 712: fully reviewed, through each kind of decision.
+  ('6c100000-0000-4000-8000-000000000881', '6c100000-0000-4000-8000-000000000712', '6c100000-0000-4000-8000-000000000101', 1, '1127149', 'Local Sharps Container', 2, 'EA', 3, 6),
+  ('6c100000-0000-4000-8000-000000000882', '6c100000-0000-4000-8000-000000000712', '6c100000-0000-4000-8000-000000000101', 2, 'NEVER-REMEMBER', 'Owner chose not to remember', 1, 'EA', 4, 4),
+  ('6c100000-0000-4000-8000-000000000883', '6c100000-0000-4000-8000-000000000712', '6c100000-0000-4000-8000-000000000101', 3, 'XV-INV-1', 'Owner matched; SKU collides with other-vendor inventory', 3, 'EA', 5, 15),
+  ('6c100000-0000-4000-8000-000000000884', '6c100000-0000-4000-8000-000000000712', '6c100000-0000-4000-8000-000000000101', 4, '3980143', 'Ammex Black PF Nitrile Gl Medium', 2, 'BX', 9.5, 19),
+  ('6c100000-0000-4000-8000-000000000885', '6c100000-0000-4000-8000-000000000712', '6c100000-0000-4000-8000-000000000101', 5, 'REMEMBER-ME', 'Owner chose to remember', 1, 'EA', 2, 2),
+  -- Invoices 713-715: one invalid reviewed mapping each.
+  ('6c100000-0000-4000-8000-000000000891', '6c100000-0000-4000-8000-000000000713', '6c100000-0000-4000-8000-000000000101', 1, 'AB-12', 'Mapping names another product', 1, 'EA', 1, 1),
+  ('6c100000-0000-4000-8000-000000000892', '6c100000-0000-4000-8000-000000000714', '6c100000-0000-4000-8000-000000000101', 1, 'ML-4410', 'Mapping belongs to another vendor', 1, 'EA', 1, 1),
+  ('6c100000-0000-4000-8000-000000000893', '6c100000-0000-4000-8000-000000000715', '6c100000-0000-4000-8000-000000000101', 1, 'FORGOT-1', 'Mapping was deactivated', 1, 'EA', 1, 1);
+
+-- Raw (migration-role) links standing in for stale or tampered reviewed state.
+UPDATE public.invoice_items SET product_id = '6c100000-0000-4000-8000-000000000401', vendor_product_id = '6c100000-0000-4000-8000-000000000502'
+WHERE id = '6c100000-0000-4000-8000-000000000891';
+UPDATE public.invoice_items SET product_id = vp.product_id, vendor_product_id = vp.id
+FROM public.vendor_products vp
+WHERE invoice_items.id = '6c100000-0000-4000-8000-000000000892'
+  AND vp.organization_id = '6c100000-0000-4000-8000-000000000101'
+  AND vp.catalog_vendor_product_id = '6c100000-0000-4000-8000-000000000225';
+UPDATE public.invoice_items SET product_id = '6c100000-0000-4000-8000-000000000407', vendor_product_id = '6c100000-0000-4000-8000-000000000504'
+WHERE id = '6c100000-0000-4000-8000-000000000893';
+
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c100000-0000-4000-8000-000000000001', true);
+SELECT public.resolve_invoice_exact_product_identities('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000611');
+SELECT public.resolve_invoice_exact_product_identities('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000612');
+-- The owner removed line 871's automatic match; legacy posting would re-find mapping 501 by SKU.
+SELECT public.unlink_invoice_item_product('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000611',
+  '6c100000-0000-4000-8000-000000000871', false);
+-- Owner decisions on invoice 712: a name-equal, SKU-mapped line matched elsewhere without
+-- remembering; an unmapped SKU not remembered; an other-vendor inventory SKU matched to a
+-- different product; a remembered manual match. Line 884 resolves automatically.
+SELECT public.confirm_invoice_item_product('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000612',
+  '6c100000-0000-4000-8000-000000000881', '6c100000-0000-4000-8000-000000000402', false);
+SELECT public.confirm_invoice_item_product('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000612',
+  '6c100000-0000-4000-8000-000000000882', '6c100000-0000-4000-8000-000000000406', false);
+SELECT public.confirm_invoice_item_product('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000612',
+  '6c100000-0000-4000-8000-000000000883', '6c100000-0000-4000-8000-000000000405', false);
+SELECT public.confirm_invoice_item_product('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000612',
+  '6c100000-0000-4000-8000-000000000885', '6c100000-0000-4000-8000-000000000404', true);
+RESET ROLE;
+
+-- Line 881 was resolved to mapping 501 before the owner re-matched it without remembering.
+DO $phase6c1_posting_fixture_check$
+BEGIN
+  IF (pg_temp.phase6c1_line('6c100000-0000-4000-8000-000000000875')).product_match_source IS DISTINCT FROM 'org_vendor_sku_match_key'
+     OR (pg_temp.phase6c1_line('6c100000-0000-4000-8000-000000000871')).product_id IS NOT NULL
+     OR (pg_temp.phase6c1_line('6c100000-0000-4000-8000-000000000881')).vendor_product_id IS NOT NULL
+     OR (pg_temp.phase6c1_line('6c100000-0000-4000-8000-000000000882')).vendor_product_id IS NOT NULL
+     OR (pg_temp.phase6c1_line('6c100000-0000-4000-8000-000000000884')).product_match_source IS DISTINCT FROM 'org_vendor_sku_match_key'
+     OR (pg_temp.phase6c1_line('6c100000-0000-4000-8000-000000000885')).vendor_product_id IS NULL THEN
+    RAISE EXCEPTION 'Posting fixture is not in the expected reviewed state';
+  END IF;
+END
+$phase6c1_posting_fixture_check$;
+
+-- Check 19: a direct owner call cannot post an invoice with unresolved lines, and the
+-- refusal comes from the up-front gate before any write.
+INSERT INTO phase6c1_snapshots VALUES ('before_unresolved_post', pg_temp.phase6c1_posting_effects());
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c100000-0000-4000-8000-000000000001', true);
+SELECT pg_temp.phase6c1_expect_error(
+  $$SELECT public.post_reviewed_invoice('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000611')$$,
+  'Match or create a product for every invoice line before approval (4 unresolved)');
+RESET ROLE;
+DO $phase6c1_check_19$
+BEGIN
+  IF pg_temp.phase6c1_posting_effects() IS DISTINCT FROM (SELECT value FROM phase6c1_snapshots WHERE name = 'before_unresolved_post') THEN
+    RAISE EXCEPTION 'Check 19 failed: refused posting left side effects';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.products WHERE organization_id = '6c100000-0000-4000-8000-000000000101' AND name = 'Brand new product text')
+     OR EXISTS (SELECT 1 FROM public.vendor_products WHERE organization_id = '6c100000-0000-4000-8000-000000000101' AND vendor_sku IN ('BRAND-NEW', 'XV-INV-1'))
+     OR EXISTS (SELECT 1 FROM public.inventory_adjustments WHERE source_invoice_id = '6c100000-0000-4000-8000-000000000711')
+     OR EXISTS (SELECT 1 FROM public.inventory_price_history WHERE invoice_id = '6c100000-0000-4000-8000-000000000711')
+     OR (SELECT processing_status FROM public.invoices WHERE id = '6c100000-0000-4000-8000-000000000711') <> 'review_required'
+     OR (SELECT posted_at FROM public.invoices WHERE id = '6c100000-0000-4000-8000-000000000711') IS NOT NULL
+     OR (SELECT quantity FROM public.inventory_items WHERE id = '6c100000-0000-4000-8000-000000000951') <> 7 THEN
+    RAISE EXCEPTION 'Check 19 failed: unresolved posting created identity, inventory, or completion';
+  END IF;
+END
+$phase6c1_check_19$;
+
+-- Check 20: posting a completed invoice again stays an idempotent no-op.
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c100000-0000-4000-8000-000000000001', true);
+DO $phase6c1_check_20$
+DECLARE _before jsonb := pg_temp.phase6c1_posting_effects(); _result jsonb;
+BEGIN
+  _result := public.post_reviewed_invoice('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000606');
+  IF _result->>'alreadyCompleted' <> 'true' OR pg_temp.phase6c1_posting_effects() IS DISTINCT FROM _before THEN
+    RAISE EXCEPTION 'Check 20 failed: completed invoice posted again: %', _result;
+  END IF;
+END
+$phase6c1_check_20$;
+
+-- Check 21: the ordinary approved path posts exactly the reviewed identities.
+DO $phase6c1_check_21_app_gate$
+BEGIN
+  -- The application refuses approval while any line is unlinked; this invoice passes.
+  IF EXISTS (SELECT 1 FROM public.invoice_items WHERE invoice_id = '6c100000-0000-4000-8000-000000000712' AND product_id IS NULL) THEN
+    RAISE EXCEPTION 'Check 21 failed: reviewed invoice still has unresolved lines';
+  END IF;
+END
+$phase6c1_check_21_app_gate$;
+INSERT INTO phase6c1_snapshots VALUES ('mapping_501_before_post', (SELECT to_jsonb(vp) - 'updated_at' FROM public.vendor_products vp WHERE id = '6c100000-0000-4000-8000-000000000501'));
+INSERT INTO phase6c1_snapshots VALUES ('post_712', public.post_reviewed_invoice('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000612'));
+RESET ROLE;
+DO $phase6c1_check_21$
+DECLARE
+  _line public.invoice_items;
+  _expected record;
+BEGIN
+  IF (SELECT processing_status FROM public.invoices WHERE id = '6c100000-0000-4000-8000-000000000712') <> 'completed'
+     OR (SELECT value->>'alreadyCompleted' FROM phase6c1_snapshots WHERE name = 'post_712') <> 'false' THEN
+    RAISE EXCEPTION 'Check 21 failed: reviewed invoice did not post';
+  END IF;
+  -- Every line posts its reviewed product and mapping, approved, with one adjustment and
+  -- one price observation carrying the same identity.
+  FOR _line IN SELECT * FROM public.invoice_items WHERE invoice_id = '6c100000-0000-4000-8000-000000000712' LOOP
+    IF _line.review_status <> 'approved'
+       OR (SELECT count(*) FROM public.inventory_price_history h
+           WHERE h.invoice_item_id = _line.id AND h.product_id = _line.product_id
+             AND h.vendor_product_id IS NOT DISTINCT FROM _line.vendor_product_id) <> 1
+       OR (SELECT count(*) FROM public.inventory_adjustments a JOIN public.inventory_items i ON i.id = a.inventory_item_id
+           WHERE a.source_invoice_item_id = _line.id AND i.product_id = _line.product_id AND a.adjustment_amount = _line.quantity) <> 1 THEN
+      RAISE EXCEPTION 'Check 21 failed: line % did not post its reviewed identity', to_jsonb(_line);
+    END IF;
+  END LOOP;
+  -- Reviewed identities, not legacy inference: 881 keeps the owner's product even though its
+  -- SKU maps to, and its description names, product 401; 883 ignores the other-vendor
+  -- inventory SKU; lines without a remembered mapping stay without one.
+  FOR _expected IN SELECT * FROM (VALUES
+    ('6c100000-0000-4000-8000-000000000881'::uuid, '6c100000-0000-4000-8000-000000000402'::uuid, false),
+    ('6c100000-0000-4000-8000-000000000882'::uuid, '6c100000-0000-4000-8000-000000000406'::uuid, false),
+    ('6c100000-0000-4000-8000-000000000883'::uuid, '6c100000-0000-4000-8000-000000000405'::uuid, false),
+    ('6c100000-0000-4000-8000-000000000885'::uuid, '6c100000-0000-4000-8000-000000000404'::uuid, true)
+  ) expected(line_id, product_id, mapped) LOOP
+    _line := pg_temp.phase6c1_line(_expected.line_id);
+    IF _line.product_id IS DISTINCT FROM _expected.product_id OR (_line.vendor_product_id IS NOT NULL) <> _expected.mapped THEN
+      RAISE EXCEPTION 'Check 21 failed: line % posted as %', _expected.line_id, to_jsonb(_line);
+    END IF;
+  END LOOP;
+  IF (SELECT to_jsonb(vp) - 'updated_at' FROM public.vendor_products vp WHERE id = '6c100000-0000-4000-8000-000000000501')
+       IS DISTINCT FROM (SELECT value FROM phase6c1_snapshots WHERE name = 'mapping_501_before_post') THEN
+    RAISE EXCEPTION 'Check 21 failed: posting repointed or changed the remembered 1127149 mapping';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.vendor_products WHERE organization_id = '6c100000-0000-4000-8000-000000000101' AND vendor_sku IN ('NEVER-REMEMBER', 'XV-INV-1')) THEN
+    RAISE EXCEPTION 'Check 21 failed: posting remembered a vendor SKU the owner chose not to remember';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.vendor_products WHERE organization_id = '6c100000-0000-4000-8000-000000000101' AND vendor_sku = 'REMEMBER-ME' AND product_id = '6c100000-0000-4000-8000-000000000404' AND active) THEN
+    RAISE EXCEPTION 'Check 21 failed: remembered manual mapping missing';
+  END IF;
+  IF (SELECT quantity FROM public.inventory_items WHERE id = '6c100000-0000-4000-8000-000000000951') <> 7
+     OR (SELECT quantity FROM public.inventory_items WHERE organization_id = '6c100000-0000-4000-8000-000000000101' AND product_id = '6c100000-0000-4000-8000-000000000405') <> 3
+     OR (SELECT quantity FROM public.inventory_items WHERE organization_id = '6c100000-0000-4000-8000-000000000101' AND product_id = '6c100000-0000-4000-8000-000000000402') <> 2
+     OR EXISTS (SELECT 1 FROM public.inventory_items WHERE organization_id = '6c100000-0000-4000-8000-000000000101' AND product_id = '6c100000-0000-4000-8000-000000000401') THEN
+    RAISE EXCEPTION 'Check 21 failed: inventory was posted to an inferred product';
+  END IF;
+  -- The automatic line adds to the stock created when invoice 706 was posted.
+  IF (SELECT i.quantity FROM public.inventory_items i JOIN public.invoice_items l ON l.product_id = i.product_id
+      WHERE l.id = '6c100000-0000-4000-8000-000000000884') <> 7 THEN
+    RAISE EXCEPTION 'Check 21 failed: automatic line did not accumulate onto existing stock';
+  END IF;
+END
+$phase6c1_check_21$;
+
+-- Checks 22-24: a reviewed mapping must name the line's product, belong to the invoice
+-- vendor, and be active; otherwise posting is refused with no side effects.
+INSERT INTO phase6c1_snapshots VALUES ('before_bad_mappings', pg_temp.phase6c1_posting_effects());
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6c100000-0000-4000-8000-000000000001', true);
+SELECT pg_temp.phase6c1_expect_error(
+  $$SELECT public.post_reviewed_invoice('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000613')$$,
+  'A selected vendor product maps to a different product than the invoice line');
+SELECT pg_temp.phase6c1_expect_error(
+  $$SELECT public.post_reviewed_invoice('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000614')$$,
+  'A selected vendor product is unavailable');
+SELECT pg_temp.phase6c1_expect_error(
+  $$SELECT public.post_reviewed_invoice('6c100000-0000-4000-8000-000000000101', '6c100000-0000-4000-8000-000000000615')$$,
+  'A selected vendor product is unavailable');
+RESET ROLE;
+DO $phase6c1_check_22_24$
+BEGIN
+  IF pg_temp.phase6c1_posting_effects() IS DISTINCT FROM (SELECT value FROM phase6c1_snapshots WHERE name = 'before_bad_mappings') THEN
+    RAISE EXCEPTION 'Checks 22-24 failed: a refused posting left side effects';
+  END IF;
+END
+$phase6c1_check_22_24$;
+
+SELECT 24 AS checks_passed, 0 AS checks_failed;
 
 ROLLBACK;

@@ -64,13 +64,34 @@ const unlink = between(
 const create = between(
   migrationCode,
   "CREATE OR REPLACE FUNCTION public.create_product_from_invoice_item",
+  "CREATE OR REPLACE FUNCTION public.post_reviewed_invoice",
+);
+const posting = between(
+  migrationCode,
+  "CREATE OR REPLACE FUNCTION public.post_reviewed_invoice",
   "REVOKE ALL ON FUNCTION public.rematch_invoice_vendor_products",
+);
+const phase2dPosting = between(
+  read("../supabase/migrations/20260809120000_phase2d_manual_invoice_review.sql"),
+  "CREATE OR REPLACE FUNCTION public.post_reviewed_invoice",
+  "REVOKE ALL ON FUNCTION public.post_reviewed_invoice",
 );
 const guard = between(
   migrationCode,
   "CREATE FUNCTION public.guard_invoice_item_match_provenance",
   "CREATE TRIGGER invoice_items_match_provenance_guard",
 );
+// Everything the migration defines except the hardened posting function.
+const resolutionFunctions = [
+  finder,
+  applier,
+  resolver,
+  rematch,
+  confirm,
+  unlink,
+  create,
+  guard,
+].join("\n");
 
 const org = "11111111-1111-4111-8111-111111111111";
 const henrySchein = "22222222-2222-4222-8222-222222222222";
@@ -316,19 +337,95 @@ test("private helpers are not API callable and the RPC is owner-gated", () => {
   assert.doesNotMatch(migrationCode, /service_role/);
 });
 
-test("no stocking, posting, request, commitment, purchasing, or price-intelligence change", () => {
+test("resolution never stocks, posts, or touches requests, commitments, purchasing, or prices", () => {
   assert.doesNotMatch(
-    migrationCode,
+    resolutionFunctions,
     /inventory_items|inventory_adjustments|inventory_price_history/,
   );
   assert.doesNotMatch(
-    migrationCode,
+    resolutionFunctions,
     /post_reviewed_invoice|supply_request|commitment|purchase_order|price_intelligence/i,
   );
   assert.doesNotMatch(
-    migrationCode,
+    resolutionFunctions,
     /processing_status = 'completed',|posted_at = now\(\)|review_status = 'approved'/,
   );
+  assert.doesNotMatch(
+    migrationCode,
+    /supply_request|commitment|purchase_order|price_intelligence/i,
+  );
+});
+
+test("posting refuses unresolved lines before any write", () => {
+  const gate = posting.indexOf("IF _unresolved > 0 THEN");
+  const completedNoOp = posting.indexOf("'alreadyCompleted', true");
+  const firstWrite = Math.min(
+    ...["INSERT INTO", "UPDATE public."]
+      .map((write) => posting.indexOf(write))
+      .filter((at) => at >= 0),
+  );
+  assert.ok(completedNoOp > 0 && gate > completedNoOp, "completed no-op stays first");
+  assert.ok(gate > 0 && gate < firstWrite, "gate precedes every write");
+  assert.match(
+    posting,
+    /product_id IS NULL;\s+IF _unresolved > 0 THEN\s+RAISE EXCEPTION 'Match or create a product for every invoice line before approval/,
+  );
+  assert.match(
+    posting,
+    /AND organization_id = _organization_id\s+FOR UPDATE;\s+SELECT count\(\*\) INTO _unresolved/,
+  );
+  assert.match(posting, /has_org_role\(_organization_id, auth\.uid\(\), ARRAY\['owner'\]/);
+  assert.match(
+    migrationCode,
+    /REVOKE ALL ON FUNCTION public\.post_reviewed_invoice\(uuid, uuid\) FROM PUBLIC, anon;/,
+  );
+  assert.match(
+    migrationCode,
+    /GRANT EXECUTE ON FUNCTION public\.post_reviewed_invoice\(uuid, uuid\) TO authenticated;/,
+  );
+});
+
+test("posting never infers, creates, or remembers product identity", () => {
+  // Legacy Phase 2D inference, present there and absent here.
+  for (const legacy of [
+    /normalized_name = public\.normalize_catalog_text\(_line\.description\)/,
+    /lower\(sku\) = lower\(btrim\(_line\.sku\)\)/,
+    /lower\(vendor_sku\) = lower\(btrim\(_line\.sku\)\)/,
+    /INSERT INTO public\.products/,
+    /INSERT INTO public\.vendor_products/,
+    /product_categories/,
+  ]) {
+    assert.match(phase2dPosting, legacy);
+    assert.doesNotMatch(posting, legacy);
+  }
+  assert.doesNotMatch(posting, /SELECT product_id INTO _product_id/);
+  // A reviewed mapping is validated, never used to replace the line's product.
+  assert.match(
+    posting,
+    /WHERE id = _vendor_product_id AND organization_id = _organization_id\s+AND vendor_id = _vendor_id AND active = true;/,
+  );
+  assert.match(
+    posting,
+    /IF _mapping\.product_id IS DISTINCT FROM _product_id THEN\s+RAISE EXCEPTION/,
+  );
+  assert.match(
+    posting,
+    /WHERE organization_id = _organization_id AND product_id = _product_id\s+LIMIT 1 FOR UPDATE;/,
+  );
+});
+
+test("posting keeps Phase 2D inventory accounting verbatim", () => {
+  for (const [start, end] of [
+    ["    _previous := _inventory.quantity;", "    UPDATE public.invoice_items SET product_id"],
+    [
+      "  UPDATE public.invoices SET vendor_id = _vendor_id",
+      "  RETURN jsonb_build_object('invoiceId', _invoice.id, 'createdInventoryItems', _created",
+    ],
+    ["  _vendor_id := _invoice.vendor_id;", "  FOR _line IN"],
+    ["      INSERT INTO public.inventory_items", "      RETURNING * INTO _inventory;"],
+  ]) {
+    assert.equal(between(posting, start, end), between(phase2dPosting, start, end), start);
+  }
 });
 
 test("the server delegates identity to the database and reads lines after resolution", () => {
@@ -385,7 +482,12 @@ test("behavior and mutation suites cover the Henry Schein case and critical guar
     assert.ok(behavior.includes(`'${canonical}'`), canonical);
   assert.match(behavior, /^BEGIN;/m);
   assert.match(behavior, /ROLLBACK;\s*$/);
-  assert.match(behavior, /SELECT 18 AS checks_passed, 0 AS checks_failed;/);
+  assert.match(behavior, /SELECT 24 AS checks_passed, 0 AS checks_failed;/);
+  assert.match(
+    behavior,
+    /'6c100000-0000-4000-8000-000000000882', '6c100000-0000-4000-8000-000000000406', false\)/,
+  );
+  assert.match(behavior, /posting remembered a vendor SKU the owner chose not to remember/);
   for (const mutant of [
     "organization tier ignores the vendor",
     "catalog tier ignores the vendor",
@@ -394,6 +496,10 @@ test("behavior and mutation suites cover the Henry Schein case and critical guar
     "manual decisions revisited",
     "API can forge provenance",
     "separator key used for SKUs with separators",
+    "posting unresolved-line gate removed",
+    "every posting unresolved-line guard removed",
+    "posting accepts a mapping for another product",
+    "legacy Phase 2D posting kept",
   ])
     assert.ok(mutationCheck.includes(mutant), mutant);
   assert.ok(
