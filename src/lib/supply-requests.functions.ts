@@ -1,9 +1,16 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { SUPPLY_REQUEST_STATUSES } from "@/supply-requests/lifecycle";
+import {
+  SUPPLY_REQUEST_STATUSES,
+  canRequesterEditSupplyRequest,
+  requesterEditGuidance,
+} from "@/supply-requests/lifecycle";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
-import { multiItemSupplyRequestInputSchema } from "@/supply-requests/validation";
+import {
+  multiItemSupplyRequestInputSchema,
+  updateSubmittedSupplyRequestInputSchema,
+} from "@/supply-requests/validation";
 import { adminRequestDecisionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
 import { releaseCommitmentSchema, type RequestBudgetImpact } from "@/supply-requests/commitments";
 import {
@@ -203,6 +210,25 @@ async function loadRequestItems(
   return byRequest;
 }
 
+function toRequestLinePayload(items: z.infer<typeof multiItemSupplyRequestInputSchema>["items"]) {
+  return items.map((item) => {
+    const hasStructuredIdentity = Boolean(
+      item.productId
+        || item.inventoryItemId
+        || item.vendorProductId
+        || item.catalogVendorProductId,
+    );
+    return {
+      productId: item.productId ?? null,
+      inventoryItemId: item.inventoryItemId ?? null,
+      vendorProductId: item.vendorProductId ?? null,
+      catalogVendorProductId: item.catalogVendorProductId ?? null,
+      freeTextItem: hasStructuredIdentity ? null : item.freeTextItem?.trim(),
+      quantity: item.quantity,
+    };
+  });
+}
+
 // Staff submit: organization_id is DERIVED server-side from the caller's active membership.
 export const submitSupplyRequestFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -217,25 +243,30 @@ export const submitSupplyRequestFn = createServerFn({ method: "POST" })
       _team_id: data.teamId ?? null,
       _location_id: data.locationId ?? null,
       _notes: data.notes?.trim() || null,
-      _items: data.items.map((item) => {
-        const hasStructuredIdentity = Boolean(
-          item.productId
-            || item.inventoryItemId
-            || item.vendorProductId
-            || item.catalogVendorProductId,
-        );
-        return {
-          productId: item.productId ?? null,
-          inventoryItemId: item.inventoryItemId ?? null,
-          vendorProductId: item.vendorProductId ?? null,
-          catalogVendorProductId: item.catalogVendorProductId ?? null,
-          freeTextItem: hasStructuredIdentity ? null : item.freeTextItem?.trim(),
-          quantity: item.quantity,
-        };
-      }),
+      _items: toRequestLinePayload(data.items),
     });
     if (error) throw new Error(error.message);
     return { id: requestId as string };
+  });
+
+// Phase 6C requester edit. Ownership, organization, the 'submitted'-only boundary, and
+// line validation are enforced by the locked database RPC, not by this handler.
+export const updateSubmittedSupplyRequestFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => updateSubmittedSupplyRequestInputSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMembership(context, data.organizationId);
+    const { data: result, error } = await (context.supabase as any).rpc("update_submitted_supply_request", {
+      _organization_id: data.organizationId,
+      _request_id: data.requestId,
+      _request_type: data.requestType,
+      _team_id: data.teamId ?? null,
+      _location_id: data.locationId ?? null,
+      _notes: data.notes?.trim() || null,
+      _items: toRequestLinePayload(data.items),
+    });
+    if (error) throw new Error(error.message);
+    return result as { id: string; status: "submitted"; itemCount: number; updatedAt: string };
   });
 
 export const listMyRequestsFn = createServerFn({ method: "POST" })
@@ -364,7 +395,7 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     await requireMembership(context, data.organizationId);
     const { data: row, error } = await context.supabase
       .from("supply_requests")
-      .select("id,product_id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
+      .select("id,request_type,team_id,location_id,notes,product_id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
       .eq("id", data.requestId)
       .eq("organization_id", data.organizationId)
       .eq("requested_by", context.userId)
@@ -384,9 +415,17 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     const product = row.products as { name: string; unit_of_measure: string | null } | null;
     const items = (await loadRequestItems(context.supabase, data.organizationId, [row])).get(row.id) ?? [];
     const first = items[0];
-    const status = translateStaffRequestStatus(row.status as SupplyRequestStatus);
+    const lifecycleStatus = row.status as SupplyRequestStatus;
+    const status = translateStaffRequestStatus(lifecycleStatus);
     const detail: StaffRequestDetailViewModel = {
       id: row.id,
+      lifecycleStatus,
+      canEdit: canRequesterEditSupplyRequest(lifecycleStatus),
+      editGuidance: requesterEditGuidance(lifecycleStatus),
+      requestType: row.request_type,
+      teamId: row.team_id,
+      locationId: row.location_id,
+      notes: row.notes,
       itemCount: items.length,
       items,
       itemName: summarizeRequestItems(items) || product?.name || row.free_text_item || "Requested item",
@@ -400,6 +439,9 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
       timeline: [
         { label: "Requested", occurredAt: row.created_at, message: null },
         ...visibleUpdates.flatMap((update) => {
+          if (update.event_kind === "requester_edited") {
+            return [{ label: "You edited this request", occurredAt: update.created_at, message: null }];
+          }
           if (!update.status_to) return [];
           const translated = translateStaffRequestStatus(update.status_to as SupplyRequestStatus);
           return [{
@@ -672,11 +714,11 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return (rows ?? []).map((row) => ({
         id: row.id, statusFrom: row.status_from, statusTo: row.status_to,
-        staffVisibleNote: row.staff_visible_note, createdAt: row.created_at,
+        staffVisibleNote: row.staff_visible_note, eventKind: row.event_kind, createdAt: row.created_at,
       }));
     }
     const query = context.supabase.from("supply_request_updates")
-      .select("id,status_from,status_to,internal_note,staff_visible_note,created_at")
+      .select("id,status_from,status_to,internal_note,staff_visible_note,event_kind,created_at")
       .eq("organization_id", request.organization_id).eq("supply_request_id", data.requestId)
       .order("created_at", { ascending: true }).order("status_to", { ascending: true });
     const { data: rows, error } = await query;
@@ -687,6 +729,7 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
       statusTo: row.status_to,
       staffVisibleNote: row.staff_visible_note,
       internalNote: isAdmin ? row.internal_note : undefined,
+      eventKind: row.event_kind,
       createdAt: row.created_at,
     }));
   });

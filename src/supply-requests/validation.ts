@@ -40,3 +40,8 @@ export const multiItemSupplyRequestInputSchema = z.object({
   locationId: z.string().uuid().optional().nullable(),
   notes: z.string().max(5000).optional().nullable(),
 });
+
+// Phase 6C: the same request model, addressed to an existing submitted request.
+export const updateSubmittedSupplyRequestInputSchema = multiItemSupplyRequestInputSchema.extend({
+  requestId: z.string().uuid(),
+});

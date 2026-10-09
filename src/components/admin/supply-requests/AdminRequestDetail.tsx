@@ -15,6 +15,7 @@ type Update = {
   statusTo: SupplyRequestStatus | null;
   staffVisibleNote: string | null;
   internalNote?: string | null;
+  eventKind?: string | null;
   createdAt: string;
 };
 
@@ -160,7 +161,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                   <ol className="space-y-4 border-l border-[#dce2e8] pl-4 text-sm">
                     <li><div className="font-medium text-[#263b53]">Submitted</div><time dateTime={request.submittedAt} className="text-xs text-[#75808e]">{requestTimestamp(request.submittedAt)}</time></li>
                     {updates.map((update) => <li key={update.id}>
-                      <div className="font-medium text-[#263b53]">{update.statusTo ? translateAdminRequestStatus(update.statusTo).statusLabel : "Update"}</div>
+                      <div className="font-medium text-[#263b53]">{update.eventKind === "requester_edited" ? "Requester edited request" : update.statusTo ? translateAdminRequestStatus(update.statusTo).statusLabel : "Update"}</div>
                       <time dateTime={update.createdAt} className="text-xs text-[#75808e]">{requestTimestamp(update.createdAt)}</time>
                       {update.staffVisibleNote && <div className="mt-2 rounded border border-[#edd8c9] bg-[#fff8f3] p-3"><div className="text-xs font-semibold text-[#8c4b1f]">Staff Communication</div><p className="mt-1 whitespace-pre-wrap text-[#624b3b] [overflow-wrap:anywhere]">{update.staffVisibleNote}</p></div>}
                       {update.internalNote && <div className="mt-2 rounded border border-[#dce2e8] bg-[#f7f9fb] p-3"><div className="text-xs font-semibold text-[#586779]">Internal Note · Admins only</div><p className="mt-1 whitespace-pre-wrap text-[#526174] [overflow-wrap:anywhere]">{update.internalNote}</p></div>}

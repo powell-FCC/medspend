@@ -28,3 +28,17 @@ export function allowedNextSupplyRequestStatuses(status: SupplyRequestStatus): r
   return ALLOWED_SUPPLY_REQUEST_TRANSITIONS[status];
 }
 
+
+// Phase 6C: a requester may edit their own request only before admin review begins.
+// The database RPC enforces this; the UI uses it only to avoid offering a doomed action.
+export const REQUESTER_EDITABLE_STATUS: SupplyRequestStatus = 'submitted';
+
+export function canRequesterEditSupplyRequest(status: SupplyRequestStatus): boolean {
+  return status === REQUESTER_EDITABLE_STATUS;
+}
+
+export function requesterEditGuidance(status: SupplyRequestStatus): string | null {
+  if (canRequesterEditSupplyRequest(status)) return 'You can make changes until this request enters review.';
+  if (status === 'under_review') return 'This request is being reviewed and can no longer be edited.';
+  return null;
+}

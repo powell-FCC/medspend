@@ -1,4 +1,5 @@
 import type { UnifiedSupplyRequestSearchResult } from "../lib/supply-requests.functions";
+import type { SupplyRequestItemViewModel } from "./staff-dashboard";
 
 type StructuredProductSelection = Pick<
   UnifiedSupplyRequestSearchResult,
@@ -158,4 +159,72 @@ export function resolveRequestContextId(
   }
   if (selectedId && availableOptions.some((option) => option.id === selectedId)) return selectedId;
   return availableOptions.length === 1 ? availableOptions[0]!.id : null;
+}
+
+// Phase 6C edit mode: rebuild cart lines from the stored request lines. Structured lines
+// resubmit their stored identity tuple, which the server re-validates with the same
+// rules as the original submission; nothing is inferred from display text.
+export function cartItemFromRequestItem(item: SupplyRequestItemViewModel): StaffRequestCartItem {
+  const hasStructuredIdentity = Boolean(
+    item.productId || item.inventoryItemId || item.vendorProductId || item.catalogVendorProductId,
+  );
+  if (!hasStructuredIdentity) {
+    return createCustomCartItem(item.id, item.freeTextItem ?? item.name, item.quantity);
+  }
+  return createStructuredCartItem(
+    item.id,
+    {
+      productName: item.name,
+      manufacturer: item.manufacturer ?? null,
+      vendorName: item.vendorName ?? null,
+      vendorSku: item.vendorSku ?? null,
+      packageDisplay: item.packageDisplay ?? "",
+      specification: null,
+      inventoryItemId: item.inventoryItemId,
+      productId: item.productId,
+      vendorProductId: item.vendorProductId,
+      catalogVendorProductId: item.catalogVendorProductId,
+    },
+    item.quantity,
+  );
+}
+
+export type StaffRequestType = "reorder" | "low_stock" | "out_of_stock" | "new_item";
+
+export function resolveStaffRequestType(
+  explicitType: StaffRequestType | null | undefined,
+  items: StaffRequestCartItem[],
+): StaffRequestType {
+  return explicitType ?? (cartContainsCustomItem(items) ? "new_item" : "reorder");
+}
+
+// Low/out-of-stock reports are explicit choices and survive edits; reorder/new_item is
+// re-derived from the edited cart exactly as at creation.
+export function editRequestTypeIntent(originalType: StaffRequestType): StaffRequestType | undefined {
+  return originalType === "low_stock" || originalType === "out_of_stock" ? originalType : undefined;
+}
+
+export function describeSubmission(
+  items: StaffRequestCartItem[],
+  context: { teamName?: string | null; locationName?: string | null } = {},
+) {
+  const count = items.length;
+  return {
+    title: "Submit this request?",
+    body: `${count} ${count === 1 ? "item" : "items"} will be sent for review.`,
+    context: [context.teamName, context.locationName].filter(Boolean).join(" · ") || null,
+  };
+}
+
+export function resolveEditRequestContextId(
+  requestContextId: string | null | undefined,
+  selectedId: string,
+  membershipDefaultId: string | null | undefined,
+  availableOptions: ReadonlyArray<{ id: string }>,
+): string | null {
+  if (selectedId && availableOptions.some((option) => option.id === selectedId)) return selectedId;
+  if (requestContextId && availableOptions.some((option) => option.id === requestContextId)) {
+    return requestContextId;
+  }
+  return resolveRequestContextId(membershipDefaultId, "", availableOptions);
 }

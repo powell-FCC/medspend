@@ -62,6 +62,13 @@ export type StaffRequestTimelineItem = {
 
 export type StaffRequestDetailViewModel = StaffRequestViewModel & {
   timeline: StaffRequestTimelineItem[];
+  lifecycleStatus: SupplyRequestStatus;
+  canEdit: boolean;
+  editGuidance: string | null;
+  requestType: "reorder" | "low_stock" | "out_of_stock" | "new_item";
+  teamId: string | null;
+  locationId: string | null;
+  notes: string | null;
 };
 
 const STAFF_STATUS: Readonly<Record<SupplyRequestStatus, StaffRequestStatus>> = {

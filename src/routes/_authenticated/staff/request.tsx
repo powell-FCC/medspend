@@ -1,30 +1,49 @@
 import { createFileRoute, Link, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Check, Minus, Plus, Search, X } from "lucide-react";
+import { ArrowLeft, Check, Minus, Plus, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { z } from "zod";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { listOrgStructureFn } from "@/lib/org-structure.functions";
 import {
+  getStaffRequestDetailFn,
   searchSupplyRequestProductsFn,
   submitSupplyRequestFn,
+  updateSubmittedSupplyRequestFn,
   type UnifiedSupplyRequestSearchResult,
 } from "@/lib/supply-requests.functions";
 import {
-  cartContainsCustomItem,
+  cartItemFromRequestItem,
   changeCartItemQuantity,
   createCustomCartItem,
   createStructuredCartItem,
+  describeSubmission,
+  editRequestTypeIntent,
   getStaffRequestProductDisplayLines,
   removeCartItem,
+  resolveEditRequestContextId,
   resolveRequestContextId,
+  resolveStaffRequestType,
   toSubmissionItem,
   type StaffRequestCartItem,
 } from "@/supply-requests/staff-request-cart";
 
 const search = z.object({
   type: z.enum(["reorder", "low_stock", "out_of_stock", "new_item"]).optional(),
+  // Phase 6C edit mode: the same composer, addressed to one of the requester's own
+  // submitted requests. The server decides whether the edit is still allowed.
+  edit: z.string().uuid().optional(),
 });
 
 export const Route = createFileRoute("/_authenticated/staff/request")({
@@ -32,8 +51,15 @@ export const Route = createFileRoute("/_authenticated/staff/request")({
   head: () => ({
     meta: [{ title: "Request supplies — MedSpend" }, { name: "robots", content: "noindex" }],
   }),
-  component: RequestPage,
+  component: RequestRoute,
 });
+
+// Remount when switching between creating and editing (or between edited requests) so
+// one mode's cart can never be submitted by the other.
+function RequestRoute() {
+  const { edit } = useSearch({ from: "/_authenticated/staff/request" });
+  return <RequestPage key={edit ?? "new"} />;
+}
 
 function useDebouncedValue<T>(value: T, delay: number) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -91,11 +117,34 @@ function RequestPage() {
   const [locationId, setLocationId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
+  const [submittedRequestId, setSubmittedRequestId] = useState<string | null>(null);
+  const [confirmingSubmit, setConfirmingSubmit] = useState(false);
+  const [preloadedRequestId, setPreloadedRequestId] = useState<string | null>(null);
+  const editRequestId = routeSearch.edit ?? null;
+  const isEditMode = !!editRequestId;
   const searchFn = useServerFn(searchSupplyRequestProductsFn);
   const submitFn = useServerFn(submitSupplyRequestFn);
+  const updateFn = useServerFn(updateSubmittedSupplyRequestFn);
+  const fetchDetail = useServerFn(getStaffRequestDetailFn);
   const listStructure = useServerFn(listOrgStructureFn);
   const queryClient = useQueryClient();
+  const editing = useQuery({
+    queryKey: ["me", active?.organizationId, "requests", editRequestId],
+    queryFn: () =>
+      fetchDetail({ data: { organizationId: active!.organizationId, requestId: editRequestId! } }),
+    enabled: !!active && isEditMode,
+  });
+  const editingRequest = editing.data ?? null;
+
+  // Preload once per request so background refetches never discard in-progress edits.
+  useEffect(() => {
+    if (!editingRequest || preloadedRequestId === editingRequest.id) return;
+    setItems(editingRequest.items.map(cartItemFromRequestItem));
+    setNotes(editingRequest.notes ?? "");
+    setTeamId(editingRequest.teamId ?? "");
+    setLocationId(editingRequest.locationId ?? "");
+    setPreloadedRequestId(editingRequest.id);
+  }, [editingRequest, preloadedRequestId]);
   const products = useQuery({
     queryKey: ["supply-request-products", active?.organizationId, debouncedQuery],
     queryFn: () =>
@@ -121,12 +170,18 @@ function RequestPage() {
   const hasActiveDefaultLocation =
     !!active?.defaultLocationId &&
     locations.some((location) => location.id === active.defaultLocationId);
-  const resolvedTeamId = resolveRequestContextId(active?.defaultTeamId, teamId, teams);
-  const resolvedLocationId = resolveRequestContextId(
-    active?.defaultLocationId,
-    locationId,
-    locations,
-  );
+  // Edit mode keeps the request's own team/location unless the requester changes them.
+  const resolvedTeamId = isEditMode
+    ? resolveEditRequestContextId(editingRequest?.teamId, teamId, active?.defaultTeamId, teams)
+    : resolveRequestContextId(active?.defaultTeamId, teamId, teams);
+  const resolvedLocationId = isEditMode
+    ? resolveEditRequestContextId(
+        editingRequest?.locationId,
+        locationId,
+        active?.defaultLocationId,
+        locations,
+      )
+    : resolveRequestContextId(active?.defaultLocationId, locationId, locations);
   const showTeamSelector = !hasActiveDefaultTeam && teams.length > 1;
   const showLocationSelector = !hasActiveDefaultLocation && locations.length > 1;
 
@@ -145,19 +200,28 @@ function RequestPage() {
     setQuantity(1);
   }
 
-  async function submit(event: React.FormEvent) {
+  // The form's submit (button or implicit Enter) never mutates directly. Create mode
+  // asks for confirmation first; edit mode saves the existing request in place.
+  function submit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
+    if (items.length === 0) return;
     if (!resolvedTeamId || !resolvedLocationId) {
       setError("A valid team and location are required. Ask an administrator to configure them.");
       return;
     }
+    if (isEditMode) void saveChanges();
+    else setConfirmingSubmit(true);
+  }
+
+  async function confirmSubmit() {
+    setConfirmingSubmit(false);
     setBusy(true);
     try {
-      await submitFn({
+      const created = await submitFn({
         data: {
           organizationId: active!.organizationId,
-          requestType: routeSearch.type ?? (cartContainsCustomItem(items) ? "new_item" : "reorder"),
+          requestType: resolveStaffRequestType(routeSearch.type, items),
           items: items.map(toSubmissionItem),
           teamId: resolvedTeamId,
           locationId: resolvedLocationId,
@@ -165,7 +229,7 @@ function RequestPage() {
         },
       });
       await queryClient.invalidateQueries({ queryKey: ["me", active?.organizationId, "requests"] });
-      setSubmitted(true);
+      setSubmittedRequestId(created.id);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "We couldn't submit your request.");
     } finally {
@@ -173,49 +237,140 @@ function RequestPage() {
     }
   }
 
-  if (submitted)
+  async function saveChanges() {
+    if (!editingRequest) return;
+    setBusy(true);
+    try {
+      const saved = await updateFn({
+        data: {
+          organizationId: active!.organizationId,
+          requestId: editingRequest.id,
+          requestType: resolveStaffRequestType(
+            editRequestTypeIntent(editingRequest.requestType),
+            items,
+          ),
+          items: items.map(toSubmissionItem),
+          teamId: resolvedTeamId,
+          locationId: resolvedLocationId,
+          notes: notes.trim() || null,
+        },
+      });
+      setSubmittedRequestId(saved.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "We couldn't save your changes.");
+    } finally {
+      // Refresh either way: a failed save may mean review has started.
+      await queryClient.invalidateQueries({ queryKey: ["me", active?.organizationId, "requests"] });
+      setBusy(false);
+    }
+  }
+
+  if (submittedRequestId)
     return (
       <div className="flex min-h-[65dvh] flex-col items-center justify-center text-center">
         <span className="flex size-16 items-center justify-center rounded-full bg-[#edf7f1] text-[#286443]">
           <Check className="size-8" />
         </span>
-        <h1 className="mt-6 text-2xl font-semibold tracking-tight">Request Submitted</h1>
+        <h1 className="mt-6 text-2xl font-semibold tracking-tight">
+          {isEditMode ? "Changes Saved" : "Request Submitted"}
+        </h1>
         <p className="mt-2 max-w-xs text-sm leading-6 text-[#667384]">
-          We'll update you when it is ready.
+          {isEditMode
+            ? "You can keep making changes until review begins."
+            : "You can still edit this request until review begins."}
         </p>
         <Link
-          to="/staff/requests"
+          to="/staff/requests/$id"
+          params={{ id: submittedRequestId }}
           className="mt-8 flex min-h-12 w-full items-center justify-center rounded-xl bg-[#071d38] px-5 font-semibold text-white"
         >
-          View My Requests
+          View request
         </Link>
-        <button
-          type="button"
-          onClick={() => {
-            setSubmitted(false);
-            setSelected(null);
-            setItems([]);
-            setCustomItem("");
-            setQuery("");
-            setQuantity(1);
-            setNotes("");
-          }}
-          className="mt-3 min-h-12 w-full text-sm font-semibold text-[#d95700]"
-        >
-          Request another item
-        </button>
+        {!isEditMode && (
+          <button
+            type="button"
+            onClick={() => {
+              setSubmittedRequestId(null);
+              setSelected(null);
+              setItems([]);
+              setCustomItem("");
+              setQuery("");
+              setQuantity(1);
+              setNotes("");
+            }}
+            className="mt-3 min-h-12 w-full text-sm font-semibold text-[#d95700]"
+          >
+            Request another item
+          </button>
+        )}
       </div>
     );
+
+  if (isEditMode && !editingRequest)
+    return (
+      <div className="space-y-6">
+        <Link
+          to="/staff/requests"
+          className="inline-flex min-h-11 items-center gap-2 py-2 text-sm font-semibold text-[#526174]"
+        >
+          <ArrowLeft className="size-4" /> My Requests
+        </Link>
+        {editing.isError ? (
+          <div role="alert" className="rounded-2xl bg-[#fff0f1] p-5 text-sm text-[#a83340]">
+            This request isn't available.
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-white p-6 text-sm text-[#697687]">Loading request…</div>
+        )}
+      </div>
+    );
+
+  if (editingRequest && !editingRequest.canEdit)
+    return (
+      <div className="space-y-6">
+        <Link
+          to="/staff/requests/$id"
+          params={{ id: editingRequest.id }}
+          className="inline-flex min-h-11 items-center gap-2 py-2 text-sm font-semibold text-[#526174]"
+        >
+          <ArrowLeft className="size-4" /> Back to request
+        </Link>
+        <div role="status" className="rounded-2xl border border-[#e1e6ec] bg-white p-5 text-sm leading-6 text-[#526174]">
+          {editingRequest.editGuidance ?? "This request can no longer be edited."}
+        </div>
+      </div>
+    );
+
+  const confirmation = describeSubmission(items, {
+    teamName: teams.find((team) => team.id === resolvedTeamId)?.name ?? null,
+    locationName: locations.find((location) => location.id === resolvedLocationId)?.name ?? null,
+  });
 
   const hasItem = !!selected || !!customItem.trim();
   const isTypingSearch = normalizedQuery.length > 0 && !isDebouncedQueryReady;
   return (
     <div>
+      {editingRequest && (
+        <Link
+          to="/staff/requests/$id"
+          params={{ id: editingRequest.id }}
+          className="mb-3 inline-flex min-h-11 items-center gap-2 py-2 text-sm font-semibold text-[#526174]"
+        >
+          <ArrowLeft className="size-4" /> Back to request
+        </Link>
+      )}
       <header>
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#697687]">
-          New Request
+          {isEditMode ? "Edit Request" : "New Request"}
         </p>
-        <h1 className="mt-1 text-[1.7rem] font-semibold tracking-tight">What do you need?</h1>
+        <h1 className="mt-1 text-[1.7rem] font-semibold tracking-tight">
+          {isEditMode ? "Update your request" : "What do you need?"}
+        </h1>
+        {isEditMode && (
+          <p className="mt-2 text-sm leading-6 text-[#667384]">
+            You can make changes until this request enters review.
+          </p>
+        )}
       </header>
       <form onSubmit={submit} className="mt-7 space-y-7">
         {(showTeamSelector || showLocationSelector) && (
@@ -277,6 +432,9 @@ function RequestPage() {
                   onChange={(event) => {
                     setQuery(event.target.value);
                     setCustomItem("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.preventDefault();
                   }}
                   placeholder="Tape, gloves, gauze…"
                   maxLength={120}
@@ -373,6 +531,11 @@ function RequestPage() {
                   onChange={(event) => {
                     setCustomItem(event.target.value);
                     setQuery("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    addItem();
                   }}
                   placeholder="Enter the item name"
                   maxLength={200}
@@ -505,11 +668,42 @@ function RequestPage() {
               disabled={busy}
               className="min-h-14 w-full rounded-2xl bg-[#f56600] px-5 text-base font-semibold text-white shadow-[0_10px_25px_rgba(245,102,0,0.22)] disabled:opacity-60"
             >
-              {busy ? "Submitting…" : "Submit Request"}
+              {isEditMode
+                ? busy
+                  ? "Saving…"
+                  : "Save changes"
+                : busy
+                  ? "Submitting…"
+                  : "Submit Request"}
             </button>
           </>
         )}
+        {isEditMode && items.length === 0 && (
+          <p className="rounded-xl bg-[#f4f6f8] p-3 text-sm text-[#526174]">
+            A request needs at least one item. Add an item to save your changes.
+          </p>
+        )}
       </form>
+      <AlertDialog open={confirmingSubmit} onOpenChange={setConfirmingSubmit}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmation.title}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmation.body}</AlertDialogDescription>
+            {confirmation.context && (
+              <p className="text-sm text-[#697687]">{confirmation.context}</p>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="min-h-12 rounded-xl">Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void confirmSubmit()}
+              className="min-h-12 rounded-xl bg-[#f56600] font-semibold text-white hover:bg-[#d95700]"
+            >
+              Submit request
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
