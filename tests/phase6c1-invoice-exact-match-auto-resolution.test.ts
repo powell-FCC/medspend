@@ -227,6 +227,12 @@ test("the review subtitle is exception oriented", () => {
 test("migration is new, ordered after Phase 6C, transactional, and guarded", () => {
   const migrations = readdirSync(new URL("../supabase/migrations/", import.meta.url)).sort();
   // Later migrations may add to Phase 6C.1 but never redefine or drop what it established.
+  // One exception: the beta-hardening migration redefines the manual confirmation so that it
+  // never repoints a catalog-adopted mapping. That redefinition is held to the Phase 6C.1
+  // text everywhere else by tests/beta-invoice-manual-catalog-matching.test.ts.
+  const redefinedBy: Record<string, string> = {
+    confirm_invoice_item_product: "20261012120000_beta_invoice_manual_catalog_matching.sql",
+  };
   for (const later of migrations.slice(migrations.indexOf(migrationName) + 1)) {
     const code = read(`../supabase/migrations/${later}`).replace(/--.*$/gm, "");
     for (const name of [
@@ -241,6 +247,7 @@ test("migration is new, ordered after Phase 6C, transactional, and guarded", () 
       "post_reviewed_invoice",
       "adopt_catalog_vendor_product",
     ]) {
+      if (redefinedBy[name] === later) continue;
       assert.doesNotMatch(
         code,
         new RegExp(
@@ -489,12 +496,14 @@ test("the server delegates identity to the database and reads lines after resolu
 });
 
 test("an identity-unchanged edit keeps the line link and its mapping", () => {
+  // The save handler's body lives in the review actions module since beta hardening.
+  assert.match(server, /=> saveInvoiceItem\(context\.supabase, context\.userId, data\)/);
   const save = between(
-    server,
-    "export const saveInvoiceItemFn",
-    "export const deleteInvoiceItemFn",
+    read("../src/invoice/review-actions.ts"),
+    "export async function saveInvoiceItem",
+    "export async function deleteInvoiceItem",
   );
-  assert.match(save, /product_id,vendor_product_id'\)/);
+  assert.match(save, /product_id,vendor_product_id"/);
   assert.match(save, /payload\.vendor_product_id = existing\.vendor_product_id;/);
 });
 

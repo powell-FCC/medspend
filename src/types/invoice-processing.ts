@@ -26,6 +26,9 @@ export interface ReviewItem {
     reasons: string[];
   };
   matchSource: InvoiceLineMatchSource | null;
+  // The line's current vendor SKU mapping came from catalog adoption; re-matching the line
+  // to another product never changes that mapping.
+  skuFromCatalog: boolean;
   reviewStatus: InvoiceItemReviewStatus;
   extractionConfidence?: number;
 }
@@ -154,6 +157,15 @@ export interface InvoiceItemInput {
   totalPrice: number;
   packageSize: string;
   vendorProductId?: string | null;
+}
+
+export interface InvoiceMatchResult {
+  productId: string;
+  vendorProductId: string | null;
+  vendorSkuRemembered: boolean;
+  // Set when the line's vendor SKU is a catalog-adopted mapping for another product, which
+  // was left unchanged: this match applies to this invoice only.
+  preservedMapping: { vendorSku: string; productName: string } | null;
 }
 
 export interface InvoiceApprovalResult {

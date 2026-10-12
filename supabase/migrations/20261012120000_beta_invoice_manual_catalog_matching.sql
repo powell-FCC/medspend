@@ -15,9 +15,24 @@
 --   * the decision is recorded as 'manual', which the resolver never revisits;
 --   * nothing here approves or posts an invoice.
 --
--- Additive: two new functions. No table, column, or existing function is changed.
--- Rollback: DROP FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uuid, uuid, uuid, uuid);
+-- It also closes two gaps in manual review:
+--   * confirm_invoice_item_product (Phase 3A.4, last defined in Phase 6C.1) is redefined so
+--     that an explicit re-match never repoints, and never shadows with a separator-variant
+--     row, a vendor SKU mapping that came from catalog adoption. Before, re-matching a line
+--     whose SKU was an adopted catalog SKU failed on the catalog-link trigger (exact SKU)
+--     or silently created a second mapping for the same SKU (SKU printed without
+--     separators). Everything else about the function is unchanged.
+--   * a trigger on invoice_items withdraws a calculated (never printed) subtotal or total
+--     the moment an owner adds, removes, or re-prices a line, so a calculated amount can
+--     never outlive the lines it was calculated from. The application recalculates it.
+--
+-- No table or column is changed. Phase 6C.1's migration file is not edited.
+-- Rollback: DROP TRIGGER invoice_items_invalidate_derived_totals ON public.invoice_items;
+--           DROP FUNCTION public.invalidate_derived_invoice_totals();
+--           DROP FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uuid, uuid, uuid, uuid);
 --           DROP FUNCTION public.search_invoice_line_catalog_listings(uuid, uuid, text, integer);
+--           then re-run the CREATE OR REPLACE FUNCTION public.confirm_invoice_item_product
+--           statement from 20261010120000_phase6c1_invoice_exact_match_auto_resolution.sql.
 
 BEGIN;
 
@@ -147,6 +162,118 @@ GRANT EXECUTE ON FUNCTION public.search_invoice_line_catalog_listings(uuid, uuid
 COMMENT ON FUNCTION public.search_invoice_line_catalog_listings(uuid, uuid, text, integer) IS
   'Owner-only, read-only search of the global catalog listings of the catalog vendor that the invoice vendor is explicitly linked to. Never searches another vendor.';
 
+-- Phase 3A.4 manual confirmation as defined in Phase 6C.1, with one change: what happens
+-- to the vendor SKU mapping when the owner asks to remember the SKU.
+--
+--   * No mapping for this SKU: one is created (unchanged).
+--   * A mapping for this SKU that the owner remembered by hand: it is pointed at the chosen
+--     product (unchanged; this is what "remember" has always meant).
+--   * A mapping for this SKU that came from catalog adoption and names another product: it
+--     is left exactly as it is. The line is matched to the chosen product for this invoice
+--     only (no vendor_product_id), and the result says which mapping was preserved. The
+--     same applies when the invoice SKU differs from the adopted SKU only by separators;
+--     no second mapping is created for it.
+--   * The adopted mapping already names the chosen product: it is reused.
+CREATE OR REPLACE FUNCTION public.confirm_invoice_item_product(
+  _organization_id uuid,
+  _source_file_id uuid,
+  _invoice_item_id uuid,
+  _product_id uuid,
+  _remember_vendor_sku boolean DEFAULT true
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _invoice public.invoices%ROWTYPE;
+  _line public.invoice_items%ROWTYPE;
+  _vendor_product_id uuid;
+  _mapping public.vendor_products%ROWTYPE;
+  _preserved_vendor_product_id uuid;
+  _key text;
+  _adopted_count bigint;
+BEGIN
+  IF NOT public.has_org_role(_organization_id, auth.uid(), ARRAY['owner']::public.org_role[]) THEN
+    RAISE EXCEPTION 'Forbidden: owner access required';
+  END IF;
+  SELECT * INTO _invoice FROM public.invoices
+    WHERE organization_id = _organization_id AND source_file_id = _source_file_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invoice review not found'; END IF;
+  IF _invoice.posted_at IS NOT NULL OR _invoice.processing_status = 'completed' THEN
+    RAISE EXCEPTION 'Completed invoices cannot be changed';
+  END IF;
+  PERFORM 1 FROM public.products
+    WHERE id = _product_id AND organization_id = _organization_id AND active = true;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Selected product is unavailable'; END IF;
+  SELECT * INTO _line FROM public.invoice_items
+    WHERE id = _invoice_item_id AND invoice_id = _invoice.id AND organization_id = _organization_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invoice line not found'; END IF;
+
+  IF _remember_vendor_sku AND nullif(btrim(_line.sku), '') IS NOT NULL THEN
+    IF _invoice.vendor_id IS NULL THEN RAISE EXCEPTION 'Select an existing vendor before remembering a vendor SKU'; END IF;
+    SELECT * INTO _mapping FROM public.vendor_products
+      WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id
+        AND lower(btrim(vendor_sku)) = lower(btrim(_line.sku))
+      ORDER BY active DESC, created_at LIMIT 1 FOR UPDATE;
+    IF FOUND THEN
+      IF _mapping.product_id = _product_id OR _mapping.catalog_vendor_product_id IS NULL THEN
+        UPDATE public.vendor_products SET product_id = _product_id,
+          package_size = coalesce(nullif(btrim(_line.package_size), ''), package_size),
+          unit_of_measure = coalesce(nullif(btrim(_line.unit_of_measure), ''), unit_of_measure), active = true
+        WHERE id = _mapping.id;
+        _vendor_product_id := _mapping.id;
+      ELSE
+        -- A catalog-adopted mapping names a different product: never repointed.
+        _preserved_vendor_product_id := _mapping.id;
+      END IF;
+    ELSE
+      -- No mapping stores this exact SKU. A catalog-adopted mapping that differs from it
+      -- only by separators (invoice 3240025, catalog 324-0025) is the same vendor SKU.
+      _key := public.normalize_catalog_sku_match_key(_line.sku);
+      SELECT count(*) INTO _adopted_count FROM public.vendor_products
+        WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id
+          AND catalog_vendor_product_id IS NOT NULL
+          AND _key <> '' AND public.normalize_catalog_sku_match_key(vendor_sku) = _key;
+      IF _adopted_count = 0 THEN
+        INSERT INTO public.vendor_products
+          (organization_id, vendor_id, product_id, vendor_sku, package_size, unit_of_measure)
+        VALUES
+          (_organization_id, _invoice.vendor_id, _product_id, btrim(_line.sku),
+           nullif(btrim(_line.package_size), ''), nullif(btrim(_line.unit_of_measure), ''))
+        RETURNING id INTO _vendor_product_id;
+      ELSE
+        SELECT * INTO _mapping FROM public.vendor_products
+          WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id
+            AND catalog_vendor_product_id IS NOT NULL
+            AND public.normalize_catalog_sku_match_key(vendor_sku) = _key
+          ORDER BY active DESC, created_at, id LIMIT 1 FOR UPDATE;
+        IF _adopted_count = 1 AND _mapping.active AND _mapping.product_id = _product_id THEN
+          -- The one adopted mapping for this SKU already names the chosen product.
+          _vendor_product_id := _mapping.id;
+        ELSE
+          -- It names another product (or is ambiguous or deactivated): left untouched, and
+          -- no separator-variant row is created to shadow it.
+          _preserved_vendor_product_id := _mapping.id;
+        END IF;
+      END IF;
+    END IF;
+  END IF;
+  UPDATE public.invoice_items SET product_id = _product_id,
+    vendor_product_id = _vendor_product_id, review_status = 'pending_review',
+    product_match_source = 'manual', product_match_decided_at = now()
+  WHERE id = _line.id;
+  RETURN jsonb_build_object('productId', _product_id, 'vendorProductId', _vendor_product_id,
+    'vendorSkuRemembered', _vendor_product_id IS NOT NULL,
+    'preservedVendorProductId', _preserved_vendor_product_id);
+END;
+$$;
+
+-- CREATE OR REPLACE keeps the Phase 6C.1 grants; restate them.
+REVOKE ALL ON FUNCTION public.confirm_invoice_item_product(uuid, uuid, uuid, uuid, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.confirm_invoice_item_product(uuid, uuid, uuid, uuid, boolean) TO authenticated;
+
 -- One explicit owner decision: adopt the chosen listing if needed and match the line to it.
 -- Atomic under the same invoice row lock as confirm, unlink, resolve, and posting.
 --
@@ -174,6 +301,7 @@ DECLARE
   _confirmation jsonb;
   _product_id uuid;
   _vendor_product_id uuid;
+  _adoption_error text;
 BEGIN
   IF NOT public.has_org_role(_organization_id, auth.uid(), ARRAY['owner']::public.org_role[]) THEN
     RAISE EXCEPTION 'Forbidden: owner access required';
@@ -225,8 +353,16 @@ BEGIN
 
   -- Existing Phase 5A.5 adoption: idempotent, one organization product per canonical
   -- product, one mapping per listing, and never creates or changes inventory. If it needs
-  -- reconciliation it raises, and this whole decision rolls back.
-  _adoption := public.adopt_catalog_vendor_product(_organization_id, _listing.id);
+  -- reconciliation (an existing product or vendor SKU mapping conflicts with the listing),
+  -- its partial writes roll back and the owner gets a controlled error instead of the
+  -- constraint failure.
+  BEGIN
+    _adoption := public.adopt_catalog_vendor_product(_organization_id, _listing.id);
+  EXCEPTION WHEN unique_violation OR check_violation OR foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS _adoption_error = MESSAGE_TEXT;
+    RAISE EXCEPTION 'This catalog item conflicts with a product or vendor SKU mapping your organization already has, so it cannot be added automatically. Choose the existing product under Your products, or resolve the conflict in Catalog first.'
+      USING DETAIL = _adoption_error;
+  END;
   _product_id := (_adoption->>'productId')::uuid;
   _vendor_product_id := (_adoption->>'vendorProductId')::uuid;
   IF (_adoption->>'vendorId')::uuid IS DISTINCT FROM _invoice.vendor_id
@@ -242,31 +378,19 @@ BEGIN
     RAISE EXCEPTION 'Catalog adoption did not produce an active mapping for the invoice vendor';
   END IF;
 
-  IF public.normalize_catalog_sku_match_key(_line.sku) <> ''
-     AND public.normalize_catalog_sku_match_key(_line.sku) = public.normalize_catalog_sku_match_key(_listing.vendor_sku)
-     AND NOT EXISTS (
-       SELECT 1 FROM public.vendor_products
-       WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id
-         AND lower(btrim(vendor_sku)) = lower(btrim(_line.sku))
-         AND id <> _vendor_product_id
-     ) THEN
-    -- The invoice SKU is the listing's own SKU (at most separators differ): the adopted
-    -- mapping already is this line's vendor identity. No second mapping is created.
-    UPDATE public.invoice_items SET product_id = _product_id,
-      vendor_product_id = _vendor_product_id, review_status = 'pending_review',
-      product_match_source = 'manual', product_match_decided_at = now()
-    WHERE id = _line.id;
-  ELSE
-    -- A different invoice SKU: the existing manual confirmation remembers that SKU for
-    -- the adopted product, exactly as it does for any other owner-chosen product.
-    _confirmation := public.confirm_invoice_item_product(
-      _organization_id, _source_file_id, _invoice_item_id, _product_id, true);
-    _vendor_product_id := (_confirmation->>'vendorProductId')::uuid;
-  END IF;
+  -- The existing manual confirmation decides the vendor SKU mapping, exactly as it does
+  -- for any other owner-chosen product: the adopted mapping is reused when the invoice SKU
+  -- is the listing's own (separators aside), a different invoice SKU is remembered for the
+  -- adopted product, and a catalog-adopted mapping for another product is never changed.
+  _confirmation := public.confirm_invoice_item_product(
+    _organization_id, _source_file_id, _invoice_item_id, _product_id, true);
+  _vendor_product_id := (_confirmation->>'vendorProductId')::uuid;
 
   RETURN jsonb_build_object(
     'productId', _product_id,
     'vendorProductId', _vendor_product_id,
+    'vendorSkuRemembered', _vendor_product_id IS NOT NULL,
+    'preservedVendorProductId', (_confirmation->>'preservedVendorProductId')::uuid,
     'catalogVendorProductId', _listing.id,
     'productCreated', coalesce((_adoption->>'productCreated')::boolean, false),
     'vendorProductCreated', coalesce((_adoption->>'vendorProductCreated')::boolean, false),
@@ -280,5 +404,79 @@ GRANT EXECUTE ON FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uui
 
 COMMENT ON FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uuid, uuid, uuid, uuid) IS
   'Owner-only manual decision: adopts one listing of the invoice vendor''s linked catalog vendor (existing idempotent adoption, no inventory) and matches the invoice line to it with manual provenance. Never approves, posts, or stocks.';
+
+-- A calculated subtotal or total (extraction source 'Derived') is valid only for the line
+-- items it was calculated from. When an owner adds, removes, or re-prices a line through
+-- the API, the calculated amount is withdrawn in the same statement: it goes back to blank
+-- and unreviewed. The application then recalculates it with the same rules used at
+-- extraction. Printed and owner-entered amounts (any other source) are never touched.
+--
+-- Like the Phase 6C.1 provenance guard, this acts only on API-role writes. SECURITY
+-- DEFINER functions (draft seeding, posting, deletion) run as the function owner and are
+-- skipped; none of them change line amounts on a draft with calculated totals.
+CREATE FUNCTION public.invalidate_derived_invoice_totals()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  _invoice_ids uuid[];
+  _invoice_id uuid;
+  _invoice public.invoices%ROWTYPE;
+  _extraction jsonb;
+  _subtotal boolean;
+  _total boolean;
+  _withdrawn constant jsonb := '{"value": null, "confidence": 0, "source": "Derived", "reviewed": false}';
+BEGIN
+  IF current_user NOT IN ('authenticated', 'anon') THEN RETURN NULL; END IF;
+  IF TG_OP = 'INSERT' THEN
+    _invoice_ids := ARRAY[NEW.invoice_id];
+  ELSIF TG_OP = 'DELETE' THEN
+    _invoice_ids := ARRAY[OLD.invoice_id];
+  ELSIF NEW.invoice_id IS DISTINCT FROM OLD.invoice_id THEN
+    _invoice_ids := ARRAY[OLD.invoice_id, NEW.invoice_id];
+  ELSIF NEW.quantity IS DISTINCT FROM OLD.quantity
+        OR NEW.unit_price IS DISTINCT FROM OLD.unit_price
+        OR NEW.total_price IS DISTINCT FROM OLD.total_price THEN
+    _invoice_ids := ARRAY[NEW.invoice_id];
+  ELSE
+    RETURN NULL;
+  END IF;
+
+  FOREACH _invoice_id IN ARRAY _invoice_ids LOOP
+    SELECT * INTO _invoice FROM public.invoices WHERE id = _invoice_id FOR UPDATE;
+    CONTINUE WHEN NOT FOUND OR _invoice.source_file_id IS NULL
+      OR _invoice.posted_at IS NOT NULL OR _invoice.processing_status = 'completed';
+    SELECT extraction_result INTO _extraction FROM public.invoice_processing_jobs
+    WHERE invoice_id = _invoice.source_file_id AND organization_id = _invoice.organization_id
+    FOR UPDATE;
+    CONTINUE WHEN NOT FOUND OR _extraction IS NULL;
+    _subtotal := coalesce(_extraction #>> '{header,subtotal,source}' = 'Derived', false);
+    _total := coalesce(_extraction #>> '{header,total,source}' = 'Derived', false);
+    CONTINUE WHEN NOT (_subtotal OR _total);
+
+    IF _subtotal THEN _extraction := jsonb_set(_extraction, '{header,subtotal}', _withdrawn); END IF;
+    IF _total THEN _extraction := jsonb_set(_extraction, '{header,total}', _withdrawn); END IF;
+    UPDATE public.invoice_processing_jobs SET extraction_result = _extraction
+    WHERE invoice_id = _invoice.source_file_id AND organization_id = _invoice.organization_id;
+    UPDATE public.invoices SET
+      subtotal = CASE WHEN _subtotal THEN NULL ELSE subtotal END,
+      invoice_total = CASE WHEN _total THEN NULL ELSE invoice_total END,
+      total_amount = CASE WHEN _total THEN NULL ELSE total_amount END,
+      total = CASE WHEN _total THEN NULL ELSE total END
+    WHERE id = _invoice.id;
+  END LOOP;
+  RETURN NULL;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.invalidate_derived_invoice_totals() FROM PUBLIC, anon, authenticated;
+
+CREATE TRIGGER invoice_items_invalidate_derived_totals
+  AFTER INSERT OR UPDATE OR DELETE ON public.invoice_items
+  FOR EACH ROW EXECUTE FUNCTION public.invalidate_derived_invoice_totals();
+
+COMMENT ON FUNCTION public.invalidate_derived_invoice_totals() IS
+  'Withdraws a calculated (extraction source Derived) invoice subtotal or total when an API-role write adds, removes, or re-prices a line. Never touches printed or owner-entered amounts.';
 
 COMMIT;

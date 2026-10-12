@@ -100,6 +100,12 @@ export function ProductMatchDialog({
       : undefined;
   // A catalog item can only be confirmed while it is on screen.
   const chosen = selected?.source === "catalog" && !selectedListing ? null : selected;
+  const chosenProductId =
+    chosen?.source === "product" ? chosen.id : (selectedListing?.organizationProductId ?? null);
+  // The line's SKU is a catalog-adopted mapping. Matching the line to a different product
+  // never changes that mapping, so the SKU is not remembered for the new product.
+  const keepsCatalogMapping =
+    item.skuFromCatalog && Boolean(item.sku) && chosenProductId !== item.productId;
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -270,9 +276,11 @@ export function ProductMatchDialog({
                 {selectedListing && !selectedListing.organizationProductId
                   ? "This catalog item will be added to your products. No stock is added. "
                   : ""}
-                {item.sku
-                  ? `Vendor SKU ${item.sku} will be remembered for future ${vendorName || "vendor"} invoices.`
-                  : ""}
+                {keepsCatalogMapping
+                  ? `Vendor SKU ${item.sku} is a ${vendorName || "vendor"} catalog item. Choosing a different product matches this line on this invoice only; the SKU stays mapped to its catalog product.`
+                  : item.sku
+                    ? `Vendor SKU ${item.sku} will be remembered for future ${vendorName || "vendor"} invoices.`
+                    : ""}
               </p>
             )}
           </>

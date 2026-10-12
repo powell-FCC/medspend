@@ -20,6 +20,10 @@ const dialog = read("../src/components/invoice-processing/ProductMatchDialog.tsx
 const page = read("../src/components/invoice-processing/InvoiceReviewPage.tsx");
 const headerForm = read("../src/components/invoice-processing/InvoiceHeaderForm.tsx");
 const types = read("../src/integrations/supabase/types.ts");
+const actions = read("../src/invoice/review-actions.ts");
+const phase6c1 = read(
+  "../supabase/migrations/20261010120000_phase6c1_invoice_exact_match_auto_resolution.sql",
+).replace(/--.*$/gm, "");
 
 const between = (source: string, start: string, end: string) => {
   const from = source.indexOf(start);
@@ -37,6 +41,21 @@ const match = between(
   migrationCode,
   "CREATE FUNCTION public.match_invoice_item_to_catalog_listing",
   "REVOKE ALL ON FUNCTION public.match_invoice_item_to_catalog_listing",
+);
+const confirm = between(
+  migrationCode,
+  "CREATE OR REPLACE FUNCTION public.confirm_invoice_item_product",
+  "REVOKE ALL ON FUNCTION public.confirm_invoice_item_product",
+);
+const confirm6c1 = between(
+  phase6c1,
+  "CREATE OR REPLACE FUNCTION public.confirm_invoice_item_product",
+  "CREATE OR REPLACE FUNCTION public.unlink_invoice_item_product",
+);
+const withdraw = between(
+  migrationCode,
+  "CREATE FUNCTION public.invalidate_derived_invoice_totals",
+  "REVOKE ALL ON FUNCTION public.invalidate_derived_invoice_totals",
 );
 
 const product = (overrides: Record<string, unknown>) => ({
@@ -184,19 +203,43 @@ test("an unlinked vendor is explained, never silently linked", () => {
   }
 });
 
-test("the migration is additive: two new functions and nothing else", () => {
+test("the migration adds three functions and one trigger and redefines only the manual confirmation", () => {
   assert.match(migrationCode, /^\s*BEGIN;/m);
   assert.match(migrationCode, /COMMIT;\s*$/);
-  assert.equal(migrationCode.match(/CREATE FUNCTION /g)?.length, 2);
+  assert.deepEqual(
+    [...migrationCode.matchAll(/CREATE FUNCTION public\.(\w+)/g)].map((found) => found[1]),
+    [
+      "search_invoice_line_catalog_listings",
+      "match_invoice_item_to_catalog_listing",
+      "invalidate_derived_invoice_totals",
+    ],
+  );
+  assert.deepEqual(
+    [...migrationCode.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)/g)].map(
+      (found) => found[1],
+    ),
+    ["confirm_invoice_item_product"],
+  );
+  assert.deepEqual(
+    [...migrationCode.matchAll(/CREATE TRIGGER (\w+)\s+([A-Z ]+) ON public\.(\w+)/g)].map((found) =>
+      found.slice(1),
+    ),
+    [
+      [
+        "invoice_items_invalidate_derived_totals",
+        "AFTER INSERT OR UPDATE OR DELETE",
+        "invoice_items",
+      ],
+    ],
+  );
   for (const forbidden of [
-    /CREATE OR REPLACE/i,
     /ALTER TABLE/i,
     /CREATE TABLE/i,
     /CREATE (UNIQUE )?INDEX/i,
-    /CREATE TRIGGER/i,
     /DROP /i,
     /CREATE POLICY/i,
     /TRUNCATE/i,
+    /ALTER FUNCTION/i,
   ]) {
     assert.doesNotMatch(migrationCode, forbidden);
   }
@@ -208,6 +251,74 @@ test("the migration is additive: two new functions and nothing else", () => {
   );
   assert.match(migrationCode, /resolve_invoice_exact_product_identities\(uuid, uuid\)'\) IS NULL/);
   assert.match(migrationCode, /already been applied/);
+});
+
+test("the redefined confirmation is Phase 6C.1's, except for how it remembers the vendor SKU", () => {
+  const upTo = (source: string, marker: string) => {
+    const at = source.indexOf(marker);
+    assert.ok(at > 0, `missing ${marker}`);
+    return source.slice(0, at);
+  };
+  const from = (source: string, start: string, end: string) =>
+    between(source, start, end).replace(/\s+/g, " ");
+  // Same signature, security, and search path.
+  assert.equal(upTo(confirm, "DECLARE"), upTo(confirm6c1, "DECLARE"));
+  // Same authorization, invoice lock, completed-invoice refusal, product check, and line lock.
+  assert.equal(
+    from(confirm, "BEGIN\n  IF NOT public.has_org_role", "IF _remember_vendor_sku AND"),
+    from(confirm6c1, "BEGIN\n  IF NOT public.has_org_role", "IF _remember_vendor_sku AND"),
+  );
+  // Same write to the line, with manual provenance.
+  const lineWrite =
+    "UPDATE public.invoice_items SET product_id = _product_id, vendor_product_id = _vendor_product_id, review_status = 'pending_review', product_match_source = 'manual', product_match_decided_at = now() WHERE id = _line.id;";
+  assert.ok(confirm.replace(/\s+/g, " ").includes(lineWrite));
+  assert.ok(confirm6c1.replace(/\s+/g, " ").includes(lineWrite));
+  // Same lookup of the mapping for the invoice vendor and exact SKU, and the same insert.
+  for (const shared of [
+    "WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id AND lower(btrim(vendor_sku)) = lower(btrim(_line.sku)) ORDER BY active DESC, created_at LIMIT 1 FOR UPDATE;",
+    "INSERT INTO public.vendor_products (organization_id, vendor_id, product_id, vendor_sku, package_size, unit_of_measure) VALUES (_organization_id, _invoice.vendor_id, _product_id, btrim(_line.sku), nullif(btrim(_line.package_size), ''), nullif(btrim(_line.unit_of_measure), ''))",
+    "IF _invoice.vendor_id IS NULL THEN RAISE EXCEPTION 'Select an existing vendor before remembering a vendor SKU'; END IF;",
+  ]) {
+    assert.ok(confirm.replace(/\s+/g, " ").includes(shared), shared);
+    assert.ok(confirm6c1.replace(/\s+/g, " ").includes(shared), shared);
+  }
+  // The change: a mapping is repointed only if it is not from the catalog, and a
+  // separator variant of a catalog-adopted SKU is never inserted.
+  assert.match(
+    confirm,
+    /IF _mapping\.product_id = _product_id OR _mapping\.catalog_vendor_product_id IS NULL THEN\s+UPDATE public\.vendor_products SET product_id = _product_id,/,
+  );
+  assert.match(confirm, /ELSE\s+_preserved_vendor_product_id := _mapping\.id;/);
+  assert.match(confirm, /IF _adopted_count = 0 THEN\s+INSERT INTO public\.vendor_products/);
+  assert.match(
+    confirm,
+    /catalog_vendor_product_id IS NOT NULL\s+AND _key <> '' AND public\.normalize_catalog_sku_match_key\(vendor_sku\) = _key/,
+  );
+  // Every mapping it reads or writes is for this organization and the invoice's vendor.
+  assert.equal(confirm.match(/FROM public\.vendor_products/g)?.length, 3);
+  assert.equal(
+    confirm.match(
+      /FROM public\.vendor_products\s+WHERE organization_id = _organization_id AND vendor_id = _invoice\.vendor_id/g,
+    )?.length,
+    3,
+  );
+  assert.deepEqual(
+    [...confirm.matchAll(/\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+(public\.\w+)/g)].map(
+      (found) => found[1],
+    ),
+    ["public.vendor_products", "public.vendor_products", "public.invoice_items"],
+  );
+  assert.doesNotMatch(confirm, /inventory|post_reviewed_invoice|catalog_vendor_id/);
+  assert.ok(
+    migrationCode.includes(
+      "REVOKE ALL ON FUNCTION public.confirm_invoice_item_product(uuid, uuid, uuid, uuid, boolean) FROM PUBLIC, anon;",
+    ),
+  );
+  assert.ok(
+    migrationCode.includes(
+      "GRANT EXECUTE ON FUNCTION public.confirm_invoice_item_product(uuid, uuid, uuid, uuid, boolean) TO authenticated;",
+    ),
+  );
 });
 
 test("both functions are owner-only definer functions closed to anon", () => {
@@ -266,7 +377,6 @@ test("matching reuses adoption and confirmation and never touches inventory or p
   );
   assert.match(match, /_listing\.catalog_vendor_id IS DISTINCT FROM _vendor\.catalog_vendor_id/);
   assert.match(match, /IF _line\.product_id IS DISTINCT FROM _expected_product_id THEN/);
-  assert.match(match, /product_match_source = 'manual', product_match_decided_at = now\(\)/);
   // The invoice lock is taken before anything else is read or written.
   assert.ok(match.indexOf("FOR UPDATE") < match.indexOf("adopt_catalog_vendor_product"));
   assert.ok(
@@ -275,6 +385,24 @@ test("matching reuses adoption and confirmation and never touches inventory or p
   );
   // The expected product has no default: a caller must say what it believes the match is.
   assert.match(match, /_expected_product_id uuid\s*\)/);
+  // A conflict inside adoption is reported as a controlled error, with adoption rolled back.
+  assert.match(
+    match,
+    /BEGIN\s+_adoption := public\.adopt_catalog_vendor_product\(_organization_id, _listing\.id\);\s+EXCEPTION WHEN unique_violation OR check_violation OR foreign_key_violation THEN/,
+  );
+  assert.match(
+    match,
+    /RAISE EXCEPTION 'This catalog item conflicts with a product or vendor SKU mapping/,
+  );
+  // The function writes nothing itself: adoption and confirmation own every write, so the
+  // vendor SKU mapping rules exist in one place.
+  assert.deepEqual(
+    [...match.matchAll(/\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+(public\.\w+)/g)].map(
+      (found) => found[1],
+    ),
+    [],
+  );
+  assert.doesNotMatch(match, /normalize_catalog_sku_match_key|product_match_source/);
   for (const forbidden of [
     /inventory_/i,
     /post_reviewed_invoice/i,
@@ -288,46 +416,110 @@ test("matching reuses adoption and confirmation and never touches inventory or p
       forbidden,
     );
   }
-  // Only invoice_items is written directly.
+});
+
+test("a calculated total is withdrawn by the database when an owner changes a line", () => {
+  // Runs as the caller, like the Phase 6C.1 provenance guard, and only for API roles.
+  assert.doesNotMatch(withdraw, /SECURITY DEFINER/);
+  assert.match(withdraw, /RETURNS trigger/);
+  assert.match(
+    withdraw,
+    /BEGIN\s+IF current_user NOT IN \('authenticated', 'anon'\) THEN RETURN NULL; END IF;/,
+  );
+  // Added, removed, moved, or re-priced lines; nothing else.
+  assert.match(withdraw, /IF TG_OP = 'INSERT' THEN\s+_invoice_ids := ARRAY\[NEW\.invoice_id\];/);
+  assert.match(withdraw, /ELSIF TG_OP = 'DELETE' THEN\s+_invoice_ids := ARRAY\[OLD\.invoice_id\];/);
+  assert.match(
+    withdraw,
+    /NEW\.quantity IS DISTINCT FROM OLD\.quantity\s+OR NEW\.unit_price IS DISTINCT FROM OLD\.unit_price\s+OR NEW\.total_price IS DISTINCT FROM OLD\.total_price THEN/,
+  );
+  assert.match(withdraw, /ELSE\s+RETURN NULL;\s+END IF;/);
+  // Only amounts whose stored source is Derived, and never on a completed invoice.
+  assert.match(withdraw, /#>> '\{header,subtotal,source\}' = 'Derived'/);
+  assert.match(withdraw, /#>> '\{header,total,source\}' = 'Derived'/);
+  assert.match(
+    withdraw,
+    /_invoice\.posted_at IS NOT NULL OR _invoice\.processing_status = 'completed'/,
+  );
+  assert.match(withdraw, /CONTINUE WHEN NOT \(_subtotal OR _total\);/);
+  assert.match(
+    withdraw,
+    /'\{"value": null, "confidence": 0, "source": "Derived", "reviewed": false\}'/,
+  );
   assert.deepEqual(
-    [...match.matchAll(/\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+(public\.\w+)/g)].map(
+    [...withdraw.matchAll(/\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+(public\.\w+)/g)].map(
       (found) => found[1],
     ),
-    ["public.invoice_items"],
+    ["public.invoice_processing_jobs", "public.invoices"],
+  );
+  // It withdraws; it never calculates. The calculation exists once, in TypeScript.
+  assert.doesNotMatch(withdraw, /\bsum\(|total_price \+|\+ *tax|invoice_items\b/i);
+  assert.ok(
+    migrationCode.includes(
+      "REVOKE ALL ON FUNCTION public.invalidate_derived_invoice_totals() FROM PUBLIC, anon, authenticated;",
+    ),
   );
 });
 
-test("server functions call the RPCs as the signed-in owner and pass the shown match", () => {
-  const searchFn = between(
-    server,
-    "export const searchInvoiceCatalogFn",
-    "export const matchInvoiceItemToCatalogFn",
-  );
-  const matchFn = between(
-    server,
-    "export const matchInvoiceItemToCatalogFn",
-    "export const unlinkInvoiceItemProductFn",
-  );
-  for (const body of [searchFn, matchFn]) {
-    assert.match(body, /requireSupabaseAuth/);
+test("server functions hand the request's client to the review actions, which call the RPCs", () => {
+  // The handlers are one line each: validated input, the request's client, the user id.
+  for (const [fn, schema, action] of [
+    ["searchInvoiceCatalogFn", "catalogSearchInput", "searchInvoiceCatalog"],
+    ["matchInvoiceItemToCatalogFn", "catalogMatchInput", "matchInvoiceItemToCatalog"],
+    ["confirmInvoiceItemProductFn", "confirmMatchInput", "confirmInvoiceItemProduct"],
+    ["saveInvoiceItemFn", "itemInput", "saveInvoiceItem"],
+    ["deleteInvoiceItemFn", "itemKeyInput", "deleteInvoiceItem"],
+  ]) {
+    const handler = server.slice(server.indexOf(`export const ${fn} = `)).split("\n\n")[0];
     assert.match(
-      body,
-      /await assertOwner\(context\.supabase, context\.userId, data\.organizationId\)/,
+      handler,
+      new RegExp(`inputValidator\\(\\(value: unknown\\) => ${schema}\\.parse\\(value\\)\\)`),
+      fn,
     );
-    assert.doesNotMatch(body, /service_role|supabaseAdmin/i);
-    // The browser never names a vendor or catalog vendor.
-    assert.doesNotMatch(body, /vendorId|catalogVendorId/);
+    assert.match(handler, /\.middleware\(\[requireSupabaseAuth\]\)/, fn);
+    assert.match(
+      handler,
+      new RegExp(`=> ${action}\\(context\\.supabase, context\\.userId, data\\)\\);`),
+      fn,
+    );
+    assert.doesNotMatch(handler, /service_role|supabaseAdmin/i, fn);
   }
-  assert.match(searchFn, /rpc\('search_invoice_line_catalog_listings'/);
-  assert.match(searchFn, /toInvoiceCatalogSearch\(result\)/);
-  assert.match(matchFn, /requireDraftInvoice/);
-  assert.match(matchFn, /rpc\('match_invoice_item_to_catalog_listing'/);
-  assert.match(matchFn, /_expected_product_id: data\.expectedProductId/);
-  assert.match(matchFn, /expectedProductId: uuid\.nullable\(\)/);
+  const body = (name: string, next: string) =>
+    between(actions, `export async function ${name}`, next);
+  const searchAction = body(
+    "searchInvoiceCatalog",
+    "export async function matchInvoiceItemToCatalog",
+  );
+  const matchAction = actions.slice(
+    actions.indexOf("export async function matchInvoiceItemToCatalog"),
+  );
+  const confirmAction = body(
+    "confirmInvoiceItemProduct",
+    "export async function searchInvoiceCatalog",
+  );
+  for (const action of [searchAction, matchAction, confirmAction]) {
+    assert.match(action, /await assertOwner\(db, userId, data\.organizationId\);/);
+    // The browser never names a vendor or catalog vendor.
+    assert.doesNotMatch(action, /vendorId|catalogVendorId/);
+    // Database errors are translated; none is rethrown with its own text.
+    assert.match(action, /if \(error\) throw toInvoiceReviewError\(error, "/);
+    assert.doesNotMatch(action, /new Error\(error\.message\)/);
+  }
+  assert.match(searchAction, /db\.rpc\("search_invoice_line_catalog_listings"/);
+  assert.match(searchAction, /toInvoiceCatalogSearch\(result\)/);
+  assert.match(matchAction, /requireDraftInvoice/);
+  assert.match(matchAction, /db\.rpc\("match_invoice_item_to_catalog_listing"/);
+  assert.match(matchAction, /_expected_product_id: data\.expectedProductId/);
+  assert.match(confirmAction, /db\.rpc\("confirm_invoice_item_product"/);
+  assert.match(actions, /expectedProductId: uuid\.nullable\(\)/);
   assert.match(page, /expectedProductId: matching\.productId/);
+  // No framework, alias, or service-role dependency: the integration tests import this file.
+  assert.doesNotMatch(actions, /from "@\/|@tanstack|service_role|supabaseAdmin|process\.env/);
   // No catalog adoption or stocking is called directly from invoice review.
-  assert.doesNotMatch(server, /rpc\('adopt_catalog_vendor_product'/);
-  assert.doesNotMatch(server, /stock_catalog_vendor_product/);
+  for (const source of [server, actions]) {
+    assert.doesNotMatch(source, /rpc\(['"]adopt_catalog_vendor_product['"]/);
+    assert.doesNotMatch(source, /stock_catalog_vendor_product/);
+  }
   for (const rpc of [
     "match_invoice_item_to_catalog_listing",
     "search_invoice_line_catalog_listings",
@@ -339,6 +531,82 @@ test("server functions call the RPCs as the signed-in owner and pass the shown m
   assert.match(
     server,
     /mapping\.product_id === product\.id && mapping\.vendor_id === invoice\.vendor_id/,
+  );
+  // Every match-dialog RPC still made from the server functions file is translated too.
+  const dialogRpcs = server.slice(server.indexOf("export const unlinkInvoiceItemProductFn"));
+  assert.equal(dialogRpcs.match(/throw toInvoiceReviewError\(/g)?.length, 3);
+  assert.doesNotMatch(dialogRpcs, /new Error\((?:error|mappingError)\.message\)/);
+  // Approval translates database errors the same way.
+  assert.match(
+    server,
+    /if \(error\) throw toInvoiceReviewError\(error, 'Could not approve this invoice\.'\);/,
+  );
+});
+
+test("calculated totals are refreshed after every line or header change", () => {
+  const save = between(
+    actions,
+    "export async function saveInvoiceItem",
+    "export async function deleteInvoiceItem",
+  );
+  const remove = between(
+    actions,
+    "export async function deleteInvoiceItem",
+    "// Shapes a confirm/match RPC result.",
+  );
+  // After the update, after the insert, and after the delete; always after the write.
+  assert.equal(
+    save.match(
+      /await refreshDerivedInvoiceTotals\(db, data\.organizationId, data\.sourceFileId\);/g,
+    )?.length,
+    2,
+  );
+  assert.ok(save.indexOf(".update(payload)") < save.indexOf("await refreshDerivedInvoiceTotals("));
+  assert.ok(save.lastIndexOf(".insert({") < save.lastIndexOf("await refreshDerivedInvoiceTotals("));
+  assert.ok(remove.indexOf(".delete()") < remove.indexOf("await refreshDerivedInvoiceTotals("));
+  const header = between(
+    server,
+    "export const saveInvoiceHeaderFn",
+    "export const saveInvoiceItemFn",
+  );
+  assert.match(
+    header,
+    /await refreshDerivedInvoiceTotals\(context\.supabase, data\.organizationId, data\.sourceFileId, \{\s+subtotal: data\.subtotal \?\? null,\s+total: data\.invoiceTotal \?\? null,\s+\}\);/,
+  );
+  assert.ok(header.indexOf(".update({") < header.indexOf("await refreshDerivedInvoiceTotals("));
+  // The refresh writes only what the recalculation returns, and only for a draft.
+  const refresh = between(
+    actions,
+    "export async function refreshDerivedInvoiceTotals",
+    "export async function saveInvoiceItem",
+  );
+  assert.match(refresh, /if \(!stored \|\| !derivedTotalKeys\(stored\)\.length\) return false;/);
+  assert.match(refresh, /const refresh = recalculateDerivedTotals\(/);
+  assert.match(refresh, /if \("subtotal" in refresh\.amounts\)/);
+  assert.match(refresh, /if \("total" in refresh\.amounts\)/);
+  assert.match(
+    refresh,
+    /processing_status === "completed" \|\| invoice\.posted_at\) return false;/,
+  );
+});
+
+test("the reviewer is told when a catalog SKU mapping is kept", () => {
+  assert.match(
+    dialog,
+    /item\.skuFromCatalog && Boolean\(item\.sku\) && chosenProductId !== item\.productId/,
+  );
+  assert.match(
+    dialog,
+    /matches this line on this invoice only; the SKU stays mapped to its catalog product\./,
+  );
+  assert.match(
+    page,
+    /match\.preservedMapping\s+\? `Matched on this invoice only\. Vendor SKU \$\{match\.preservedMapping\.vendorSku\} stays mapped to its catalog product/,
+  );
+  assert.equal(page.match(/noteMatch\(\s+await (?:matchCatalog|confirmProduct)\(/g)?.length, 2);
+  assert.match(
+    server,
+    /skuFromCatalog: \(mappingsResult\.data \?\? \[\]\)\.some\(\(mapping\) => mapping\.id === item\.vendor_product_id && mapping\.catalog_vendor_product_id !== null\)/,
   );
 });
 
@@ -395,17 +663,33 @@ test("a calculated total is labelled as calculated on the review form", () => {
   assert.match(server, /derivedTotals: derivedTotalFields\(extraction\)/);
 });
 
-test("the behavior suite and mutation check cover every guard", () => {
-  assert.match(behavior, /^BEGIN;/m);
-  assert.match(behavior, /ROLLBACK;\s*$/);
-  assert.doesNotMatch(behavior, /^COMMIT;/m);
-  assert.match(behavior, /SELECT 15 AS checks_passed, 0 AS checks_failed;/);
-  for (let check = 1; check <= 15; check += 1)
-    assert.match(
-      behavior,
-      new RegExp(`-- Checks? (?:\\d+-)?${check}\\b|Checks \\d+-${check} failed`),
-      `check ${check}`,
-    );
+test("the behavior suites and mutation check cover every guard", () => {
+  const suites: Array<[string, number]> = [
+    ["beta_invoice_manual_catalog_matching_behavior.sql", 15],
+    ["beta_invoice_rematch_behavior.sql", 10],
+    ["beta_invoice_derived_totals_behavior.sql", 10],
+  ];
+  for (const [name, checks] of suites) {
+    const suite = read(`../supabase/tests/${name}`);
+    assert.match(suite, /^BEGIN;/m, name);
+    assert.match(suite, /ROLLBACK;\s*$/, name);
+    assert.doesNotMatch(suite, /^COMMIT;/m, name);
+    assert.ok(suite.includes(`SELECT ${checks} AS checks_passed, 0 AS checks_failed;`), name);
+    for (let check = 1; check <= checks; check += 1) {
+      assert.match(
+        suite,
+        new RegExp(
+          `-- Checks? (?:\\d+ and |\\d+-)?${check}\\b|Checks \\d+-${check} failed|Check ${check} `,
+        ),
+        `${name} check ${check}`,
+      );
+    }
+    assert.ok(mutationCheck.includes(`/supabase/tests/${name}"`), `mutation check runs ${name}`);
+  }
+  assert.equal(
+    behavior,
+    read("../supabase/tests/beta_invoice_manual_catalog_matching_behavior.sql"),
+  );
   for (const mutant of [
     "search ignores the invoice vendor",
     "search reaches the catalog for an unlinked vendor",
@@ -416,21 +700,31 @@ test("the behavior suite and mutation check cover every guard", () => {
     "match works for an unlinked vendor",
     "match overwrites an existing match silently",
     "match changes completed invoices",
-    "match duplicates a separator-variant mapping",
-    "match forgets manual provenance",
     "match reaches a line on another invoice",
+    "confirm repoints a catalog-adopted mapping",
+    "confirm shadows a catalog-adopted mapping with a separator variant",
+    "confirm links a line to an adopted mapping for another product",
+    "confirm never reuses the adopted mapping",
+    "confirm forgets manual provenance",
+    "adoption conflicts leak as constraint errors",
+    "calculated totals survive API line changes",
+    "database functions withdraw calculated totals too",
+    "printed totals are withdrawn",
+    "printed subtotals are withdrawn",
+    "a removed line keeps a calculated total",
+    "an added line keeps a calculated total",
+    "completed invoices lose calculated totals",
   ]) {
     assert.ok(mutationCheck.includes(`"${mutant}|`), `missing mutant: ${mutant}`);
   }
   // Every mutation target still exists in the migration.
-  const entries = mutationCheck
-    .slice(mutationCheck.indexOf("mutants=("), mutationCheck.indexOf("\n)\n"))
-    .split('\n  "')
-    .slice(1);
-  assert.equal(entries.length, 17);
+  const list = mutationCheck.slice(mutationCheck.indexOf("mutants=("));
+  const entries = list.slice(0, list.indexOf("\n)\n")).split('\n  "').slice(1);
+  assert.equal(entries.length, 36);
   for (const entry of entries) {
-    const parts = entry.replace(/"\s*$/, "").split("|").slice(1);
-    for (let index = 0; index < parts.length; index += 2)
+    const parts = entry.replace(/"\s*$/, "").replace(/\\"/g, '"').split("|").slice(1);
+    for (let index = 0; index < parts.length; index += 2) {
       assert.ok(migration.includes(parts[index]), `stale mutation target: ${parts[index]}`);
+    }
   }
 });

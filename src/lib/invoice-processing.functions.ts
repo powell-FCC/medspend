@@ -12,13 +12,28 @@ import { derivedTotalFields } from '@/extraction/totals';
 import { resolveVendor } from '@/extraction/document-identity';
 import { matchInvoiceProduct } from '@/product-identity/matcher';
 import { presentInvoiceLineMatch, toInvoiceLineMatchSource } from '@/invoice/line-match';
-import { toInvoiceCatalogSearch } from '@/invoice/catalog-match';
+import {
+  assertOwner,
+  catalogMatchInput,
+  catalogSearchInput,
+  confirmInvoiceItemProduct,
+  confirmMatchInput,
+  deleteInvoiceItem,
+  itemInput,
+  itemKeyInput,
+  markExtractionReviewed,
+  matchInvoiceItemToCatalog,
+  refreshDerivedInvoiceTotals,
+  requireDraftInvoice,
+  reviewKey,
+  saveInvoiceItem,
+  searchInvoiceCatalog,
+  toInvoiceReviewError,
+} from '@/invoice/review-actions';
 import type { OCRProvider } from '@/extraction/providers';
-import type { InvoiceApprovalResult, InvoiceCatalogSearch, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
+import type { InvoiceApprovalResult, InvoiceCatalogSearch, InvoiceMatchResult, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
 
 const uuid = z.string().uuid();
-const reviewKey = z.object({ sourceFileId: uuid, organizationId: uuid });
-const optionalText = z.string().trim().max(500).default('');
 const headerInput = reviewKey.extend({
   vendorId: uuid.optional().nullable(),
   vendorName: z.string().trim().min(1).max(200),
@@ -36,45 +51,8 @@ const headerInput = reviewKey.extend({
   tax: z.number().nonnegative().optional().nullable(),
   shipping: z.number().nonnegative().optional().nullable(),
 });
-const itemInput = reviewKey.extend({
-  id: uuid.optional(),
-  sku: z.string().trim().max(120).default(''),
-  description: z.string().trim().min(1).max(500),
-  manufacturer: optionalText,
-  category: z.string().trim().max(120).default(''),
-  quantity: z.number().positive(),
-  unitOfMeasure: z.string().trim().min(1).max(100),
-  unitPrice: z.number().nonnegative(),
-  totalPrice: z.number().nonnegative(),
-  packageSize: z.string().trim().max(120).default(''),
-  vendorProductId: uuid.optional().nullable(),
-});
-
-async function assertOwner(db: SupabaseClient<Database>, userId: string, organizationId: string) {
-  const { data, error } = await db.from('organization_memberships').select('role').eq('organization_id', organizationId).eq('user_id', userId).eq('active', true).maybeSingle();
-  if (error) throw new Error(error.message);
-  if (data?.role !== 'owner') throw new Error('Forbidden: owner access required');
-}
-
-async function requireDraftInvoice(db: SupabaseClient<Database>, organizationId: string, sourceFileId: string) {
-  const { data, error } = await db.from('invoices').select('id,processing_status,posted_at').eq('organization_id', organizationId).eq('source_file_id', sourceFileId).single();
-  if (error) throw new Error(error.message);
-  if (data.processing_status === 'completed' || data.posted_at) throw new Error('Completed invoices cannot be edited.');
-  return data;
-}
-
-async function markExtractionReviewed(db: SupabaseClient<Database>, organizationId: string, sourceFileId: string, target: { header: true } | { itemIndex: number }) {
-  const { data } = await db.from('invoice_processing_jobs').select('extraction_result').eq('invoice_id', sourceFileId).eq('organization_id', organizationId).maybeSingle();
-  if (!data?.extraction_result) return;
-  const extraction = structuredClone(data.extraction_result) as unknown as CanonicalInvoiceExtraction;
-  const fields = 'header' in target ? Object.values(extraction.header) : Object.values(extraction.items[target.itemIndex] ?? {});
-  for (const field of fields) field.reviewed = true;
-  await db
-    .from('invoice_processing_jobs')
-    .update({ extraction_result: extraction as unknown as Json })
-    .eq('invoice_id', sourceFileId)
-    .eq('organization_id', organizationId);
-}
+// Owner checks, input shapes, and the review actions themselves live in @/invoice/review-actions,
+// where the integration tests run them against a real database.
 
 async function attemptMockExtraction(db: SupabaseClient<Database>, organizationId: string, sourceFileId: string, storagePath: string, invoiceId: string, providers: NonNullable<ReturnType<typeof getExtractionProviders>>) {
   const { error: claimedError } = await db.from('invoice_processing_jobs').update({ status: 'processing', extraction_error: null }).eq('invoice_id', sourceFileId).eq('organization_id', organizationId).eq('status', 'uploaded');
@@ -340,7 +318,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         .eq('invoice_id', invoice.id)
         .order('line_number', { ascending: true })
         .order('created_at', { ascending: true }),
-      context.supabase.from('vendor_products').select('id,organization_id,vendor_id,product_id,vendor_sku,manufacturer_sku,package_size,unit_of_measure').eq('organization_id', data.organizationId).eq('active', true).order('vendor_sku'),
+      context.supabase.from('vendor_products').select('id,organization_id,vendor_id,product_id,vendor_sku,manufacturer_sku,package_size,unit_of_measure,catalog_vendor_product_id').eq('organization_id', data.organizationId).eq('active', true).order('vendor_sku'),
       context.supabase
         .from('products')
         .select('id,organization_id,name,description,manufacturer,internal_item_code,vendor_item_number,preferred_vendor_id,unit_of_measure,pack_size')
@@ -451,6 +429,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
           productName: match.productId ? (productNames.get(match.productId) ?? 'Unknown product') : '',
         },
         matchSource: toInvoiceLineMatchSource(item.product_match_source),
+        skuFromCatalog: (mappingsResult.data ?? []).some((mapping) => mapping.id === item.vendor_product_id && mapping.catalog_vendor_product_id !== null),
         reviewStatus: item.review_status as InvoiceItemReviewStatus,
         extractionConfidence:
           extraction?.items[index] && Object.values(extraction.items[index]).some((field) => !field.reviewed)
@@ -542,89 +521,24 @@ export const saveInvoiceHeaderFn = createServerFn({ method: 'POST' })
     await markExtractionReviewed(context.supabase, data.organizationId, data.sourceFileId, {
       header: true,
     });
+    // Tax and shipping feed a calculated total. A calculated amount the owner changed on the
+    // form becomes the owner's; one left as shown is recalculated.
+    await refreshDerivedInvoiceTotals(context.supabase, data.organizationId, data.sourceFileId, {
+      subtotal: data.subtotal ?? null,
+      total: data.invoiceTotal ?? null,
+    });
     return { ok: true };
   });
 
 export const saveInvoiceItemFn = createServerFn({ method: 'POST' })
   .inputValidator((value: unknown) => itemInput.parse(value))
   .middleware([requireSupabaseAuth])
-  .handler(async ({ data, context }) => {
-    await assertOwner(context.supabase, context.userId, data.organizationId);
-    const invoice = await requireDraftInvoice(context.supabase, data.organizationId, data.sourceFileId);
-    const payload = {
-      sku: data.sku || null,
-      description: data.description,
-      manufacturer: data.manufacturer || null,
-      category: data.category || null,
-      quantity: data.quantity,
-      unit_of_measure: data.unitOfMeasure,
-      unit_price: data.unitPrice,
-      total_price: data.totalPrice,
-      package_size: data.packageSize || null,
-      vendor_product_id: data.vendorProductId ?? null,
-      product_id: null as string | null,
-      review_status: 'pending_review',
-    };
-    if (data.vendorProductId) {
-      const { data: mapping, error: mappingError } = await context.supabase.from('vendor_products').select('product_id').eq('id', data.vendorProductId).eq('organization_id', data.organizationId).eq('active', true).single();
-      if (mappingError) throw new Error(mappingError.message);
-      payload.product_id = mapping.product_id;
-    }
-    if (data.id) {
-      const { data: existing } = await context.supabase
-        .from('invoice_items')
-        .select('line_number,sku,description,manufacturer,unit_of_measure,package_size,product_id,vendor_product_id')
-        .eq('id', data.id)
-        .eq('invoice_id', invoice.id)
-        .eq('organization_id', data.organizationId)
-        .maybeSingle();
-      if (!data.vendorProductId && existing?.product_id) {
-        const identityUnchanged =
-          (existing.sku ?? '') === data.sku &&
-          existing.description === data.description &&
-          (existing.manufacturer ?? '') === data.manufacturer &&
-          (existing.unit_of_measure ?? '') === data.unitOfMeasure &&
-          (existing.package_size ?? '') === data.packageSize;
-        // Keep the existing link and its mapping so provenance (manual or automatic) is unchanged.
-        if (identityUnchanged) {
-          payload.product_id = existing.product_id;
-          payload.vendor_product_id = existing.vendor_product_id;
-        }
-      }
-      const { error } = await context.supabase.from('invoice_items').update(payload).eq('id', data.id).eq('invoice_id', invoice.id).eq('organization_id', data.organizationId);
-      if (error) throw new Error(error.message);
-      if (existing?.line_number)
-        await markExtractionReviewed(context.supabase, data.organizationId, data.sourceFileId, {
-          itemIndex: existing.line_number - 1,
-        });
-      return { id: data.id };
-    }
-    const { count, error: countError } = await context.supabase.from('invoice_items').select('id', { count: 'exact', head: true }).eq('invoice_id', invoice.id);
-    if (countError) throw new Error(countError.message);
-    const { data: item, error } = await context.supabase
-      .from('invoice_items')
-      .insert({
-        invoice_id: invoice.id,
-        organization_id: data.organizationId,
-        line_number: (count ?? 0) + 1,
-        ...payload,
-      })
-      .select('id')
-      .single();
-    if (error) throw new Error(error.message);
-    return { id: item.id };
-  });
+  .handler(({ data, context }) => saveInvoiceItem(context.supabase, context.userId, data));
 
 export const deleteInvoiceItemFn = createServerFn({ method: 'POST' })
-  .inputValidator((value: unknown) => reviewKey.extend({ id: uuid }).parse(value))
+  .inputValidator((value: unknown) => itemKeyInput.parse(value))
   .middleware([requireSupabaseAuth])
-  .handler(async ({ data, context }) => {
-    await assertOwner(context.supabase, context.userId, data.organizationId);
-    const invoice = await requireDraftInvoice(context.supabase, data.organizationId, data.sourceFileId);
-    const { error } = await context.supabase.from('invoice_items').delete().eq('id', data.id).eq('invoice_id', invoice.id).eq('organization_id', data.organizationId);
-    if (error) throw new Error(error.message);
-    return { ok: true };
-  });
+  .handler(({ data, context }) => deleteInvoiceItem(context.supabase, context.userId, data));
 
 export const approveInvoiceFn = createServerFn({ method: 'POST' })
   .inputValidator((value: unknown) => reviewKey.parse(value))
@@ -639,7 +553,8 @@ export const approveInvoiceFn = createServerFn({ method: 'POST' })
       _organization_id: data.organizationId,
       _source_file_id: data.sourceFileId,
     });
-    if (error) throw new Error(error.message);
+    // Posting's own refusals pass through; a constraint failure becomes a reviewer-facing message.
+    if (error) throw toInvoiceReviewError(error, 'Could not approve this invoice.');
     if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('Invoice approval returned an invalid result.');
     return {
       invoiceId: String(result.invoiceId),
@@ -649,64 +564,20 @@ export const approveInvoiceFn = createServerFn({ method: 'POST' })
     };
   });
 
-const matchInput = reviewKey.extend({
-  itemId: uuid,
-  productId: uuid,
-  rememberVendorSku: z.boolean().default(true),
-});
 export const confirmInvoiceItemProductFn = createServerFn({ method: 'POST' })
-  .inputValidator((value: unknown) => matchInput.parse(value))
+  .inputValidator((value: unknown) => confirmMatchInput.parse(value))
   .middleware([requireSupabaseAuth])
-  .handler(async ({ data, context }) => {
-    await assertOwner(context.supabase, context.userId, data.organizationId);
-    await requireDraftInvoice(context.supabase, data.organizationId, data.sourceFileId);
-    const { data: result, error } = await context.supabase.rpc('confirm_invoice_item_product', {
-      _organization_id: data.organizationId,
-      _source_file_id: data.sourceFileId,
-      _invoice_item_id: data.itemId,
-      _product_id: data.productId,
-      _remember_vendor_sku: data.rememberVendorSku,
-    });
-    if (error) throw new Error(error.message);
-    return result;
-  });
+  .handler(({ data, context }): Promise<InvoiceMatchResult> => confirmInvoiceItemProduct(context.supabase, context.userId, data));
 
-// Manual recovery beyond the organization's own products: the global catalog of the catalog
-// vendor this invoice's vendor is explicitly linked to. The database derives that vendor
-// from the invoice; the browser cannot ask for another vendor's catalog.
 export const searchInvoiceCatalogFn = createServerFn({ method: 'POST' })
-  .inputValidator((value: unknown) => reviewKey.extend({ query: z.string().max(200).default('') }).parse(value))
+  .inputValidator((value: unknown) => catalogSearchInput.parse(value))
   .middleware([requireSupabaseAuth])
-  .handler(async ({ data, context }): Promise<InvoiceCatalogSearch> => {
-    await assertOwner(context.supabase, context.userId, data.organizationId);
-    const { data: result, error } = await context.supabase.rpc('search_invoice_line_catalog_listings', {
-      _organization_id: data.organizationId,
-      _source_file_id: data.sourceFileId,
-      _query: data.query,
-    });
-    if (error) throw new Error(error.message);
-    return toInvoiceCatalogSearch(result);
-  });
+  .handler(({ data, context }): Promise<InvoiceCatalogSearch> => searchInvoiceCatalog(context.supabase, context.userId, data));
 
-// One explicit owner decision: adopt the chosen catalog listing if needed and match the line,
-// atomically in the database. expectedProductId is the match the reviewer was shown; the
-// database refuses if the line has since been matched to something else.
 export const matchInvoiceItemToCatalogFn = createServerFn({ method: 'POST' })
-  .inputValidator((value: unknown) => reviewKey.extend({ itemId: uuid, catalogVendorProductId: uuid, expectedProductId: uuid.nullable() }).parse(value))
+  .inputValidator((value: unknown) => catalogMatchInput.parse(value))
   .middleware([requireSupabaseAuth])
-  .handler(async ({ data, context }) => {
-    await assertOwner(context.supabase, context.userId, data.organizationId);
-    await requireDraftInvoice(context.supabase, data.organizationId, data.sourceFileId);
-    const { data: result, error } = await context.supabase.rpc('match_invoice_item_to_catalog_listing', {
-      _organization_id: data.organizationId,
-      _source_file_id: data.sourceFileId,
-      _invoice_item_id: data.itemId,
-      _catalog_vendor_product_id: data.catalogVendorProductId,
-      _expected_product_id: data.expectedProductId,
-    });
-    if (error) throw new Error(error.message);
-    return result;
-  });
+  .handler(({ data, context }): Promise<InvoiceMatchResult> => matchInvoiceItemToCatalog(context.supabase, context.userId, data));
 
 export const unlinkInvoiceItemProductFn = createServerFn({ method: 'POST' })
   .inputValidator((value: unknown) => reviewKey.extend({ itemId: uuid, forgetMapping: z.boolean().default(false) }).parse(value))
@@ -720,7 +591,7 @@ export const unlinkInvoiceItemProductFn = createServerFn({ method: 'POST' })
       _invoice_item_id: data.itemId,
       _forget_mapping: data.forgetMapping,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw toInvoiceReviewError(error, 'Could not remove the product match.');
     return { ok: true };
   });
 
@@ -735,7 +606,7 @@ export const createProductFromInvoiceItemFn = createServerFn({ method: 'POST' })
       _source_file_id: data.sourceFileId,
       _invoice_item_id: data.itemId,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw toInvoiceReviewError(error, 'Could not create a product from this line.');
     if (!result || typeof result !== 'object' || Array.isArray(result) || !result.productId) throw new Error('Product creation returned an invalid result.');
     const { error: mappingError } = await context.supabase.rpc('confirm_invoice_item_product', {
       _organization_id: data.organizationId,
@@ -744,6 +615,6 @@ export const createProductFromInvoiceItemFn = createServerFn({ method: 'POST' })
       _product_id: String(result.productId),
       _remember_vendor_sku: true,
     });
-    if (mappingError) throw new Error(mappingError.message);
+    if (mappingError) throw toInvoiceReviewError(mappingError, 'Could not create a product from this line.');
     return result;
   });

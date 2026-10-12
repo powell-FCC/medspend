@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Manual catalog matching mutation check. Proves the behavior suite fails when a critical
-# guard in the migration is removed. Disposable databases only: never point this at
-# production.
+# Manual catalog matching mutation check. Proves the behavior suites fail when a critical
+# guard in the migration is removed: catalog search and matching, manual re-matching of
+# catalog-adopted SKUs, and the withdrawal of calculated totals. Disposable databases only:
+# never point this at production.
 #
 # Usage:
 #   supabase/tests/beta_invoice_manual_catalog_mutation_check.sh <template_database>
@@ -15,7 +16,11 @@ set -euo pipefail
 template="${1:?usage: $0 <template_database>}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 migration="$root/supabase/migrations/20261012120000_beta_invoice_manual_catalog_matching.sql"
-suite="$root/supabase/tests/beta_invoice_manual_catalog_matching_behavior.sql"
+suites=(
+  "$root/supabase/tests/beta_invoice_manual_catalog_matching_behavior.sql"
+  "$root/supabase/tests/beta_invoice_rematch_behavior.sql"
+  "$root/supabase/tests/beta_invoice_derived_totals_behavior.sql"
+)
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -41,9 +46,35 @@ mutants=(
      OR _listing.discontinued|  IF false"
   "match overwrites an existing match silently|IF _line.product_id IS DISTINCT FROM _expected_product_id THEN|IF false THEN"
   "match changes completed invoices|  IF _invoice.posted_at IS NOT NULL OR _invoice.processing_status = 'completed' THEN|  IF false THEN"
-  "match duplicates a separator-variant mapping|  IF public.normalize_catalog_sku_match_key(_line.sku) <> ''|  IF false AND public.normalize_catalog_sku_match_key(_line.sku) <> ''"
-  "match forgets manual provenance|      product_match_source = 'manual', product_match_decided_at = now()|      product_match_source = NULL, product_match_decided_at = NULL"
+  "confirm repoints a catalog-adopted mapping|IF _mapping.product_id = _product_id OR _mapping.catalog_vendor_product_id IS NULL THEN|IF true THEN"
+  "confirm shadows a catalog-adopted mapping with a separator variant|      IF _adopted_count = 0 THEN|      IF true THEN"
+  "confirm links a line to an adopted mapping for another product|IF _adopted_count = 1 AND _mapping.active AND _mapping.product_id = _product_id THEN|IF true THEN"
+  "confirm never reuses the adopted mapping|IF _adopted_count = 1 AND _mapping.active AND _mapping.product_id = _product_id THEN|IF false THEN"
+  "confirm forgets manual provenance|    product_match_source = 'manual', product_match_decided_at = now()|    product_match_source = NULL, product_match_decided_at = NULL"
+  "confirm does not say which mapping it kept|'preservedVendorProductId', _preserved_vendor_product_id);|'preservedVendorProductId', NULL);"
+  "adoption conflicts leak as constraint errors|EXCEPTION WHEN unique_violation OR check_violation OR foreign_key_violation THEN|EXCEPTION WHEN division_by_zero THEN"
   "match reaches a line on another invoice|WHERE id = _invoice_item_id AND invoice_id = _invoice.id AND organization_id = _organization_id FOR UPDATE;|WHERE id = _invoice_item_id AND organization_id = _organization_id FOR UPDATE;"
+  "calculated totals survive API line changes|  IF current_user NOT IN ('authenticated', 'anon') THEN RETURN NULL; END IF;|  RETURN NULL;"
+  "database functions withdraw calculated totals too|  IF current_user NOT IN ('authenticated', 'anon') THEN RETURN NULL; END IF;|"
+  "printed totals are withdrawn|    _total := coalesce(_extraction #>> '{header,total,source}' = 'Derived', false);|    _total := true;"
+  "printed subtotals are withdrawn|    _subtotal := coalesce(_extraction #>> '{header,subtotal,source}' = 'Derived', false);|    _subtotal := true;"
+  "a price change keeps a calculated total|        OR NEW.unit_price IS DISTINCT FROM OLD.unit_price|"
+  "a line total change keeps a calculated total|        OR NEW.total_price IS DISTINCT FROM OLD.total_price THEN| THEN"
+  "a removed line keeps a calculated total|    _invoice_ids := ARRAY[OLD.invoice_id];|    _invoice_ids := ARRAY[]::uuid[];"
+  "an added line keeps a calculated total|    _invoice_ids := ARRAY[NEW.invoice_id];
+  ELSIF TG_OP = 'DELETE' THEN|    _invoice_ids := ARRAY[]::uuid[];
+  ELSIF TG_OP = 'DELETE' THEN"
+  "any line update withdraws calculated totals|  ELSE
+    RETURN NULL;
+  END IF;|  ELSE
+    _invoice_ids := ARRAY[NEW.invoice_id];
+  END IF;"
+  "completed invoices lose calculated totals|      OR _invoice.posted_at IS NOT NULL OR _invoice.processing_status = 'completed';|;"
+  "the stored extraction keeps a withdrawn total|    UPDATE public.invoice_processing_jobs SET extraction_result = _extraction
+    WHERE invoice_id = _invoice.source_file_id AND organization_id = _invoice.organization_id;|"
+  "the invoice row keeps a withdrawn subtotal|      subtotal = CASE WHEN _subtotal THEN NULL ELSE subtotal END,|      subtotal = subtotal,"
+  "the invoice row keeps a withdrawn total|      total_amount = CASE WHEN _total THEN NULL ELSE total_amount END,|      total_amount = total_amount,"
+  "a withdrawn total stays reviewed|\"source\": \"Derived\", \"reviewed\": false}';|\"source\": \"Derived\", \"reviewed\": true}';"
 )
 
 survived=0
@@ -66,11 +97,20 @@ PY
   psql -q -d postgres -c "DROP DATABASE IF EXISTS $db" -c "CREATE DATABASE $db TEMPLATE $template" >/dev/null
   if ! psql -q -v ON_ERROR_STOP=1 -d "$db" -1 -f "$work/mutant.sql" >/dev/null 2>"$work/apply.err"; then
     echo "KILLED (migration rejected) - $name"
-  elif psql -q -v ON_ERROR_STOP=1 -d "$db" -f "$suite" >/dev/null 2>"$work/suite.err"; then
-    echo "SURVIVED - $name"
-    survived=$((survived + 1))
   else
-    echo "KILLED - $name: $(grep -m1 -o 'Checks* [0-9-]* failed[^:]*\|ERROR: .*' "$work/suite.err" | head -c 160)"
+    killed=""
+    for suite in "${suites[@]}"; do
+      if ! psql -q -v ON_ERROR_STOP=1 -d "$db" -f "$suite" >/dev/null 2>"$work/suite.err"; then
+        killed="$(basename "$suite" .sql): $(grep -m1 -o 'Checks* [0-9-]*[^:]* failed[^:]*\|ERROR: .*' "$work/suite.err" | head -c 140)"
+        break
+      fi
+    done
+    if [ -z "$killed" ]; then
+      echo "SURVIVED - $name"
+      survived=$((survived + 1))
+    else
+      echo "KILLED - $name: $killed"
+    fi
   fi
   psql -q -d postgres -c "DROP DATABASE $db" >/dev/null
 done

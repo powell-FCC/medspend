@@ -502,11 +502,11 @@ SELECT pg_temp.beta_expect_error(
   'Invoice line not found');
 
 -- Check 11: when adoption needs reconciliation (an organization product already has the
--- catalog product's name) the whole decision rolls back; the reviewer picks that product
--- under their own products instead.
+-- catalog product's name) the whole decision rolls back with a controlled error, not the
+-- constraint failure; the reviewer picks that product under their own products instead.
 SELECT pg_temp.beta_expect_error(
   $$SELECT public.match_invoice_item_to_catalog_listing('be110000-0000-4000-8000-000000000101', 'be110000-0000-4000-8000-000000000601', 'be110000-0000-4000-8000-000000000809', 'be110000-0000-4000-8000-000000000239', NULL)$$,
-  'manual reconciliation is required');
+  'conflicts with a product or vendor SKU mapping your organization already has');
 DO $beta_check_10_11$
 BEGIN
   IF pg_temp.beta_identity_counts() IS DISTINCT FROM (SELECT value FROM beta_snapshots WHERE name = 'identity_before_refusals')
