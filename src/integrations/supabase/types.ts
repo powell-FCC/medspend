@@ -2255,6 +2255,17 @@ export type Database = {
         }
         Returns: Json
       }
+      confirm_invoice_item_product_expected: {
+        Args: {
+          _expected_product_id: string | null
+          _invoice_item_id: string
+          _organization_id: string
+          _product_id: string
+          _remember_vendor_sku?: boolean
+          _source_file_id: string
+        }
+        Returns: Json
+      }
       create_invitation: {
         Args: {
           _default_location_id: string

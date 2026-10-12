@@ -335,6 +335,8 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
                 sourceFileId,
                 itemId: matching.id,
                 productId,
+                // The match this dialog showed; the database refuses if it has changed since.
+                expectedProductId: matching.productId,
                 rememberVendorSku: true,
               },
             }),

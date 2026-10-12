@@ -26,13 +26,23 @@
 --     the moment an owner adds, removes, or re-prices a line, so a calculated amount can
 --     never outlive the lines it was calculated from. The application recalculates it.
 --
--- No table or column is changed. Phase 6C.1's migration file is not edited.
+--   * post_reviewed_invoice (Phase 6C.1) is redefined so that a line deliberately re-matched
+--     to another product can be posted: the product's inventory item does not claim a
+--     vendor SKU label another product's item already carries. No inventory item,
+--     adjustment, price observation, or mapping of the other product is touched.
+--   * create_product_from_invoice_item (Phase 6C.1) is redefined to refuse, before creating
+--     anything, when the line's vendor SKU already identifies a product.
+--   * confirm_invoice_item_product_expected adds stale protection to plain confirmation.
+--
+-- No table, column, index, or constraint is changed. Phase 6C.1's migration file is not edited.
 -- Rollback: DROP TRIGGER invoice_items_invalidate_derived_totals ON public.invoice_items;
 --           DROP FUNCTION public.invalidate_derived_invoice_totals();
 --           DROP FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uuid, uuid, uuid, uuid);
 --           DROP FUNCTION public.search_invoice_line_catalog_listings(uuid, uuid, text, integer);
---           then re-run the CREATE OR REPLACE FUNCTION public.confirm_invoice_item_product
---           statement from 20261010120000_phase6c1_invoice_exact_match_auto_resolution.sql.
+--           DROP FUNCTION public.confirm_invoice_item_product_expected(uuid, uuid, uuid, uuid, uuid, boolean);
+--           then re-run the CREATE OR REPLACE statements for confirm_invoice_item_product,
+--           create_product_from_invoice_item, and post_reviewed_invoice from
+--           20261010120000_phase6c1_invoice_exact_match_auto_resolution.sql.
 
 BEGIN;
 
@@ -273,6 +283,352 @@ $$;
 -- CREATE OR REPLACE keeps the Phase 6C.1 grants; restate them.
 REVOKE ALL ON FUNCTION public.confirm_invoice_item_product(uuid, uuid, uuid, uuid, boolean) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.confirm_invoice_item_product(uuid, uuid, uuid, uuid, boolean) TO authenticated;
+
+-- The manual confirmation with stale protection, for the review dialog. _expected_product_id
+-- is the product the reviewer saw on the line (NULL for an unmatched line). If the line now
+-- points anywhere else, nothing is written. The check and the confirmation share one
+-- transaction and the same invoice and line locks, so nothing can change in between.
+CREATE FUNCTION public.confirm_invoice_item_product_expected(
+  _organization_id uuid,
+  _source_file_id uuid,
+  _invoice_item_id uuid,
+  _product_id uuid,
+  _expected_product_id uuid,
+  _remember_vendor_sku boolean DEFAULT true
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _invoice public.invoices%ROWTYPE;
+  _line public.invoice_items%ROWTYPE;
+BEGIN
+  IF NOT public.has_org_role(_organization_id, auth.uid(), ARRAY['owner']::public.org_role[]) THEN
+    RAISE EXCEPTION 'Forbidden: owner access required';
+  END IF;
+  SELECT * INTO _invoice FROM public.invoices
+    WHERE organization_id = _organization_id AND source_file_id = _source_file_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invoice review not found'; END IF;
+  SELECT * INTO _line FROM public.invoice_items
+    WHERE id = _invoice_item_id AND invoice_id = _invoice.id AND organization_id = _organization_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invoice line not found'; END IF;
+  IF _line.product_id IS DISTINCT FROM _expected_product_id THEN
+    RAISE EXCEPTION 'This line''s product match has changed; reload the invoice before changing it';
+  END IF;
+  RETURN public.confirm_invoice_item_product(
+    _organization_id, _source_file_id, _invoice_item_id, _product_id, _remember_vendor_sku);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.confirm_invoice_item_product_expected(uuid, uuid, uuid, uuid, uuid, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.confirm_invoice_item_product_expected(uuid, uuid, uuid, uuid, uuid, boolean) TO authenticated;
+
+COMMENT ON FUNCTION public.confirm_invoice_item_product_expected(uuid, uuid, uuid, uuid, uuid, boolean) IS
+  'Owner-only manual product confirmation that refuses when the line no longer has the product the reviewer was shown. Delegates to confirm_invoice_item_product.';
+
+-- Phase 6C.1 product creation from a line, with one addition: it refuses, before creating
+-- anything, when the line's vendor SKU already identifies a product. Without this a
+-- reviewer who removed a match could create a second product and a separator-variant
+-- mapping (3240025) beside the catalog-adopted one (324-0025).
+CREATE OR REPLACE FUNCTION public.create_product_from_invoice_item(
+  _organization_id uuid,
+  _source_file_id uuid,
+  _invoice_item_id uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _invoice public.invoices%ROWTYPE;
+  _line public.invoice_items%ROWTYPE;
+  _product_id uuid;
+  _vendor_product_id uuid;
+  _category_id uuid;
+  _existing public.vendor_products%ROWTYPE;
+  _existing_name text;
+BEGIN
+  IF NOT public.has_org_role(_organization_id, auth.uid(), ARRAY['owner']::public.org_role[]) THEN
+    RAISE EXCEPTION 'Forbidden: owner access required';
+  END IF;
+  SELECT * INTO _invoice FROM public.invoices
+    WHERE organization_id = _organization_id AND source_file_id = _source_file_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invoice review not found'; END IF;
+  IF _invoice.posted_at IS NOT NULL OR _invoice.processing_status = 'completed' THEN
+    RAISE EXCEPTION 'Completed invoices cannot be changed';
+  END IF;
+  IF _invoice.vendor_id IS NULL THEN RAISE EXCEPTION 'Select an existing vendor before creating a product'; END IF;
+  SELECT * INTO _line FROM public.invoice_items
+    WHERE id = _invoice_item_id AND invoice_id = _invoice.id AND organization_id = _organization_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invoice line not found'; END IF;
+  IF _line.product_id IS NOT NULL THEN
+    RETURN jsonb_build_object('productId', _line.product_id, 'vendorProductId', _line.vendor_product_id);
+  END IF;
+  -- A vendor SKU that already identifies a product is not given a second identity. Checked
+  -- before anything is created: first a catalog-adopted mapping for this SKU (exact, or
+  -- differing only by separators; deactivated ones included, as in the resolver), then an
+  -- active mapping the owner remembered for the exact SKU.
+  IF nullif(btrim(_line.sku), '') IS NOT NULL THEN
+    SELECT * INTO _existing FROM public.vendor_products
+      WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id
+        AND catalog_vendor_product_id IS NOT NULL
+        AND public.normalize_catalog_sku_match_key(_line.sku) <> ''
+        AND public.normalize_catalog_sku_match_key(vendor_sku) = public.normalize_catalog_sku_match_key(_line.sku)
+      ORDER BY active DESC, created_at, id LIMIT 1;
+    IF FOUND THEN
+      SELECT name INTO _existing_name FROM public.products
+        WHERE id = _existing.product_id AND organization_id = _organization_id;
+      RAISE EXCEPTION 'Vendor SKU % is already the catalog item "%" in your products (stored as %). Match this line to that product instead, or choose another existing product for this invoice only.',
+        btrim(_line.sku), coalesce(_existing_name, 'unknown product'), _existing.vendor_sku;
+    END IF;
+    PERFORM 1 FROM public.vendor_products
+      WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id
+        AND active AND lower(btrim(vendor_sku)) = lower(btrim(_line.sku));
+    IF FOUND THEN
+      RAISE EXCEPTION 'This vendor SKU already maps to another product; choose or correct that match instead';
+    END IF;
+  END IF;
+  IF nullif(btrim(_line.category), '') IS NOT NULL THEN
+    SELECT id INTO _category_id FROM public.product_categories
+      WHERE organization_id = _organization_id AND active = true
+        AND normalized_name = public.normalize_catalog_text(_line.category) LIMIT 1;
+  END IF;
+  INSERT INTO public.products
+    (organization_id, name, description, category_id, manufacturer, preferred_vendor_id,
+     unit, unit_of_measure, pack_size, approved, active, staff_requestable)
+  VALUES
+    (_organization_id, btrim(_line.description), btrim(_line.description), _category_id,
+     nullif(btrim(_line.manufacturer), ''), _invoice.vendor_id,
+     coalesce(nullif(btrim(_line.unit_of_measure), ''), 'each'),
+     coalesce(nullif(btrim(_line.unit_of_measure), ''), 'each'),
+     nullif(btrim(_line.package_size), ''), true, true, true)
+  RETURNING id INTO _product_id;
+  IF nullif(btrim(_line.sku), '') IS NOT NULL THEN
+    INSERT INTO public.vendor_products
+      (organization_id, vendor_id, product_id, vendor_sku, package_size, unit_of_measure)
+    VALUES
+      (_organization_id, _invoice.vendor_id, _product_id, btrim(_line.sku),
+       nullif(btrim(_line.package_size), ''), nullif(btrim(_line.unit_of_measure), ''))
+    ON CONFLICT DO NOTHING RETURNING id INTO _vendor_product_id;
+    IF _vendor_product_id IS NULL THEN
+      RAISE EXCEPTION 'This vendor SKU already maps to another product; choose or correct that match instead';
+    END IF;
+  END IF;
+  UPDATE public.invoice_items SET product_id = _product_id,
+    vendor_product_id = _vendor_product_id, review_status = 'pending_review',
+    product_match_source = 'manual', product_match_decided_at = now()
+  WHERE id = _line.id;
+  RETURN jsonb_build_object('productId', _product_id, 'vendorProductId', _vendor_product_id);
+END;
+$$;
+
+-- Phase 6C.1 posting, with one change: which SKU label the product's inventory item gets.
+-- Before, a line re-matched to a different product than the one whose inventory item
+-- carries the line's vendor SKU could not be posted at all (the label is unique per
+-- vendor). Everything else is identical: the unresolved-line gate, the reviewed-mapping
+-- checks, finding the inventory item by product, quantities, adjustments, price history,
+-- and completion.
+CREATE OR REPLACE FUNCTION public.post_reviewed_invoice(
+  _organization_id uuid,
+  _source_file_id uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _invoice public.invoices%ROWTYPE;
+  _line public.invoice_items%ROWTYPE;
+  _vendor_id uuid;
+  _vendor_name text;
+  _product_id uuid;
+  _vendor_product_id uuid;
+  _mapping public.vendor_products%ROWTYPE;
+  _inventory public.inventory_items%ROWTYPE;
+  _inventory_sku text;
+  _candidate_sku text;
+  _previous numeric;
+  _new numeric;
+  _created integer := 0;
+  _updated integer := 0;
+  _line_count integer;
+  _unresolved integer;
+BEGIN
+  IF NOT public.has_org_role(_organization_id, auth.uid(), ARRAY['owner']::public.org_role[]) THEN
+    RAISE EXCEPTION 'Forbidden: owner access required';
+  END IF;
+
+  SELECT * INTO _invoice
+  FROM public.invoices
+  WHERE organization_id = _organization_id AND source_file_id = _source_file_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Invoice review not found'; END IF;
+  IF _invoice.posted_at IS NOT NULL OR _invoice.processing_status = 'completed' THEN
+    RETURN jsonb_build_object('invoiceId', _invoice.id, 'createdInventoryItems', 0,
+      'updatedInventoryItems', 0, 'alreadyCompleted', true);
+  END IF;
+
+  -- Identity gate, before any write. Lock every line first so a concurrent direct API
+  -- edit cannot unlink a line between this check and the posting loop.
+  PERFORM 1 FROM public.invoice_items
+  WHERE invoice_id = _invoice.id AND organization_id = _organization_id
+  FOR UPDATE;
+  SELECT count(*) INTO _unresolved FROM public.invoice_items
+  WHERE invoice_id = _invoice.id AND organization_id = _organization_id AND product_id IS NULL;
+  IF _unresolved > 0 THEN
+    RAISE EXCEPTION 'Match or create a product for every invoice line before approval (% unresolved)', _unresolved
+      USING ERRCODE = '23502';
+  END IF;
+
+  _vendor_id := _invoice.vendor_id;
+  _vendor_name := nullif(btrim(_invoice.vendor_name), '');
+  IF _vendor_id IS NOT NULL THEN
+    SELECT name INTO _vendor_name FROM public.vendors
+      WHERE id = _vendor_id AND organization_id = _organization_id AND active = true;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Selected vendor is unavailable'; END IF;
+  ELSIF _vendor_name IS NOT NULL THEN
+    SELECT id INTO _vendor_id FROM public.vendors
+      WHERE organization_id = _organization_id
+        AND normalized_name = public.normalize_catalog_text(_vendor_name) AND active = true
+      LIMIT 1;
+    IF _vendor_id IS NULL THEN
+      INSERT INTO public.vendors (organization_id, name, normalized_name)
+      VALUES (_organization_id, _vendor_name, public.normalize_catalog_text(_vendor_name))
+      RETURNING id INTO _vendor_id;
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'Vendor is required before approval';
+  END IF;
+
+  SELECT count(*) INTO _line_count FROM public.invoice_items
+    WHERE invoice_id = _invoice.id AND organization_id = _organization_id;
+  IF _line_count = 0 THEN RAISE EXCEPTION 'Add at least one line item before approval'; END IF;
+
+  FOR _line IN
+    SELECT * FROM public.invoice_items
+    WHERE invoice_id = _invoice.id AND organization_id = _organization_id
+    ORDER BY line_number NULLS LAST, created_at
+    FOR UPDATE
+  LOOP
+    _product_id := _line.product_id;
+    _vendor_product_id := _line.vendor_product_id;
+    IF _product_id IS NULL THEN
+      RAISE EXCEPTION 'Match or create a product for every invoice line before approval' USING ERRCODE = '23502';
+    END IF;
+
+    -- A reviewed mapping must belong to this organization and invoice vendor, be active,
+    -- and name the same product as the line. It never replaces the line's product.
+    IF _vendor_product_id IS NOT NULL THEN
+      SELECT * INTO _mapping FROM public.vendor_products
+        WHERE id = _vendor_product_id AND organization_id = _organization_id
+          AND vendor_id = _vendor_id AND active = true;
+      IF NOT FOUND THEN RAISE EXCEPTION 'A selected vendor product is unavailable'; END IF;
+      IF _mapping.product_id IS DISTINCT FROM _product_id THEN
+        RAISE EXCEPTION 'A selected vendor product maps to a different product than the invoice line';
+      END IF;
+
+      UPDATE public.vendor_products SET
+        product_id = _product_id,
+        package_size = coalesce(nullif(btrim(_line.package_size), ''), package_size),
+        unit_of_measure = coalesce(nullif(btrim(_line.unit_of_measure), ''), unit_of_measure),
+        active = true
+      WHERE id = _vendor_product_id AND organization_id = _organization_id AND vendor_id = _vendor_id;
+    END IF;
+
+    SELECT * INTO _inventory FROM public.inventory_items
+    WHERE organization_id = _organization_id AND product_id = _product_id
+    LIMIT 1 FOR UPDATE;
+
+    -- The SKU on an inventory item is a label; one item per vendor may carry a given SKU.
+    -- This product's item takes the line's SKU, or keeps its own, whichever no other
+    -- product's item already carries for this vendor. Otherwise it carries none. The other
+    -- item is never touched, and the receipt is recorded against this line's product.
+    _inventory_sku := NULL;
+    FOREACH _candidate_sku IN ARRAY ARRAY[nullif(btrim(_line.sku), ''), _inventory.sku] LOOP
+      IF _candidate_sku IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM public.inventory_items other
+        WHERE other.organization_id = _organization_id
+          AND lower(other.vendor_name) = lower(_vendor_name)
+          AND lower(other.sku) = lower(_candidate_sku)
+          AND other.id IS DISTINCT FROM _inventory.id
+      ) THEN
+        _inventory_sku := _candidate_sku;
+        EXIT;
+      END IF;
+    END LOOP;
+
+    IF _inventory.id IS NULL THEN
+      INSERT INTO public.inventory_items
+        (organization_id, product_id, sku, name, description, category, manufacturer,
+         unit, quantity, vendor_name, last_purchase_price, last_purchase_date, active)
+      VALUES
+        (_organization_id, _product_id, _inventory_sku, btrim(_line.description),
+         btrim(_line.description), nullif(btrim(_line.category), ''),
+         nullif(btrim(_line.manufacturer), ''), coalesce(nullif(btrim(_line.unit_of_measure), ''), 'each'),
+         0, _vendor_name, _line.unit_price, coalesce(_invoice.invoice_date, current_date), true)
+      RETURNING * INTO _inventory;
+      _created := _created + 1;
+    ELSE
+      _updated := _updated + 1;
+    END IF;
+
+    _previous := _inventory.quantity;
+    _new := _previous + _line.quantity;
+    UPDATE public.inventory_items SET
+      quantity = _new,
+      sku = _inventory_sku,
+      category = coalesce(nullif(btrim(_line.category), ''), category),
+      manufacturer = coalesce(nullif(btrim(_line.manufacturer), ''), manufacturer),
+      vendor_name = _vendor_name,
+      last_purchase_price = coalesce(_line.unit_price, last_purchase_price),
+      last_purchase_date = coalesce(_invoice.invoice_date, current_date),
+      active = true
+    WHERE id = _inventory.id;
+
+    INSERT INTO public.inventory_adjustments
+      (organization_id, inventory_item_id, adjustment_amount, previous_quantity, new_quantity,
+       reason, created_by, source_type, source_invoice_id, source_invoice_item_id, idempotency_key)
+    VALUES
+      (_organization_id, _inventory.id, _line.quantity, _previous, _new,
+       'Invoice received', auth.uid(), 'invoice', _invoice.id, _line.id, 'invoice-item:' || _line.id::text);
+
+    INSERT INTO public.inventory_price_history
+      (organization_id, product_id, vendor_id, vendor_product_id, invoice_id, invoice_item_id,
+       purchase_date, quantity, package_size, unit_of_measure, unit_price, extended_price)
+    VALUES
+      (_organization_id, _product_id, _vendor_id, _vendor_product_id, _invoice.id, _line.id,
+       coalesce(_invoice.invoice_date, current_date), _line.quantity, nullif(btrim(_line.package_size), ''),
+       nullif(btrim(_line.unit_of_measure), ''), _line.unit_price, _line.total_price);
+
+    UPDATE public.invoice_items SET product_id = _product_id,
+      vendor_product_id = _vendor_product_id, review_status = 'approved'
+    WHERE id = _line.id;
+  END LOOP;
+
+  UPDATE public.invoices SET vendor_id = _vendor_id, vendor_name = _vendor_name,
+    invoice_total = coalesce(invoice_total, total_amount, total),
+    total_amount = coalesce(total_amount, invoice_total, total),
+    total = coalesce(total, total_amount, invoice_total),
+    processing_status = 'completed', reviewed_by = auth.uid(), reviewed_at = now(), posted_at = now()
+  WHERE id = _invoice.id;
+
+  UPDATE public.invoice_processing_jobs SET status = 'completed'
+  WHERE invoice_id = _source_file_id AND organization_id = _organization_id;
+
+  RETURN jsonb_build_object('invoiceId', _invoice.id, 'createdInventoryItems', _created,
+    'updatedInventoryItems', _updated, 'alreadyCompleted', false);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_product_from_invoice_item(uuid, uuid, uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.post_reviewed_invoice(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.create_product_from_invoice_item(uuid, uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.post_reviewed_invoice(uuid, uuid) TO authenticated;
 
 -- One explicit owner decision: adopt the chosen listing if needed and match the line to it.
 -- Atomic under the same invoice row lock as confirm, unlink, resolve, and posting.

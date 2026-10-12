@@ -36,6 +36,9 @@ export const itemKeyInput = reviewKey.extend({ id: uuid });
 export const confirmMatchInput = reviewKey.extend({
   itemId: uuid,
   productId: uuid,
+  // The product the reviewer saw on the line (null if unmatched). Required: a caller must
+  // say what it is replacing, and the database refuses if the line has changed since.
+  expectedProductId: uuid.nullable(),
   rememberVendorSku: z.boolean().default(true),
 });
 export const catalogSearchInput = reviewKey.extend({ query: z.string().max(200).default("") });
@@ -389,11 +392,12 @@ export async function confirmInvoiceItemProduct(
 ): Promise<InvoiceMatchResult> {
   await assertOwner(db, userId, data.organizationId);
   await requireDraftInvoice(db, data.organizationId, data.sourceFileId);
-  const { data: result, error } = await db.rpc("confirm_invoice_item_product", {
+  const { data: result, error } = await db.rpc("confirm_invoice_item_product_expected", {
     _organization_id: data.organizationId,
     _source_file_id: data.sourceFileId,
     _invoice_item_id: data.itemId,
     _product_id: data.productId,
+    _expected_product_id: data.expectedProductId,
     _remember_vendor_sku: data.rememberVendorSku,
   });
   if (error) throw toInvoiceReviewError(error, "Could not update the product match.");

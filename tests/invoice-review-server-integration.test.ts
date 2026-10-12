@@ -16,7 +16,6 @@ import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../src/integrations/supabase/types.ts";
 import {
-  INVENTORY_SKU_CONFLICT_MESSAGE,
   InvoiceReviewError,
   catalogMatchInput,
   catalogSearchInput,
@@ -476,6 +475,7 @@ test(
           sourceFileId: SOURCE.match,
           itemId,
           productId: PRODUCT.tape,
+          expectedProductId: readyWrapProduct,
         }),
       );
       assert.deepEqual(match, {
@@ -529,6 +529,7 @@ test(
           sourceFileId: SOURCE.match,
           itemId,
           productId: readyWrapProduct,
+          expectedProductId: PRODUCT.tape,
         }),
       );
       assert.equal(back.vendorProductId, adopted[0].id);
@@ -632,10 +633,15 @@ test("no manual matching stocked inventory", { skip }, async () => {
 });
 
 test(
-  "a real constraint failure from posting is translated into a controlled error",
+  "a deliberately re-matched line posts, and the old inventory item is untouched",
   { skip },
   async () => {
-    // The line prints a SKU that another product already holds in inventory for this vendor.
+    // Henry Schein SKU GAUZE-1 already labels the inventory item of another product.
+    const stockedBefore = await inspect
+      .from("inventory_items")
+      .select("*")
+      .eq("id", id("451"))
+      .single();
     await confirmInvoiceItemProduct(
       owner,
       OWNER,
@@ -644,40 +650,136 @@ test(
         sourceFileId: SOURCE.post,
         itemId: id("831"),
         productId: PRODUCT.otherGauze,
+        expectedProductId: null,
       }),
     );
-    // approveInvoiceFn makes exactly this call and passes its error to toInvoiceReviewError.
+    // approveInvoiceFn makes exactly this call.
     const { data, error } = await owner.rpc("post_reviewed_invoice", {
       _organization_id: ORG,
       _source_file_id: SOURCE.post,
     });
-    assert.equal(data, null);
-    assert.equal(error?.code, "23505");
-    assert.match(
-      error?.message ?? "",
-      /duplicate key value violates unique constraint "inventory_items_org_vendor_sku_unique"/,
-    );
-    const translated = toInvoiceReviewError(error!, "Could not approve this invoice.");
-    assert.deepEqual(
-      [translated.code, translated.message],
-      ["conflict", INVENTORY_SKU_CONFLICT_MESSAGE],
-    );
-    // Posting is all-or-nothing: the invoice is still a draft and nothing was stocked.
-    const { data: invoice } = await inspect
-      .from("invoices")
-      .select("processing_status,posted_at")
-      .eq("source_file_id", SOURCE.post)
+    assert.equal(error, null);
+    assert.deepEqual(data, {
+      invoiceId: id("704"),
+      createdInventoryItems: 1,
+      updatedInventoryItems: 0,
+      alreadyCompleted: false,
+    });
+    // The receipt is on the selected product's own item, which does not claim the SKU label.
+    const { data: received } = await inspect
+      .from("inventory_items")
+      .select("product_id,sku,vendor_name,quantity")
+      .eq("organization_id", ORG)
+      .eq("product_id", PRODUCT.otherGauze);
+    assert.deepEqual(received, [
+      { product_id: PRODUCT.otherGauze, sku: null, vendor_name: "Henry Schein", quantity: 1 },
+    ]);
+    const { data: price } = await inspect
+      .from("inventory_price_history")
+      .select("product_id,invoice_item_id,quantity")
+      .eq("organization_id", ORG);
+    assert.deepEqual(price, [
+      { product_id: PRODUCT.otherGauze, invoice_item_id: id("831"), quantity: 1 },
+    ]);
+    // The item that carries GAUZE-1 is exactly as it was.
+    const stockedAfter = await inspect
+      .from("inventory_items")
+      .select("*")
+      .eq("id", id("451"))
       .single();
-    assert.deepEqual(invoice, { processing_status: "review_required", posted_at: null });
-    assert.equal((await identityCounts()).inventory, baseline.inventory);
-    // The posting gate's own refusal passes through unchanged.
+    assert.deepEqual(stockedAfter.data, stockedBefore.data);
+    assert.equal(stockedAfter.data?.product_id, PRODUCT.stockedGauze);
+    // Posting again is a no-op; an invoice with an unmatched line is still refused, and the
+    // refusal reaches the reviewer as written.
+    const again = await owner.rpc("post_reviewed_invoice", {
+      _organization_id: ORG,
+      _source_file_id: SOURCE.post,
+    });
+    assert.equal((again.data as { alreadyCompleted: boolean }).alreadyCompleted, true);
+    assert.equal((await identityCounts()).inventory, baseline.inventory! + 1);
     const gate = await owner.rpc("post_reviewed_invoice", {
       _organization_id: ORG,
       _source_file_id: SOURCE.match,
     });
+    const refused = toInvoiceReviewError(gate.error!, "fallback");
+    assert.equal(refused.code, "rejected");
     assert.match(
-      toInvoiceReviewError(gate.error!, "fallback").message,
+      refused.message,
       /^Match or create a product for every invoice line before approval/,
+    );
+  },
+);
+
+test("a stale plain confirmation cannot overwrite a newer match", { skip }, async () => {
+  const input = { organizationId: ORG, sourceFileId: SOURCE.medline, itemId: id("821") };
+  // Two reviewers open the same unmatched line. The first confirms.
+  const first = await confirmInvoiceItemProduct(
+    owner,
+    OWNER,
+    confirmMatchInput.parse({ ...input, productId: PRODUCT.tape, expectedProductId: null }),
+  );
+  assert.equal(first.productId, PRODUCT.tape);
+  const afterFirst = await line(id("821"));
+  // The second still believes it is unmatched (or matched to something else).
+  for (const expectedProductId of [null, PRODUCT.stockedGauze]) {
+    await rejects(
+      confirmInvoiceItemProduct(
+        owner,
+        OWNER,
+        confirmMatchInput.parse({ ...input, productId: PRODUCT.otherGauze, expectedProductId }),
+      ),
+      "rejected",
+      /product match has changed; reload the invoice/,
+    );
+  }
+  assert.deepEqual(await line(id("821")), afterFirst);
+  // The dialog must say what it is replacing: the field is required.
+  assert.throws(() => confirmMatchInput.parse({ ...input, productId: PRODUCT.otherGauze }));
+  // Naming the current product replaces it.
+  const replaced = await confirmInvoiceItemProduct(
+    owner,
+    OWNER,
+    confirmMatchInput.parse({
+      ...input,
+      productId: PRODUCT.otherGauze,
+      expectedProductId: PRODUCT.tape,
+    }),
+  );
+  assert.equal(replaced.productId, PRODUCT.otherGauze);
+  assert.equal((await line(id("821"))).product_id, PRODUCT.otherGauze);
+});
+
+test(
+  "creating a product for a SKU the catalog already identifies is refused with a controlled error",
+  { skip },
+  async () => {
+    const before = await identityCounts();
+    // The reviewer removes the match on the bare-SKU line, then tries to create a product.
+    const unlink = await owner.rpc("unlink_invoice_item_product", {
+      _organization_id: ORG,
+      _source_file_id: SOURCE.match,
+      _invoice_item_id: id("806"),
+      _forget_mapping: false,
+    });
+    assert.equal(unlink.error, null);
+    // createProductFromInvoiceItemFn makes exactly this call and translates its error.
+    const { data, error } = await owner.rpc("create_product_from_invoice_item", {
+      _organization_id: ORG,
+      _source_file_id: SOURCE.match,
+      _invoice_item_id: id("806"),
+    });
+    assert.equal(data, null);
+    const translated = toInvoiceReviewError(error!, "Could not create a product from this line.");
+    assert.equal(translated.code, "rejected");
+    assert.equal(
+      translated.message,
+      'Vendor SKU 3240025 is already the catalog item "Ready Wrap Plastic Wrap" in your products (stored as 324-0025). Match this line to that product instead, or choose another existing product for this invoice only.',
+    );
+    assert.equal((await line(id("806"))).product_id, null);
+    assert.deepEqual(await identityCounts(), before);
+    assert.deepEqual(
+      (await mappingsForKey("3240025")).map((mapping) => mapping.vendor_sku),
+      ["324-0025"],
     );
   },
 );

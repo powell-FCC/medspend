@@ -52,6 +52,32 @@ const confirm6c1 = between(
   "CREATE OR REPLACE FUNCTION public.confirm_invoice_item_product",
   "CREATE OR REPLACE FUNCTION public.unlink_invoice_item_product",
 );
+const confirmExpected = between(
+  migrationCode,
+  "CREATE FUNCTION public.confirm_invoice_item_product_expected",
+  "REVOKE ALL ON FUNCTION public.confirm_invoice_item_product_expected",
+);
+const createFromLine = between(
+  migrationCode,
+  "CREATE OR REPLACE FUNCTION public.create_product_from_invoice_item",
+  "CREATE OR REPLACE FUNCTION public.post_reviewed_invoice",
+);
+const posting = between(
+  migrationCode,
+  "CREATE OR REPLACE FUNCTION public.post_reviewed_invoice",
+  "REVOKE ALL ON FUNCTION public.create_product_from_invoice_item",
+);
+const createFromLine6c1 = between(
+  phase6c1,
+  "CREATE OR REPLACE FUNCTION public.create_product_from_invoice_item",
+  "CREATE OR REPLACE FUNCTION public.post_reviewed_invoice",
+);
+const posting6c1 = between(
+  phase6c1,
+  "CREATE OR REPLACE FUNCTION public.post_reviewed_invoice",
+  "REVOKE ALL ON FUNCTION public.rematch_invoice_vendor_products",
+);
+const squash = (source: string) => source.replace(/\s+/g, " ").trim();
 const withdraw = between(
   migrationCode,
   "CREATE FUNCTION public.invalidate_derived_invoice_totals",
@@ -203,13 +229,14 @@ test("an unlinked vendor is explained, never silently linked", () => {
   }
 });
 
-test("the migration adds three functions and one trigger and redefines only the manual confirmation", () => {
+test("the migration adds four functions and one trigger and redefines three Phase 6C.1 functions", () => {
   assert.match(migrationCode, /^\s*BEGIN;/m);
   assert.match(migrationCode, /COMMIT;\s*$/);
   assert.deepEqual(
     [...migrationCode.matchAll(/CREATE FUNCTION public\.(\w+)/g)].map((found) => found[1]),
     [
       "search_invoice_line_catalog_listings",
+      "confirm_invoice_item_product_expected",
       "match_invoice_item_to_catalog_listing",
       "invalidate_derived_invoice_totals",
     ],
@@ -218,7 +245,7 @@ test("the migration adds three functions and one trigger and redefines only the 
     [...migrationCode.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)/g)].map(
       (found) => found[1],
     ),
-    ["confirm_invoice_item_product"],
+    ["confirm_invoice_item_product", "create_product_from_invoice_item", "post_reviewed_invoice"],
   );
   assert.deepEqual(
     [...migrationCode.matchAll(/CREATE TRIGGER (\w+)\s+([A-Z ]+) ON public\.(\w+)/g)].map((found) =>
@@ -403,19 +430,157 @@ test("matching reuses adoption and confirmation and never touches inventory or p
     [],
   );
   assert.doesNotMatch(match, /normalize_catalog_sku_match_key|product_match_source/);
-  for (const forbidden of [
-    /inventory_/i,
-    /post_reviewed_invoice/i,
-    /stock_catalog/i,
-    /supply_request/i,
-    /price_history/i,
-    /processing_status\s*=/i,
+  // None of the matching functions touches inventory, posting, requests, or price history.
+  for (const body of [search, match, confirm, confirmExpected, createFromLine, withdraw]) {
+    for (const forbidden of [
+      /inventory_/i,
+      /post_reviewed_invoice/i,
+      /stock_catalog/i,
+      /supply_request/i,
+      /price_history/i,
+      /processing_status\s*=(?! 'completed')/i,
+    ]) {
+      assert.doesNotMatch(body, forbidden);
+    }
+  }
+});
+
+test("posting is Phase 6C.1's, except for which SKU label an inventory item carries", () => {
+  // Put the four changed fragments back and the function is the Phase 6C.1 text exactly:
+  // the gate, the reviewed-mapping checks, the lookup by product, quantities, adjustments,
+  // price history, and completion are all untouched.
+  const labelBlock = between(
+    posting,
+    "    _inventory_sku := NULL;",
+    "    IF _inventory.id IS NULL THEN",
+  );
+  const restored = posting
+    .replace("  _inventory_sku text;\n  _candidate_sku text;\n", "")
+    .replace(labelBlock, "")
+    .replace(
+      "_inventory_sku, btrim(_line.description),",
+      "nullif(btrim(_line.sku), ''), btrim(_line.description),",
+    )
+    .replace(
+      "      sku = _inventory_sku,",
+      "      sku = coalesce(nullif(btrim(_line.sku), ''), sku),",
+    );
+  assert.equal(squash(restored), squash(posting6c1));
+  // The label: the line's SKU, else the item's own, whichever no other product's item for
+  // this vendor already carries; otherwise none. Only this product's item is written.
+  assert.match(
+    labelBlock,
+    /FOREACH _candidate_sku IN ARRAY ARRAY\[nullif\(btrim\(_line\.sku\), ''\), _inventory\.sku\] LOOP/,
+  );
+  assert.match(
+    labelBlock,
+    /NOT EXISTS \(\s+SELECT 1 FROM public\.inventory_items other\s+WHERE other\.organization_id = _organization_id\s+AND lower\(other\.vendor_name\) = lower\(_vendor_name\)\s+AND lower\(other\.sku\) = lower\(_candidate_sku\)\s+AND other\.id IS DISTINCT FROM _inventory\.id\s+\)/,
+  );
+  assert.doesNotMatch(labelBlock, /\b(INSERT|UPDATE|DELETE)\b/);
+  // The inventory item is still found by product alone, and still updated by its own id.
+  assert.match(
+    posting,
+    /FROM public\.inventory_items\s+WHERE organization_id = _organization_id AND product_id = _product_id\s+LIMIT 1 FOR UPDATE;/,
+  );
+  assert.equal(posting.match(/UPDATE public\.inventory_items SET/g)?.length, 1);
+  assert.match(posting, /active = true\s+WHERE id = _inventory\.id;/);
+  // The Phase 6C.1 protections are present in the redefined text.
+  assert.match(
+    posting,
+    /Match or create a product for every invoice line before approval \(% unresolved\)/,
+  );
+  assert.match(
+    posting,
+    /A selected vendor product maps to a different product than the invoice line/,
+  );
+  assert.doesNotMatch(posting, /INSERT INTO public\.(products|vendor_products|product_categories)/);
+  for (const signature of [
+    "create_product_from_invoice_item(uuid, uuid, uuid)",
+    "post_reviewed_invoice(uuid, uuid)",
   ]) {
-    assert.doesNotMatch(
-      migrationCode.replace(/_invoice\.processing_status = 'completed'/g, ""),
-      forbidden,
+    assert.ok(
+      migrationCode.includes(`REVOKE ALL ON FUNCTION public.${signature} FROM PUBLIC, anon;`),
+    );
+    assert.ok(
+      migrationCode.includes(`GRANT EXECUTE ON FUNCTION public.${signature} TO authenticated;`),
     );
   }
+});
+
+test("creating a product from a line is Phase 6C.1's, plus a refusal before anything is created", () => {
+  const refusal = between(
+    createFromLine,
+    "  IF nullif(btrim(_line.sku), '') IS NOT NULL THEN\n    SELECT * INTO _existing",
+    "  IF nullif(btrim(_line.category), '') IS NOT NULL THEN",
+  );
+  const restored = createFromLine
+    .replace("  _existing public.vendor_products%ROWTYPE;\n  _existing_name text;\n", "")
+    .replace(refusal, "");
+  assert.equal(squash(restored), squash(createFromLine6c1));
+  // Vendor-scoped, catalog-adopted mappings by the existing separator-insensitive key
+  // (active or not), then an active hand-remembered mapping for the exact SKU.
+  assert.equal(
+    refusal.match(/WHERE organization_id = _organization_id AND vendor_id = _invoice\.vendor_id/g)
+      ?.length,
+    2,
+  );
+  assert.match(
+    refusal,
+    /catalog_vendor_product_id IS NOT NULL\s+AND public\.normalize_catalog_sku_match_key\(_line\.sku\) <> ''\s+AND public\.normalize_catalog_sku_match_key\(vendor_sku\) = public\.normalize_catalog_sku_match_key\(_line\.sku\)/,
+  );
+  assert.match(
+    refusal,
+    /AND active AND lower\(btrim\(vendor_sku\)\) = lower\(btrim\(_line\.sku\)\);/,
+  );
+  assert.equal(refusal.match(/RAISE EXCEPTION/g)?.length, 2);
+  assert.doesNotMatch(refusal, /\b(INSERT|UPDATE|DELETE)\b|USING ERRCODE/);
+  // It comes before the product insert.
+  assert.ok(
+    createFromLine.indexOf("is already the catalog item") <
+      createFromLine.indexOf("INSERT INTO public.products"),
+  );
+});
+
+test("plain confirmation has the same stale protection as the catalog path", () => {
+  assert.match(confirmExpected, /SECURITY DEFINER\s+SET search_path = public/);
+  assert.match(
+    confirmExpected,
+    /_expected_product_id uuid,\s+_remember_vendor_sku boolean DEFAULT true/,
+  );
+  assert.match(confirmExpected, /RAISE EXCEPTION 'Forbidden: owner access required'/);
+  // The invoice and the line are locked, then compared, then the existing confirmation runs.
+  const order = [
+    "source_file_id = _source_file_id FOR UPDATE;",
+    "AND invoice_id = _invoice.id AND organization_id = _organization_id FOR UPDATE;",
+    "IF _line.product_id IS DISTINCT FROM _expected_product_id THEN",
+    "RETURN public.confirm_invoice_item_product(",
+  ].map((marker) => confirmExpected.indexOf(marker));
+  assert.ok(
+    order.every((at, index) => at > 0 && (index === 0 || at > order[index - 1])),
+    String(order),
+  );
+  assert.deepEqual([...confirmExpected.matchAll(/\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+/g)], []);
+  const signature = "confirm_invoice_item_product_expected(uuid, uuid, uuid, uuid, uuid, boolean)";
+  assert.ok(
+    migrationCode.includes(`REVOKE ALL ON FUNCTION public.${signature} FROM PUBLIC, anon;`),
+  );
+  assert.ok(
+    migrationCode.includes(`GRANT EXECUTE ON FUNCTION public.${signature} TO authenticated;`),
+  );
+  // The dialog's confirm goes through it, with the match it was showing.
+  const confirmAction = between(
+    actions,
+    "export async function confirmInvoiceItemProduct",
+    "export async function searchInvoiceCatalog",
+  );
+  assert.match(confirmAction, /db\.rpc\("confirm_invoice_item_product_expected"/);
+  assert.match(confirmAction, /_expected_product_id: data\.expectedProductId/);
+  assert.match(
+    actions,
+    /productId: uuid,[\s\S]{0,260}expectedProductId: uuid\.nullable\(\),\s+rememberVendorSku/,
+  );
+  assert.equal(page.match(/expectedProductId: matching\.productId/g)?.length, 2);
+  assert.ok(types.includes("confirm_invoice_item_product_expected: {"));
 });
 
 test("a calculated total is withdrawn by the database when an owner changes a line", () => {
@@ -510,7 +675,7 @@ test("server functions hand the request's client to the review actions, which ca
   assert.match(matchAction, /requireDraftInvoice/);
   assert.match(matchAction, /db\.rpc\("match_invoice_item_to_catalog_listing"/);
   assert.match(matchAction, /_expected_product_id: data\.expectedProductId/);
-  assert.match(confirmAction, /db\.rpc\("confirm_invoice_item_product"/);
+  assert.match(confirmAction, /db\.rpc\("confirm_invoice_item_product_expected"/);
   assert.match(actions, /expectedProductId: uuid\.nullable\(\)/);
   assert.match(page, /expectedProductId: matching\.productId/);
   // No framework, alias, or service-role dependency: the integration tests import this file.
@@ -668,6 +833,8 @@ test("the behavior suites and mutation check cover every guard", () => {
     ["beta_invoice_manual_catalog_matching_behavior.sql", 15],
     ["beta_invoice_rematch_behavior.sql", 10],
     ["beta_invoice_derived_totals_behavior.sql", 10],
+    ["beta_invoice_posting_rematch_behavior.sql", 12],
+    ["beta_invoice_create_and_confirm_behavior.sql", 10],
   ];
   for (const [name, checks] of suites) {
     const suite = read(`../supabase/tests/${name}`);
@@ -714,13 +881,24 @@ test("the behavior suites and mutation check cover every guard", () => {
     "a removed line keeps a calculated total",
     "an added line keeps a calculated total",
     "completed invoices lose calculated totals",
+    "posting claims a SKU label another product's item carries",
+    "posting label check ignores the vendor",
+    "posting takes the label away from the item that carries it",
+    "posting drops a product's own label on a collision",
+    "posting accepts unresolved lines",
+    "posting accepts a mapping for another product",
+    "create shadows a catalog-adopted SKU",
+    "create ignores separators",
+    "create ignores the vendor",
+    "create ignores forgotten catalog mappings",
+    "plain confirm overwrites a newer match",
   ]) {
     assert.ok(mutationCheck.includes(`"${mutant}|`), `missing mutant: ${mutant}`);
   }
   // Every mutation target still exists in the migration.
   const list = mutationCheck.slice(mutationCheck.indexOf("mutants=("));
   const entries = list.slice(0, list.indexOf("\n)\n")).split('\n  "').slice(1);
-  assert.equal(entries.length, 36);
+  assert.equal(entries.length, 48);
   for (const entry of entries) {
     const parts = entry.replace(/"\s*$/, "").replace(/\\"/g, '"').split("|").slice(1);
     for (let index = 0; index < parts.length; index += 2) {

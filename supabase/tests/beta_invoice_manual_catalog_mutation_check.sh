@@ -20,6 +20,9 @@ suites=(
   "$root/supabase/tests/beta_invoice_manual_catalog_matching_behavior.sql"
   "$root/supabase/tests/beta_invoice_rematch_behavior.sql"
   "$root/supabase/tests/beta_invoice_derived_totals_behavior.sql"
+  "$root/supabase/tests/beta_invoice_posting_rematch_behavior.sql"
+  "$root/supabase/tests/beta_invoice_create_and_confirm_behavior.sql"
+  "$root/supabase/tests/phase6c1_invoice_exact_match_auto_resolution_behavior.sql"
 )
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -74,6 +77,28 @@ mutants=(
     WHERE invoice_id = _invoice.source_file_id AND organization_id = _invoice.organization_id;|"
   "the invoice row keeps a withdrawn subtotal|      subtotal = CASE WHEN _subtotal THEN NULL ELSE subtotal END,|      subtotal = subtotal,"
   "the invoice row keeps a withdrawn total|      total_amount = CASE WHEN _total THEN NULL ELSE total_amount END,|      total_amount = total_amount,"
+  "posting claims a SKU label another product's item carries|          AND lower(other.sku) = lower(_candidate_sku)|          AND false"
+  "posting label check ignores the vendor|          AND lower(other.vendor_name) = lower(_vendor_name)|"
+  "posting takes the label away from the item that carries it|          AND other.id IS DISTINCT FROM _inventory.id|"
+  "posting drops a product's own label on a collision|ARRAY[nullif(btrim(_line.sku), ''), _inventory.sku]|ARRAY[nullif(btrim(_line.sku), '')]"
+  "posting never labels an inventory item|        _inventory_sku := _candidate_sku;|        _inventory_sku := NULL;"
+  "posting accepts unresolved lines|  IF _unresolved > 0 THEN|  IF false THEN|    IF _product_id IS NULL THEN|    IF false THEN"
+  "posting accepts a mapping for another product|IF _mapping.product_id IS DISTINCT FROM _product_id THEN|IF false THEN"
+  "create shadows a catalog-adopted SKU|    IF FOUND THEN
+      SELECT name INTO _existing_name|    IF false THEN
+      SELECT name INTO _existing_name"
+  "create ignores separators|        AND public.normalize_catalog_sku_match_key(vendor_sku) = public.normalize_catalog_sku_match_key(_line.sku)|        AND lower(btrim(vendor_sku)) = lower(btrim(_line.sku))"
+  "create ignores the vendor|      WHERE organization_id = _organization_id AND vendor_id = _invoice.vendor_id
+        AND catalog_vendor_product_id IS NOT NULL
+        AND public.normalize_catalog_sku_match_key(_line.sku) <> ''|      WHERE organization_id = _organization_id
+        AND catalog_vendor_product_id IS NOT NULL
+        AND public.normalize_catalog_sku_match_key(_line.sku) <> ''"
+  "create ignores forgotten catalog mappings|        AND public.normalize_catalog_sku_match_key(_line.sku) <> ''|        AND active AND public.normalize_catalog_sku_match_key(_line.sku) <> ''"
+  "plain confirm overwrites a newer match|    RAISE EXCEPTION 'This line''s product match has changed; reload the invoice before changing it';
+  END IF;
+  RETURN public.confirm_invoice_item_product(|    NULL;
+  END IF;
+  RETURN public.confirm_invoice_item_product("
   "a withdrawn total stays reviewed|\"source\": \"Derived\", \"reviewed\": false}';|\"source\": \"Derived\", \"reviewed\": true}';"
 )
 

@@ -227,11 +227,14 @@ test("the review subtitle is exception oriented", () => {
 test("migration is new, ordered after Phase 6C, transactional, and guarded", () => {
   const migrations = readdirSync(new URL("../supabase/migrations/", import.meta.url)).sort();
   // Later migrations may add to Phase 6C.1 but never redefine or drop what it established.
-  // One exception: the beta-hardening migration redefines the manual confirmation so that it
-  // never repoints a catalog-adopted mapping. That redefinition is held to the Phase 6C.1
-  // text everywhere else by tests/beta-invoice-manual-catalog-matching.test.ts.
+  // One exception: the beta-hardening migration redefines three of them, each for a single
+  // stated reason, and each is held to the Phase 6C.1 text everywhere else by
+  // tests/beta-invoice-manual-catalog-matching.test.ts.
+  const betaHardening = "20261012120000_beta_invoice_manual_catalog_matching.sql";
   const redefinedBy: Record<string, string> = {
-    confirm_invoice_item_product: "20261012120000_beta_invoice_manual_catalog_matching.sql",
+    confirm_invoice_item_product: betaHardening,
+    create_product_from_invoice_item: betaHardening,
+    post_reviewed_invoice: betaHardening,
   };
   for (const later of migrations.slice(migrations.indexOf(migrationName) + 1)) {
     const code = read(`../supabase/migrations/${later}`).replace(/--.*$/gm, "");

@@ -369,8 +369,8 @@ $rematch_check_9$;
 
 -- Check 10: posting still takes the reviewed identity exactly. A line matched for this
 -- invoice only posts without a mapping, and posting does not create or repoint one.
--- (Inventory allows one item per vendor SKU, so the fixture's other lines for the same SKU
--- are removed first; that pre-existing posting rule is not part of this change.)
+-- (Kept to a single line for that SKU here; posting several products that print the same
+-- vendor SKU is covered by beta_invoice_posting_rematch_behavior.sql.)
 SET LOCAL ROLE authenticated;
 SELECT pg_catalog.set_config('request.jwt.claim.sub', 'be120000-0000-4000-8000-000000000001', true);
 SELECT public.confirm_invoice_item_product(
