@@ -1,0 +1,110 @@
+customer-contact@example.test
+Order Confirmation
+Synthetic Sports Club
+SHIP TO:
+Synthetic Sports Club
+BILL TO:
+Synthetic Sports Club
+Order Confirmation
+LINE
+NO ITEM
+CODE
+UNIT SIZE
+DRUG CLASS DESCRIPTION & STRENGTH QTY. ORD
+SHIPPED
+SHIPPING DETAILS
+CUSTOMER P.O.#
+UNIT
+PRICE EXTENSION
+ACCOUNT #
+0000000
+TOTAL AMOUNT
+80000001
+ORDER DATEORDER NUMBER
+SE 09/17/26
+PAGE #
+1
+...
+1 AX1001 10/BX Transparent Dressing 4x6" 3 SHIPPING 6.81
+09/17/26 1.000 3 9-17-26
+** special contract price **
+2 BX2002 6Rl/Ca Plastic Wrap Classic 4"x650 Yd 1 SHIPPING 38.25
+09/17/26 2.000 1 9-17-26
+** special contract price **
+3 CX3003 Ea Suture Removal Kit 10 SHIPPING .77
+PU 09/17/26 3.000 10 9-17-26
+** special contract price **
+4 DX4004 50/Bx Skin Closure Strip 1/4"x3"White 1 SHIPPING 51.80
+09/17/26 4.000 1 9-17-26
+.
+.Go to your online account to retrieve this SDS, 0000000 -
+If you cannot access online options or to opt out of
+electronic SDS call (800) 555-0100.
+** special contract price **
+5 EX5005 16/Ca Athletic Tape 3"x7-1/2yd 3 BACKORDERED 63.29
+09/17/26 5.000 9-17-26
+** special contract price **
+6 FX6006 100x1/Bx Analgesic Tablets 220mg 2 SHIPPING 16.85
+09/17/26 6.000 2 9-17-26
+** special contract price **
+7 SHIPPING AND/OR HANDLING 3.95
+20.43
+38.25
+7.70
+51.80
+33.70
+3.95
+ACCOUNT #
+0000000
+TOTAL AMOUNT
+ORDER NUMBER
+SE80000001
+ORDER DATE
+09/17/26
+PAGE #
+1
+...
+Order Confirmation
+Synthetic Sports Club
+SHIP TO:
+Synthetic Sports Club
+BILL TO:
+Synthetic Sports Club
+Order Confirmation
+LINE
+NO ITEM
+CODE
+UNIT SIZE
+DRUG CLASS DESCRIPTION & STRENGTH QTY. ORD
+SHIPPED
+SHIPPING DETAILS
+CUSTOMER P.O.#
+UNIT
+PRICE EXTENSION
+ACCOUNT #
+0000000
+TOTAL AMOUNT
+80000001
+ORDER DATEORDER NUMBER
+SE
+166.35
+09/17/26
+PAGE #
+2
+...
+8 TAX 10.52
+Your order 80000001 has been split into multiple shipments.
+You will be billed for these items when they are shipped.
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+10.52
+ACCOUNT #
+0000000
+TOTAL AMOUNT
+ORDER NUMBER
+166.35
+SE80000001
+ORDER DATE
+09/17/26
+PAGE #
+2
+...

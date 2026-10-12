@@ -2255,6 +2255,17 @@ export type Database = {
         }
         Returns: Json
       }
+      confirm_invoice_item_product_expected: {
+        Args: {
+          _expected_product_id: string | null
+          _invoice_item_id: string
+          _organization_id: string
+          _product_id: string
+          _remember_vendor_sku?: boolean
+          _source_file_id: string
+        }
+        Returns: Json
+      }
       create_invitation: {
         Args: {
           _default_location_id: string
@@ -2312,6 +2323,16 @@ export type Database = {
         Returns: undefined
       }
       normalize_catalog_sku: { Args: { _value: string }; Returns: string }
+      match_invoice_item_to_catalog_listing: {
+        Args: {
+          _catalog_vendor_product_id: string
+          _expected_product_id: string | null
+          _invoice_item_id: string
+          _organization_id: string
+          _source_file_id: string
+        }
+        Returns: Json
+      }
       normalize_catalog_sku_match_key: {
         Args: { _value: string }
         Returns: string
@@ -2375,6 +2396,15 @@ export type Database = {
         Returns: number
       }
       revoke_invitation: { Args: { _id: string }; Returns: undefined }
+      search_invoice_line_catalog_listings: {
+        Args: {
+          _limit?: number
+          _organization_id: string
+          _query: string
+          _source_file_id: string
+        }
+        Returns: Json
+      }
       search_supply_request_products: {
         Args: {
           _limit?: number

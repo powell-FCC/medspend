@@ -26,6 +26,9 @@ export interface ReviewItem {
     reasons: string[];
   };
   matchSource: InvoiceLineMatchSource | null;
+  // The line's current vendor SKU mapping came from catalog adoption; re-matching the line
+  // to another product never changes that mapping.
+  skuFromCatalog: boolean;
   reviewStatus: InvoiceItemReviewStatus;
   extractionConfidence?: number;
 }
@@ -55,6 +58,8 @@ export interface InvoiceReviewHeader {
   extractionStatus: 'not_started' | 'processing' | 'succeeded' | 'failed';
   extractionError: string | null;
   extractionConfidence?: Record<string, number>;
+  // Amounts calculated from other fields rather than read from the document (not yet reviewed).
+  derivedTotals: Array<'subtotal' | 'total'>;
   totalsNeedReview: boolean;
   structuredExtractionState: 'STRUCTURED_SUCCESS' | 'STRUCTURED_PARTIAL' | 'MANUAL_REVIEW_REQUIRED' | 'STRUCTURED_FAILED' | null;
   documentTextStatus: 'pending' | 'success' | 'ocr_required' | 'failed';
@@ -86,8 +91,30 @@ export interface InvoiceReviewProduct {
   manufacturer: string;
   internalItemCode: string;
   vendorItemNumber: string;
+  // SKUs this organization has mapped to the product for the invoice's vendor.
+  vendorSkus: string[];
   unitOfMeasure: string;
   packSize: string;
+}
+
+export interface InvoiceCatalogListing {
+  catalogVendorProductId: string;
+  vendorSku: string;
+  name: string;
+  manufacturer: string;
+  packageDescription: string;
+  verified: boolean;
+  // Set when this organization already has a product for the listing's catalog product.
+  organizationProductId: string | null;
+}
+
+export type InvoiceCatalogUnavailableReason = 'no_vendor' | 'vendor_unavailable' | 'vendor_not_linked_to_catalog' | 'catalog_vendor_inactive';
+
+export interface InvoiceCatalogSearch {
+  available: boolean;
+  reason: InvoiceCatalogUnavailableReason | null;
+  catalogVendorName: string;
+  results: InvoiceCatalogListing[];
 }
 
 export interface InvoiceReview {
@@ -130,6 +157,15 @@ export interface InvoiceItemInput {
   totalPrice: number;
   packageSize: string;
   vendorProductId?: string | null;
+}
+
+export interface InvoiceMatchResult {
+  productId: string;
+  vendorProductId: string | null;
+  vendorSkuRemembered: boolean;
+  // Set when the line's vendor SKU is a catalog-adopted mapping for another product, which
+  // was left unchanged: this match applies to this invoice only.
+  preservedMapping: { vendorSku: string; productName: string } | null;
 }
 
 export interface InvoiceApprovalResult {

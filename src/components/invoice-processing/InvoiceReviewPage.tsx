@@ -8,8 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useActiveOrg } from '@/hooks/use-active-org';
 import { describeInvoiceLineReview } from '@/invoice/line-match';
-import { approveInvoiceFn, confirmInvoiceItemProductFn, createProductFromInvoiceItemFn, deleteInvoiceItemFn, getInvoiceReviewFn, saveInvoiceHeaderFn, saveInvoiceItemFn, unlinkInvoiceItemProductFn } from '@/lib/invoice-processing.functions';
-import type { InvoiceHeaderInput, InvoiceItemInput, ReviewItem } from '@/types/invoice-processing';
+import { approveInvoiceFn, confirmInvoiceItemProductFn, createProductFromInvoiceItemFn, deleteInvoiceItemFn, getInvoiceReviewFn, matchInvoiceItemToCatalogFn, saveInvoiceHeaderFn, saveInvoiceItemFn, searchInvoiceCatalogFn, unlinkInvoiceItemProductFn } from '@/lib/invoice-processing.functions';
+import type { InvoiceHeaderInput, InvoiceItemInput, InvoiceMatchResult, ReviewItem } from '@/types/invoice-processing';
 import { InvoiceHeaderForm } from './InvoiceHeaderForm';
 import { InvoiceItemDialog } from './InvoiceItemDialog';
 import { ProductMatchDialog } from './ProductMatchDialog';
@@ -26,6 +26,8 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
   const confirmProduct = useServerFn(confirmInvoiceItemProductFn);
   const createProduct = useServerFn(createProductFromInvoiceItemFn);
   const unlinkProduct = useServerFn(unlinkInvoiceItemProductFn);
+  const searchCatalog = useServerFn(searchInvoiceCatalogFn);
+  const matchCatalog = useServerFn(matchInvoiceItemToCatalogFn);
   const [itemOpen, setItemOpen] = useState(false);
   const [editing, setEditing] = useState<ReviewItem>();
   const [matchOpen, setMatchOpen] = useState(false);
@@ -33,13 +35,24 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState('');
   const [error, setError] = useState('');
+  const [matchNotice, setMatchNotice] = useState('');
   const owner = active?.role === 'owner';
   const review = useQuery({
     queryKey: ['invoice-review', active?.organizationId, sourceFileId],
     queryFn: () => getReview({ data: { sourceFileId, organizationId: active!.organizationId } }),
     enabled: Boolean(active?.organizationId && owner),
   });
-  const refresh = () => review.refetch();
+  // Catalog results depend on the invoice vendor and on what has been adopted since.
+  const refresh = () => Promise.all([review.refetch(), queryClient.invalidateQueries({ queryKey: ['invoice-catalog-search'] })]);
+
+  // A catalog-adopted SKU mapping is never repointed by a manual match; say so when it happens.
+  function noteMatch(match: InvoiceMatchResult) {
+    setMatchNotice(
+      match.preservedMapping
+        ? `Matched on this invoice only. Vendor SKU ${match.preservedMapping.vendorSku} stays mapped to its catalog product${match.preservedMapping.productName ? ` (${match.preservedMapping.productName})` : ''}, so future invoices will still match that product.`
+        : '',
+    );
+  }
 
   async function approveInvoice() {
     if (!active || !review.data) return;
@@ -221,6 +234,7 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
         items={data.items}
         completed={completed}
         onMatch={(item) => {
+          setMatchNotice('');
           setMatching(item);
           setMatchOpen(true);
         }}
@@ -241,6 +255,13 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
           }
         }}
       />
+      {matchNotice && (
+        <Alert className="mt-5 border-amber-200 bg-amber-50/50">
+          <AlertCircle className="text-amber-700" />
+          <AlertTitle>Vendor SKU mapping kept</AlertTitle>
+          <AlertDescription>{matchNotice}</AlertDescription>
+        </Alert>
+      )}
       {!completed && (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-5">
           <div>
@@ -286,17 +307,40 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
         onOpenChange={setMatchOpen}
         item={matching}
         products={data.products}
+        vendorName={data.header.vendorName}
+        hasVendor={Boolean(data.header.vendorId)}
+        searchCatalog={(query) => searchCatalog({ data: { organizationId: active.organizationId, sourceFileId, query } })}
+        onConfirmCatalog={async (catalogVendorProductId) => {
+          if (!matching) return;
+          noteMatch(
+            await matchCatalog({
+              data: {
+                organizationId: active.organizationId,
+                sourceFileId,
+                itemId: matching.id,
+                catalogVendorProductId,
+                // The match this dialog showed; the database refuses if it has changed since.
+                expectedProductId: matching.productId,
+              },
+            }),
+          );
+          await refresh();
+        }}
         onConfirm={async (productId) => {
           if (!matching) return;
-          await confirmProduct({
-            data: {
-              organizationId: active.organizationId,
-              sourceFileId,
-              itemId: matching.id,
-              productId,
-              rememberVendorSku: true,
-            },
-          });
+          noteMatch(
+            await confirmProduct({
+              data: {
+                organizationId: active.organizationId,
+                sourceFileId,
+                itemId: matching.id,
+                productId,
+                // The match this dialog showed; the database refuses if it has changed since.
+                expectedProductId: matching.productId,
+                rememberVendorSku: true,
+              },
+            }),
+          );
           await refresh();
         }}
         onCreate={async () => {

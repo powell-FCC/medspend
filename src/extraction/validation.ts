@@ -1,11 +1,12 @@
 import type { CanonicalInvoiceExtraction, ExtractedField, ExtractionQuality } from './types.ts';
+import { reconcileInvoiceTotals } from './totals.ts';
 
 function assertField(field: ExtractedField<unknown>, name: string) {
   if (!field || typeof field !== 'object') throw new Error(`Missing extracted field: ${name}`);
   if (!Number.isFinite(field.confidence) || field.confidence < 0 || field.confidence > 100) {
     throw new Error(`Invalid confidence for ${name}`);
   }
-  if (!['OCR', 'Parser', 'LLM', 'User'].includes(field.source)) throw new Error(`Invalid source for ${name}`);
+  if (!['OCR', 'Parser', 'LLM', 'User', 'Derived'].includes(field.source)) throw new Error(`Invalid source for ${name}`);
   if (typeof field.reviewed !== 'boolean') throw new Error(`Invalid reviewed flag for ${name}`);
 }
 
@@ -28,17 +29,7 @@ export function validateExtraction(extraction: CanonicalInvoiceExtraction): Cano
   for (const [name, field] of Object.entries({ subtotal, tax, shipping, total })) {
     if (field.value !== null && (!Number.isFinite(field.value) || field.value < 0)) throw new Error(`${name} must be a non-negative amount`);
   }
-  const tolerance = 0.02;
-  const itemSum = extraction.items.reduce((sum, item) => sum + item.lineTotal.value, 0);
-  const lineItemsMatchSubtotal = subtotal.value === null || !extraction.items.length
-    ? null : Math.abs(itemSum - subtotal.value) <= tolerance;
-  const componentsMatchTotal = subtotal.value === null || total.value === null
-    ? null : Math.abs(subtotal.value + (tax.value ?? 0) + (shipping.value ?? 0) - total.value) <= tolerance;
-  extraction.reconciliation = {
-    lineItemsMatchSubtotal,
-    componentsMatchTotal,
-    needsReview: lineItemsMatchSubtotal === false || componentsMatchTotal === false,
-  };
+  extraction.reconciliation = reconcileInvoiceTotals(extraction);
   extraction.quality = assessExtractionQuality(extraction);
   return extraction;
 }
@@ -47,10 +38,10 @@ export function assessExtractionQuality(extraction: CanonicalInvoiceExtraction):
   const header = extraction.header;
   const meaningful = [header.documentType, header.vendor, header.invoiceNumber, header.invoiceDate, header.orderNumber, header.orderDate, header.purchaseOrder,
     header.subtotal, header.tax, header.shipping, header.total]
-    .filter((field) => field && field.value !== '' && field.value !== null && field.confidence >= 60);
+    .filter((field) => field && field.value !== '' && field.value !== null && field.confidence >= 60 && field.source !== 'Derived');
   const identityFields = header.documentType?.value === 'ORDER_CONFIRMATION' ? [header.orderNumber, header.orderDate] : [header.invoiceNumber, header.invoiceDate];
   const core = [header.vendor, ...identityFields, header.total]
-    .reduce((count, field) => count + (field && field.value !== '' && field.value !== null && field.confidence >= 70 ? 1 : 0), 0);
+    .reduce((count, field) => count + (field && field.value !== '' && field.value !== null && field.confidence >= 70 && field.source !== 'Derived' ? 1 : 0), 0);
   const itemCount = extraction.items.length;
   const reasons: string[] = [];
   if (!itemCount) reasons.push('NO_LINE_ITEMS');
