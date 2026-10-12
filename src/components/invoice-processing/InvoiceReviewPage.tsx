@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useActiveOrg } from '@/hooks/use-active-org';
 import { describeInvoiceLineReview } from '@/invoice/line-match';
-import { approveInvoiceFn, confirmInvoiceItemProductFn, createProductFromInvoiceItemFn, deleteInvoiceItemFn, getInvoiceReviewFn, saveInvoiceHeaderFn, saveInvoiceItemFn, unlinkInvoiceItemProductFn } from '@/lib/invoice-processing.functions';
+import { approveInvoiceFn, confirmInvoiceItemProductFn, createProductFromInvoiceItemFn, deleteInvoiceItemFn, getInvoiceReviewFn, matchInvoiceItemToCatalogFn, saveInvoiceHeaderFn, saveInvoiceItemFn, searchInvoiceCatalogFn, unlinkInvoiceItemProductFn } from '@/lib/invoice-processing.functions';
 import type { InvoiceHeaderInput, InvoiceItemInput, ReviewItem } from '@/types/invoice-processing';
 import { InvoiceHeaderForm } from './InvoiceHeaderForm';
 import { InvoiceItemDialog } from './InvoiceItemDialog';
@@ -26,6 +26,8 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
   const confirmProduct = useServerFn(confirmInvoiceItemProductFn);
   const createProduct = useServerFn(createProductFromInvoiceItemFn);
   const unlinkProduct = useServerFn(unlinkInvoiceItemProductFn);
+  const searchCatalog = useServerFn(searchInvoiceCatalogFn);
+  const matchCatalog = useServerFn(matchInvoiceItemToCatalogFn);
   const [itemOpen, setItemOpen] = useState(false);
   const [editing, setEditing] = useState<ReviewItem>();
   const [matchOpen, setMatchOpen] = useState(false);
@@ -39,7 +41,8 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
     queryFn: () => getReview({ data: { sourceFileId, organizationId: active!.organizationId } }),
     enabled: Boolean(active?.organizationId && owner),
   });
-  const refresh = () => review.refetch();
+  // Catalog results depend on the invoice vendor and on what has been adopted since.
+  const refresh = () => Promise.all([review.refetch(), queryClient.invalidateQueries({ queryKey: ['invoice-catalog-search'] })]);
 
   async function approveInvoice() {
     if (!active || !review.data) return;
@@ -286,6 +289,23 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
         onOpenChange={setMatchOpen}
         item={matching}
         products={data.products}
+        vendorName={data.header.vendorName}
+        hasVendor={Boolean(data.header.vendorId)}
+        searchCatalog={(query) => searchCatalog({ data: { organizationId: active.organizationId, sourceFileId, query } })}
+        onConfirmCatalog={async (catalogVendorProductId) => {
+          if (!matching) return;
+          await matchCatalog({
+            data: {
+              organizationId: active.organizationId,
+              sourceFileId,
+              itemId: matching.id,
+              catalogVendorProductId,
+              // The match this dialog showed; the database refuses if it has changed since.
+              expectedProductId: matching.productId,
+            },
+          });
+          await refresh();
+        }}
         onConfirm={async (productId) => {
           if (!matching) return;
           await confirmProduct({

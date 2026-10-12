@@ -1,4 +1,5 @@
-export type ExtractionSource = 'OCR' | 'Parser' | 'LLM' | 'User';
+// 'Derived' marks an amount calculated from other extracted values (never read from the document).
+export type ExtractionSource = 'OCR' | 'Parser' | 'LLM' | 'User' | 'Derived';
 import type { DocumentType, VendorEvidence } from './document-identity.ts';
 
 export interface ExtractedField<T> {
@@ -40,6 +41,13 @@ export interface ExtractionReconciliation {
   needsReview: boolean;
 }
 
+// What a provider saw in the document that its extracted fields do not account for. Totals are
+// only derived without a corroborating document total when both counts are zero.
+export interface ExtractionFinancialEvidence {
+  rejectedLineCandidates: number;
+  unexplainedAmounts: number;
+}
+
 export type StructuredExtractionState = 'STRUCTURED_SUCCESS' | 'STRUCTURED_PARTIAL' | 'MANUAL_REVIEW_REQUIRED' | 'STRUCTURED_FAILED';
 
 export interface ExtractionQuality {
@@ -54,6 +62,7 @@ export interface CanonicalInvoiceExtraction {
   header: ExtractedInvoiceHeader;
   vendorEvidence?: VendorEvidence[];
   items: ExtractedInvoiceItem[];
+  financialEvidence?: ExtractionFinancialEvidence;
   reconciliation?: ExtractionReconciliation;
   quality?: ExtractionQuality;
 }

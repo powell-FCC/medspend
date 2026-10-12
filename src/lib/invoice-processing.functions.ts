@@ -8,11 +8,13 @@ import type { CanonicalInvoiceExtraction } from '@/extraction/types';
 import { EmbeddedPdfTextProvider } from '@/extraction/embedded-pdf-text-provider';
 import { DeterministicInvoiceExtractionProvider } from '@/extraction/deterministic-invoice-provider';
 import { assessExtractionQuality, validateExtraction } from '@/extraction/validation';
+import { derivedTotalFields } from '@/extraction/totals';
 import { resolveVendor } from '@/extraction/document-identity';
 import { matchInvoiceProduct } from '@/product-identity/matcher';
 import { presentInvoiceLineMatch, toInvoiceLineMatchSource } from '@/invoice/line-match';
+import { toInvoiceCatalogSearch } from '@/invoice/catalog-match';
 import type { OCRProvider } from '@/extraction/providers';
-import type { InvoiceApprovalResult, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
+import type { InvoiceApprovalResult, InvoiceCatalogSearch, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
 
 const uuid = z.string().uuid();
 const reviewKey = z.object({ sourceFileId: uuid, organizationId: uuid });
@@ -421,6 +423,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
                 .map(([key, field]) => [key, field.confidence]),
             )
           : undefined,
+        derivedTotals: derivedTotalFields(extraction),
         totalsNeedReview: extraction?.reconciliation?.needsReview ?? false,
         structuredExtractionState: extraction ? (extraction.quality ?? assessExtractionQuality(extraction)).state : null,
         documentTextStatus,
@@ -477,6 +480,7 @@ export const getInvoiceReviewFn = createServerFn({ method: 'POST' })
         manufacturer: product.manufacturer ?? '',
         internalItemCode: product.internal_item_code ?? '',
         vendorItemNumber: product.vendor_item_number ?? '',
+        vendorSkus: (mappingsResult.data ?? []).filter((mapping) => mapping.product_id === product.id && mapping.vendor_id === invoice.vendor_id).map((mapping) => mapping.vendor_sku),
         unitOfMeasure: product.unit_of_measure ?? '',
         packSize: product.pack_size ?? '',
       })),
@@ -662,6 +666,43 @@ export const confirmInvoiceItemProductFn = createServerFn({ method: 'POST' })
       _invoice_item_id: data.itemId,
       _product_id: data.productId,
       _remember_vendor_sku: data.rememberVendorSku,
+    });
+    if (error) throw new Error(error.message);
+    return result;
+  });
+
+// Manual recovery beyond the organization's own products: the global catalog of the catalog
+// vendor this invoice's vendor is explicitly linked to. The database derives that vendor
+// from the invoice; the browser cannot ask for another vendor's catalog.
+export const searchInvoiceCatalogFn = createServerFn({ method: 'POST' })
+  .inputValidator((value: unknown) => reviewKey.extend({ query: z.string().max(200).default('') }).parse(value))
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ data, context }): Promise<InvoiceCatalogSearch> => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
+    const { data: result, error } = await context.supabase.rpc('search_invoice_line_catalog_listings', {
+      _organization_id: data.organizationId,
+      _source_file_id: data.sourceFileId,
+      _query: data.query,
+    });
+    if (error) throw new Error(error.message);
+    return toInvoiceCatalogSearch(result);
+  });
+
+// One explicit owner decision: adopt the chosen catalog listing if needed and match the line,
+// atomically in the database. expectedProductId is the match the reviewer was shown; the
+// database refuses if the line has since been matched to something else.
+export const matchInvoiceItemToCatalogFn = createServerFn({ method: 'POST' })
+  .inputValidator((value: unknown) => reviewKey.extend({ itemId: uuid, catalogVendorProductId: uuid, expectedProductId: uuid.nullable() }).parse(value))
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ data, context }) => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
+    await requireDraftInvoice(context.supabase, data.organizationId, data.sourceFileId);
+    const { data: result, error } = await context.supabase.rpc('match_invoice_item_to_catalog_listing', {
+      _organization_id: data.organizationId,
+      _source_file_id: data.sourceFileId,
+      _invoice_item_id: data.itemId,
+      _catalog_vendor_product_id: data.catalogVendorProductId,
+      _expected_product_id: data.expectedProductId,
     });
     if (error) throw new Error(error.message);
     return result;

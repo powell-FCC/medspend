@@ -226,7 +226,41 @@ test("the review subtitle is exception oriented", () => {
 
 test("migration is new, ordered after Phase 6C, transactional, and guarded", () => {
   const migrations = readdirSync(new URL("../supabase/migrations/", import.meta.url)).sort();
-  assert.equal(migrations.at(-1), migrationName);
+  // Later migrations may add to Phase 6C.1 but never redefine or drop what it established.
+  for (const later of migrations.slice(migrations.indexOf(migrationName) + 1)) {
+    const code = read(`../supabase/migrations/${later}`).replace(/--.*$/gm, "");
+    for (const name of [
+      "guard_invoice_item_match_provenance",
+      "find_invoice_line_exact_identity",
+      "apply_invoice_exact_product_identities",
+      "resolve_invoice_exact_product_identities",
+      "rematch_invoice_vendor_products",
+      "confirm_invoice_item_product",
+      "unlink_invoice_item_product",
+      "create_product_from_invoice_item",
+      "post_reviewed_invoice",
+      "adopt_catalog_vendor_product",
+    ]) {
+      assert.doesNotMatch(
+        code,
+        new RegExp(
+          `(?:CREATE(?: OR REPLACE)?|DROP|ALTER) FUNCTION (?:IF EXISTS )?public\\.${name}\\b`,
+          "i",
+        ),
+        `${later} redefines ${name}`,
+      );
+    }
+    assert.doesNotMatch(
+      code,
+      /ALTER TABLE public\.invoice_items/i,
+      `${later} alters invoice_items`,
+    );
+    assert.doesNotMatch(
+      code,
+      /invoice_items_match_provenance_guard/i,
+      `${later} touches the guard`,
+    );
+  }
   assert.ok(
     migrations.indexOf(migrationName) >
       migrations.indexOf("20261009120000_phase6c_staff_request_forgiveness.sql"),
