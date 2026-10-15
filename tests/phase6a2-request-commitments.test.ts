@@ -12,7 +12,8 @@ const migration = read("../supabase/migrations/20260914120000_phase6a2_request_c
 const server = read("../src/lib/supply-requests.functions.ts");
 const route = read("../src/routes/_authenticated/supply-requests.tsx");
 const detail = read("../src/components/admin/supply-requests/AdminRequestDetail.tsx");
-const budgetOverview = read("../src/components/budget/BudgetOverview.tsx");
+// The Budget page became the Budget & Purchasing command center (same four metrics).
+const budgetOverview = read("../src/components/budget-purchasing/CommandCenterSections.tsx");
 const staffShell = read("../src/components/app/StaffAppShell.tsx");
 const id = "11111111-1111-4111-8111-111111111111";
 
@@ -252,10 +253,10 @@ test("staff request UX remains free of commitment accounting", () => {
 });
 
 test("the budget view extends 6A.1 with four metrics and incomplete-pricing disclosure", () => {
-  for (const label of ["Budget", "Actual spend", "Committed spend", "Available budget"])
-    assert.match(budgetOverview, new RegExp(label));
-  assert.match(budgetOverview, /incomplete_commitment_count/);
-  assert.match(budgetOverview, /subtracts known committed costs only/);
+  for (const label of ["Budget", "Spent", "Committed", "Available"])
+    assert.match(budgetOverview, new RegExp(`["']${label}["']`));
+  assert.match(budgetOverview, /incompleteCommitmentCount/);
+  assert.match(budgetOverview, /Committed includes known prices only/);
 });
 
 test("generated Supabase types expose the new tables and RPCs", () => {

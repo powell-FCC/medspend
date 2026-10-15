@@ -8,21 +8,27 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { budgetFormSchema, budgetInputSchema, canAccessBudget, formatUSD, formatPeriod, selectActiveBudget } from '../src/budget/budget.ts';
 import { getBudgetSummary, listBudgets, saveBudget } from '../src/budget/data.ts';
 
-// Render the real presentational components using the existing Node test runner.
-const path = new URL('../src/components/budget/BudgetOverview.tsx', import.meta.url);
+// Render the real presentational components using the existing Node test runner. The
+// Budget page became the Budget & Purchasing command center; its summary renders the
+// same canonical get_budget_summary figures.
+const path = new URL('../src/components/budget-purchasing/CommandCenterSections.tsx', import.meta.url);
 const compiled = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS } }).outputText;
 const exports: any = {};
 new Function('require', 'exports', compiled)(createRequire(path), exports);
 const summary = { budget_id: 'budget', budget_name: 'Operating 2026', period_start: '2026-01-01', period_end: '2026-12-31', budget_amount: 1000, actual_spend: 250, committed_spend: 100, available_amount: 650, remaining_amount: 750, posted_invoice_count: 2, active_commitment_count: 1, incomplete_commitment_count: 0 };
-const render = (value = summary) => renderToStaticMarkup(createElement(exports.BudgetOverview, { summary: value }));
+const scope = (value: typeof summary) => ({ id: value.budget_id, label: value.budget_name, periodStart: value.period_start, periodEnd: value.period_end, budgetIds: [value.budget_id],
+  budgetAmount: value.budget_amount, actualSpend: value.actual_spend, committedSpend: value.committed_spend, availableAmount: value.available_amount,
+  postedInvoiceCount: value.posted_invoice_count, activeCommitmentCount: value.active_commitment_count, incompleteCommitmentCount: value.incomplete_commitment_count,
+  settlementCandidateCount: 0, settlementCandidateAmount: 0 });
+const render = (value = summary) => renderToStaticMarkup(createElement(exports.FinancialSummary, { summary: scope(value), today: '2026-06-01' }));
 const fields = { name: 'Operating', amount: '0', period_start: '2026-01-01', period_end: '2026-12-31' };
 const org = '00000000-0000-4000-8000-000000000001';
 const id = '00000000-0000-4000-8000-000000000002';
 
 test('no-budget state provides setup and create action', () => {
-  const html = renderToStaticMarkup(createElement(exports.BudgetEmptyState, { action: createElement('button', null, 'Create budget') }));
-  assert.match(html, /Set your operating budget/);
-  assert.match(html, /Track actual and committed spend against a defined budget period/);
+  const html = renderToStaticMarkup(createElement(exports.NoBudgetState, { action: createElement('button', null, 'Create budget') }));
+  assert.match(html, /No active budget/);
+  assert.match(html, /Create a budget period to track spent, committed and available dollars/);
   assert.match(html, /Create budget/);
 });
 test('creation validation rejects missing, negative, invalid and reversed fields', () => {
@@ -34,26 +40,27 @@ test('creation validation rejects missing, negative, invalid and reversed fields
 });
 test('summary renders budget, actual, committed, available, period, and counts', () => {
   const html = render();
-  for (const text of ['Operating 2026', '$1,000.00', '$250.00', '$100.00', '$650.00', 'Jan 1, 2026 – Dec 31, 2026', '2 posted invoices', '1 active commitment']) assert.ok(html.includes(text), text);
+  for (const text of ['Budget', 'Spent', 'Committed', 'Available', '$1,000.00', '$250.00', '$100.00', '$650.00', '2 posted invoices', 'Active / unreleased · 1 request']) assert.ok(html.includes(text), text);
   assert.equal(formatUSD(12345.6), '$12,345.60');
   assert.equal(formatPeriod('2026-01-01', '2026-01-01'), 'Jan 1, 2026 – Jan 1, 2026');
 });
 test('negative available remains negative and identifies actual plus commitment overage', () => {
   const html = render({ ...summary, actual_spend: 900, committed_spend: 200, available_amount: -100, remaining_amount: 100 });
   assert.match(html, /-\$100\.00/);
-  assert.match(html, /Actual and committed spend exceed this budget by \$100\.00/);
+  assert.match(html, /Spent and committed dollars exceed this budget by \$100\.00/);
 });
 test('zero budgets do not display percentages or non-finite values', () => {
   for (const actual_spend of [0, 100]) {
     const html = render({ ...summary, budget_amount: 0, actual_spend, committed_spend: 0, available_amount: -actual_spend, remaining_amount: -actual_spend });
     assert.match(html, /\$0\.00/);
-    assert.doesNotMatch(html, /NaN|Infinity|%/);
+    assert.doesNotMatch(html, /NaN|Infinity|\d% used/);
+    assert.match(html, /Zero budget/);
   }
 });
 test('incomplete commitment warning explains that only known costs are subtracted', () => {
   const html = render({ ...summary, incomplete_commitment_count: 2, active_commitment_count: 3 });
   assert.match(html, /2 active commitments have unpriced items/);
-  assert.match(html, /subtracts known committed costs only/);
+  assert.match(html, /Committed includes known prices only/);
 });
 test('selection ignores inactive budgets and chooses current then latest start deterministically', () => {
   const b = (id: string, start: string, end: string, active = true) => ({ id, name: id, amount: 100, period_start: start, period_end: end, active });
@@ -107,10 +114,10 @@ test('list scopes active budgets; edits UPDATE the existing scoped row', async (
 });
 test('route and navigation enforce access before rendering budget queries', () => {
   const read = (file: string) => readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
-  assert.match(read('routes/_authenticated/route.tsx'), /ADMIN_ROUTES = \["\/budget"/);
-  assert.match(read('components/app/AdminAppShell.tsx'), /to: "\/budget", label: "Budget", icon: Wallet \}/);
+  assert.match(read('routes/_authenticated/route.tsx'), /ADMIN_ROUTES = \["\/budget-purchasing", "\/budget"/);
+  assert.match(read('components/app/AdminAppShell.tsx'), /to: "\/budget-purchasing", label: "Budget & Purchasing", icon: Wallet \}/);
   assert.doesNotMatch(read('components/app/StaffAppShell.tsx'), /\/budget/);
-  assert.match(read('components/budget/BudgetPage.tsx'), /!canAccessBudget\(active.role\)/);
+  assert.match(read('components/budget-purchasing/BudgetPurchasingPage.tsx'), /!canAccessBudget\(active.role\)/);
   assert.equal((read('lib/budget.functions.ts').match(/middleware\(\[requireSupabaseAuth\]\)/g) ?? []).length, 3);
 });
 test('creation inserts the authenticated organization scope with validated fields', async () => {
@@ -152,7 +159,7 @@ function renderAdminNavigation(role: string) {
     '@tanstack/react-router': {
       Link: ({ to, children, ...props }: any) => createElement('a', { ...props, href: to }, children),
       useRouter: () => ({ navigate() {} }),
-      useRouterState: () => '/budget',
+      useRouterState: () => '/budget-purchasing',
     },
     '@/hooks/use-active-org': { useActiveOrg: () => ({ active: { role, organizationId: org, organizationName: 'Test organization' }, memberships: [], setActiveOrgId() {} }) },
     '@/integrations/supabase/client': { supabase: {} },
@@ -160,10 +167,10 @@ function renderAdminNavigation(role: string) {
   new Function('require', 'exports', shell)((name: string) => stubs[name] ?? require(name), shellExports);
   return renderToStaticMarkup(createElement(shellExports.AdminAppShell));
 }
-test('owners and admins see Budget in desktop and mobile navigation; existing owner-only items stay restricted', () => {
+test('owners and admins see Budget & Purchasing in desktop and mobile navigation; existing owner-only items stay restricted', () => {
   const owner = renderAdminNavigation('owner');
   const admin = renderAdminNavigation('admin');
-  for (const html of [owner, admin]) assert.equal((html.match(/href="\/budget"/g) ?? []).length, 2);
+  for (const html of [owner, admin]) assert.equal((html.match(/href="\/budget-purchasing"/g) ?? []).length, 2);
   for (const route of ['/inventory', '/upload', '/invoices']) {
     assert.equal((owner.match(new RegExp(`href="${route}"`, 'g')) ?? []).length, 2, route);
     assert.equal(admin.includes(`href="${route}"`), false, route);
