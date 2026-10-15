@@ -11,8 +11,13 @@ import { decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyReque
 import type { CommitmentReleaseKind } from "@/supply-requests/commitments";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 
+const QUEUE_KEYS = ["needsReview", "awaitingOrder", "awaitingDelivery", "readyForStaff", "completed"] as const satisfies readonly AdminQueueKey[];
+
 export const Route = createFileRoute("/_authenticated/supply-requests")({
   head: () => ({ meta: [{ title: "Request Inbox — SportSpend" }, { name: "robots", content: "noindex" }] }),
+  // Optional initial tab, e.g. from the Budget & Purchasing "Needs Attention" links.
+  validateSearch: (search: Record<string, unknown>): { queue?: AdminQueueKey } =>
+    QUEUE_KEYS.includes(search.queue as AdminQueueKey) ? { queue: search.queue as AdminQueueKey } : {},
   component: Page,
 });
 
@@ -25,7 +30,8 @@ function Page() {
   const fetchBudgetImpact = useServerFn(getSupplyRequestBudgetImpactFn);
   const releaseCommitment = useServerFn(releaseSupplyRequestCommitmentFn);
   const queryClient = useQueryClient();
-  const [queue, setQueue] = useState<AdminQueueKey>("needsReview");
+  const initialQueue = Route.useSearch().queue;
+  const [queue, setQueue] = useState<AdminQueueKey>(initialQueue ?? "needsReview");
   const [selection, setSelection] = useState<{ organizationId: string; id: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
@@ -76,6 +82,7 @@ function Page() {
         queryClient.invalidateQueries({ queryKey: ["org", organizationId, "requests"] }),
         queryClient.invalidateQueries({ queryKey: ["me", organizationId, "requests"] }),
         queryClient.invalidateQueries({ queryKey: ["budget-summary", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["budget-purchasing", organizationId] }),
       ]);
       setSelection(null);
       setFeedback(status === "approved" ? "Request approved. Staff can see the decision."
@@ -106,6 +113,7 @@ function Page() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["org", organizationId, "requests", selected.id, "budget-impact"] }),
         queryClient.invalidateQueries({ queryKey: ["budget-summary", organizationId] }),
+        queryClient.invalidateQueries({ queryKey: ["budget-purchasing", organizationId] }),
       ]);
       setFeedback("Commitment released. Budget availability now reflects the audited release.");
     } catch (error) {

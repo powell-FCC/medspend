@@ -1,7 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { BudgetPage } from '@/components/budget/BudgetPage';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
+// The Budget page became Budget & Purchasing; keep old links and bookmarks working.
 export const Route = createFileRoute('/_authenticated/budget')({
-  head: () => ({ meta: [{ title: 'Budget — SportSpend' }, { name: 'robots', content: 'noindex' }] }),
-  component: BudgetPage,
+  beforeLoad: () => {
+    throw redirect({ to: '/budget-purchasing', replace: true });
+  },
 });
