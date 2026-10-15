@@ -41,8 +41,8 @@ mutants=(
       AND invoice.currency_code|    WHERE invoice.currency_code"
   "inactive budgets listed|      AND budget.active = true
   ),
-  active_commitments|  ),
-  active_commitments"
+  -- A settlement candidate|  ),
+  -- A settlement candidate"
   "approvals count every status|          AND request.status IN ('submitted', 'under_review')|"
   "settled commitments still need settling|    WHERE commitment.organization_id = _organization_id
       AND commitment.status = 'active'
@@ -59,6 +59,18 @@ mutants=(
   "lineage includes released commitments|      AND commitment.status = 'active'
       AND commitment.committed_at::date BETWEEN _budget.period_start|      AND commitment.committed_at::date BETWEEN _budget.period_start"
   "lineage ignores the budget's organization|  WHERE budget.id = _budget_id AND budget.organization_id = _organization_id;|  WHERE budget.id = _budget_id;"
+  "ordered requests become settlement candidates|      request.status IN ('received', 'completed') AS settlement_candidate|      request.status IN ('ordered', 'received', 'completed') AS settlement_candidate"
+  "received requests are not settlement candidates|      request.status IN ('received', 'completed') AS settlement_candidate|      request.status IN ('completed') AS settlement_candidate"
+  "per-budget candidates ignore the period|          WHERE candidate.settlement_candidate
+            AND candidate.committed_at::date BETWEEN budget_row.period_start AND budget_row.period_end
+        ),
+        'settlementCandidateAmount'|          WHERE candidate.settlement_candidate
+        ),
+        'settlementCandidateAmount'"
+  "candidate list includes every active commitment|        SELECT * FROM active_commitments WHERE settlement_candidate
+        ORDER BY committed_at, id|        SELECT * FROM active_commitments
+        ORDER BY committed_at, id"
+  "lineage flags every commitment as a candidate|        'settlementCandidate', listed.request_status IN ('received', 'completed'),|        'settlementCandidate', true,"
   "admin checks removed|  IF NOT COALESCE(public.is_org_admin(_organization_id, auth.uid()), false) THEN|  IF false THEN"
 )
 

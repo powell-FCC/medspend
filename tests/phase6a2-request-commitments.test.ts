@@ -253,8 +253,8 @@ test("staff request UX remains free of commitment accounting", () => {
 });
 
 test("the budget view extends 6A.1 with four metrics and incomplete-pricing disclosure", () => {
-  for (const label of ["'Budget'", "'Spent'", "'Committed'", "'Available'"])
-    assert.match(budgetOverview, new RegExp(label));
+  for (const label of ["Budget", "Spent", "Committed", "Available"])
+    assert.match(budgetOverview, new RegExp(`["']${label}["']`));
   assert.match(budgetOverview, /incompleteCommitmentCount/);
   assert.match(budgetOverview, /Committed includes known prices only/);
 });

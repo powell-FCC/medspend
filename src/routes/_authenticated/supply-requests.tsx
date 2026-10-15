@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { RefreshCw } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AdminQueueTabs, adminQueueLabel, type AdminQueueKey } from "@/components/admin/supply-requests/AdminQueueTabs";
 import { AdminRequestCard } from "@/components/admin/supply-requests/AdminRequestCard";
 import { AdminRequestDetail } from "@/components/admin/supply-requests/AdminRequestDetail";
@@ -11,13 +11,17 @@ import { decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyReque
 import type { CommitmentReleaseKind } from "@/supply-requests/commitments";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUEUE_KEYS = ["needsReview", "awaitingOrder", "awaitingDelivery", "readyForStaff", "completed"] as const satisfies readonly AdminQueueKey[];
 
 export const Route = createFileRoute("/_authenticated/supply-requests")({
   head: () => ({ meta: [{ title: "Request Inbox — SportSpend" }, { name: "robots", content: "noindex" }] }),
-  // Optional initial tab, e.g. from the Budget & Purchasing "Needs Attention" links.
-  validateSearch: (search: Record<string, unknown>): { queue?: AdminQueueKey } =>
-    QUEUE_KEYS.includes(search.queue as AdminQueueKey) ? { queue: search.queue as AdminQueueKey } : {},
+  // Optional initial tab or request, e.g. from Budget & Purchasing links. A request opens
+  // in its own queue; ids not in this organization's inbox are ignored.
+  validateSearch: (search: Record<string, unknown>): { queue?: AdminQueueKey; request?: string } => ({
+    ...(QUEUE_KEYS.includes(search.queue as AdminQueueKey) ? { queue: search.queue as AdminQueueKey } : {}),
+    ...(typeof search.request === "string" && UUID.test(search.request) ? { request: search.request } : {}),
+  }),
   component: Page,
 });
 
@@ -30,8 +34,9 @@ function Page() {
   const fetchBudgetImpact = useServerFn(getSupplyRequestBudgetImpactFn);
   const releaseCommitment = useServerFn(releaseSupplyRequestCommitmentFn);
   const queryClient = useQueryClient();
-  const initialQueue = Route.useSearch().queue;
+  const { queue: initialQueue, request: initialRequest } = Route.useSearch();
   const [queue, setQueue] = useState<AdminQueueKey>(initialQueue ?? "needsReview");
+  const openedInitialRequest = useRef(false);
   const [selection, setSelection] = useState<{ organizationId: string; id: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
@@ -42,6 +47,15 @@ function Page() {
     queryFn: () => fetchDashboard({ data: { organizationId: active!.organizationId } }),
     enabled: !!active,
   });
+  useEffect(() => {
+    if (!initialRequest || openedInitialRequest.current || !dashboard.data || !active) return;
+    openedInitialRequest.current = true;
+    const found = (Object.keys(dashboard.data.queues) as AdminQueueKey[])
+      .find((key) => dashboard.data.queues[key].some((request) => request.id === initialRequest));
+    if (!found) return;
+    setQueue(found);
+    setSelection({ organizationId: active.organizationId, id: initialRequest });
+  }, [initialRequest, dashboard.data, active]);
   const selected = selection?.organizationId === active?.organizationId
     ? Object.values(dashboard.data?.queues ?? {}).flat().find((request) => request.id === selection?.id)
     : undefined;

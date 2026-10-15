@@ -38,8 +38,21 @@ BEGIN
     WHERE budget.organization_id = _organization_id
       AND budget.active = true
   ),
+  -- A settlement candidate is an active commitment whose request is already received or
+  -- completed. Commitments stay active until an admin releases them and requests are not
+  -- matched to invoices, so its purchase may or may not already be in posted spend. It is
+  -- surfaced for review only; nothing here nets, releases, or reclassifies it.
   active_commitments AS (
-    SELECT commitment.amount, commitment.pricing_status, request.status AS request_status
+    SELECT
+      commitment.id,
+      commitment.organization_id,
+      commitment.supply_request_id,
+      commitment.amount,
+      commitment.pricing_status,
+      commitment.total_item_count,
+      commitment.committed_at,
+      request.status AS request_status,
+      request.status IN ('received', 'completed') AS settlement_candidate
     FROM public.supply_request_commitments commitment
     JOIN public.supply_requests request
       ON request.id = commitment.supply_request_id
@@ -86,7 +99,18 @@ BEGIN
         'availableAmount', budget_row.available_amount,
         'postedInvoiceCount', budget_row.posted_invoice_count,
         'activeCommitmentCount', budget_row.active_commitment_count,
-        'incompleteCommitmentCount', budget_row.incomplete_commitment_count
+        'incompleteCommitmentCount', budget_row.incomplete_commitment_count,
+        -- Same period rule as committed_spend, so these are a subset of it.
+        'settlementCandidateCount', (
+          SELECT count(*) FROM active_commitments candidate
+          WHERE candidate.settlement_candidate
+            AND candidate.committed_at::date BETWEEN budget_row.period_start AND budget_row.period_end
+        ),
+        'settlementCandidateAmount', (
+          SELECT COALESCE(SUM(candidate.amount), 0) FROM active_commitments candidate
+          WHERE candidate.settlement_candidate
+            AND candidate.committed_at::date BETWEEN budget_row.period_start AND budget_row.period_end
+        )
       ) ORDER BY budget_row.period_start DESC, budget_row.period_end DESC, budget_row.budget_id)
       FROM budget_rows budget_row
     ), '[]'::jsonb),
@@ -96,16 +120,11 @@ BEGIN
         WHERE request.organization_id = _organization_id
           AND request.status IN ('submitted', 'under_review')
       ),
-      -- Received/completed requests intentionally keep their commitment until an admin
-      -- releases it. Once the purchase is invoiced those dollars are counted twice
-      -- until released, so they are surfaced rather than silently netted.
       'commitmentsToSettleCount', (
-        SELECT count(*) FROM active_commitments
-        WHERE request_status IN ('received', 'completed')
+        SELECT count(*) FROM active_commitments WHERE settlement_candidate
       ),
       'commitmentsToSettleAmount', (
-        SELECT COALESCE(SUM(amount), 0) FROM active_commitments
-        WHERE request_status IN ('received', 'completed')
+        SELECT COALESCE(SUM(amount), 0) FROM active_commitments WHERE settlement_candidate
       ),
       'unpricedCommitmentCount', (
         SELECT count(*) FROM active_commitments WHERE pricing_status <> 'fully_priced'
@@ -116,6 +135,33 @@ BEGIN
           AND job.status = 'review_required'
       ) END
     ),
+    -- Oldest first: the longest-held commitments are the likeliest to need settling.
+    'settlementCandidates', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'requestId', listed.supply_request_id,
+        'requestStatus', listed.request_status,
+        'committedAt', listed.committed_at,
+        'amount', listed.amount,
+        'pricingStatus', listed.pricing_status,
+        'itemCount', listed.total_item_count,
+        'itemLabel', (
+          SELECT COALESCE(product.name, NULLIF(btrim(item.free_text_item), ''), 'Catalog item')
+          FROM public.supply_request_items item
+          LEFT JOIN public.products product
+            ON product.id = item.product_id AND product.organization_id = item.organization_id
+          WHERE item.supply_request_id = listed.supply_request_id
+            AND item.organization_id = listed.organization_id
+          ORDER BY item.created_at, item.id
+          LIMIT 1
+        )
+      ) ORDER BY listed.committed_at, listed.id)
+      FROM (
+        SELECT * FROM active_commitments WHERE settlement_candidate
+        ORDER BY committed_at, id
+        LIMIT 25
+      ) listed
+    ), '[]'::jsonb),
+    'settlementCandidateLimit', 25,
     'recentPurchases', CASE WHEN _is_owner THEN COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
         'invoiceId', recent.id,
@@ -214,6 +260,13 @@ BEGIN
     'budgetId', _budget.id,
     'commitmentCount', (SELECT count(*) FROM commitments),
     'commitmentTotal', (SELECT COALESCE(SUM(amount), 0) FROM commitments),
+    'settlementCandidateCount', (
+      SELECT count(*) FROM commitments WHERE request_status IN ('received', 'completed')
+    ),
+    'settlementCandidateTotal', (
+      SELECT COALESCE(SUM(amount), 0) FROM commitments
+      WHERE request_status IN ('received', 'completed')
+    ),
     'commitments', COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
         'requestId', listed.supply_request_id,
@@ -222,6 +275,7 @@ BEGIN
         'amount', listed.amount,
         'pricingStatus', listed.pricing_status,
         'itemCount', listed.total_item_count,
+        'settlementCandidate', listed.request_status IN ('received', 'completed'),
         'itemLabel', (
           SELECT COALESCE(product.name, NULLIF(btrim(item.free_text_item), ''), 'Catalog item')
           FROM public.supply_request_items item

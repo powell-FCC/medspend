@@ -72,6 +72,7 @@ VALUES
   ('bc000000-0000-4000-8000-000000000605', 'bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000003', 'reorder', 1, 'under review', 'under_review'),
   ('bc000000-0000-4000-8000-000000000606', 'bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000003', 'reorder', 1, 'H2 partial', 'ordered'),
   ('bc000000-0000-4000-8000-000000000607', 'bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000003', 'reorder', 1, 'denied', 'denied'),
+  ('bc000000-0000-4000-8000-000000000610', 'bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000003', 'reorder', 1, 'H2 received still committed', 'received'),
   ('bc000000-0000-4000-8000-000000000608', 'bc000000-0000-4000-8000-000000000102', 'bc000000-0000-4000-8000-000000000004', 'reorder', 1, 'other submitted', 'submitted'),
   ('bc000000-0000-4000-8000-000000000609', 'bc000000-0000-4000-8000-000000000102', 'bc000000-0000-4000-8000-000000000004', 'reorder', 1, 'other received', 'received');
 INSERT INTO public.supply_request_commitments (
@@ -84,6 +85,7 @@ VALUES
   -- Settled: its dollars now live in posted spend and must not also count as committed.
   ('bc000000-0000-4000-8000-000000000703', 'bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000603', 25, 1, 1, 'fully_priced', 'released', '2027-02-15 12:00+00', '2027-03-05 12:00+00', 'settled', 'Invoiced on H1-200'),
   ('bc000000-0000-4000-8000-000000000704', 'bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000606', 10, 2, 1, 'partially_priced', 'active', '2027-08-05 12:00+00', NULL, NULL, NULL),
+  ('bc000000-0000-4000-8000-000000000706', 'bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000610', 15, 1, 1, 'fully_priced', 'active', '2027-09-01 12:00+00', NULL, NULL, NULL),
   ('bc000000-0000-4000-8000-000000000705', 'bc000000-0000-4000-8000-000000000102', 'bc000000-0000-4000-8000-000000000609', 777, 1, 1, 'fully_priced', 'active', '2027-02-10 12:00+00', NULL, NULL, NULL);
 
 -- Invoice review queue: one job awaiting review per org, plus one completed job.
@@ -159,6 +161,12 @@ BEGIN
 END
 $seed_prices$;
 
+-- Snapshot commitment state so the suite can prove that viewing the dashboard changes nothing.
+CREATE TEMP TABLE commitment_state_before AS
+SELECT id, status, released_at, amount FROM public.supply_request_commitments
+WHERE organization_id IN ('bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000102');
+GRANT SELECT ON commitment_state_before TO authenticated;
+
 GRANT EXECUTE ON FUNCTION pg_temp.observe(uuid, uuid, uuid, date, numeric, text, text, text, boolean) TO authenticated;
 
 SET LOCAL ROLE authenticated;
@@ -189,11 +197,31 @@ BEGIN
      OR (_h1 ->> 'incompleteCommitmentCount')::integer <> 0 THEN
     RAISE EXCEPTION 'H1 budget math is incorrect: %', _h1;
   END IF;
+  -- H2 committed: ordered request 10 + received request 15 (still active).
   IF (_h2 ->> 'actualSpend')::numeric <> 100
-     OR (_h2 ->> 'committedSpend')::numeric <> 10
-     OR (_h2 ->> 'availableAmount')::numeric <> 390
+     OR (_h2 ->> 'committedSpend')::numeric <> 25
+     OR (_h2 ->> 'availableAmount')::numeric <> 375
      OR (_h2 ->> 'incompleteCommitmentCount')::integer <> 1 THEN
     RAISE EXCEPTION 'H2 budget math is incorrect: %', _h2;
+  END IF;
+
+  -- Settlement candidates are a disclosed subset of the canonical committed figure:
+  -- H1 holds the completed request (40), H2 the received one (15); the ordered request
+  -- and the settled commitment are not candidates. Committed/available stay canonical.
+  IF (_h1 ->> 'settlementCandidateCount')::integer <> 1
+     OR (_h1 ->> 'settlementCandidateAmount')::numeric <> 40
+     OR (_h2 ->> 'settlementCandidateCount')::integer <> 1
+     OR (_h2 ->> 'settlementCandidateAmount')::numeric <> 15 THEN
+    RAISE EXCEPTION 'Per-budget settlement candidates are incorrect: % %', _h1, _h2;
+  END IF;
+  IF jsonb_array_length(_result -> 'settlementCandidates') <> 2
+     OR _result #>> '{settlementCandidates,0,requestId}' <> 'bc000000-0000-4000-8000-000000000602'
+     OR _result #>> '{settlementCandidates,0,requestStatus}' <> 'completed'
+     OR (_result #>> '{settlementCandidates,0,amount}')::numeric <> 40
+     OR _result #>> '{settlementCandidates,1,requestId}' <> 'bc000000-0000-4000-8000-000000000610'
+     OR _result #>> '{settlementCandidates,1,requestStatus}' <> 'received'
+     OR (_result ->> 'settlementCandidateLimit')::integer <> 25 THEN
+    RAISE EXCEPTION 'Settlement candidate list is incorrect: %', _result -> 'settlementCandidates';
   END IF;
 
   -- The command center must agree exactly with the canonical per-budget RPC.
@@ -206,8 +234,8 @@ BEGIN
   END IF;
 
   IF (_result #>> '{attention,awaitingApprovalCount}')::integer <> 2
-     OR (_result #>> '{attention,commitmentsToSettleCount}')::integer <> 1
-     OR (_result #>> '{attention,commitmentsToSettleAmount}')::numeric <> 40
+     OR (_result #>> '{attention,commitmentsToSettleCount}')::integer <> 2
+     OR (_result #>> '{attention,commitmentsToSettleAmount}')::numeric <> 55
      OR (_result #>> '{attention,unpricedCommitmentCount}')::integer <> 1
      OR (_result #>> '{attention,invoiceReviewCount}')::integer <> 1 THEN
     RAISE EXCEPTION 'Attention counts are incorrect: %', _result -> 'attention';
@@ -243,6 +271,14 @@ BEGIN
   IF EXISTS (SELECT 1 FROM jsonb_array_elements(_lineage -> 'commitments') c
        WHERE c ->> 'requestId' = 'bc000000-0000-4000-8000-000000000603') THEN
     RAISE EXCEPTION 'Released commitment appears in lineage';
+  END IF;
+  IF (_lineage ->> 'settlementCandidateCount')::integer <> 1
+     OR (_lineage ->> 'settlementCandidateTotal')::numeric <> 40
+     OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(_lineage -> 'commitments') c
+       WHERE c ->> 'requestId' = 'bc000000-0000-4000-8000-000000000602' AND (c ->> 'settlementCandidate')::boolean)
+     OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(_lineage -> 'commitments') c
+       WHERE c ->> 'requestId' = 'bc000000-0000-4000-8000-000000000601' AND NOT (c ->> 'settlementCandidate')::boolean) THEN
+    RAISE EXCEPTION 'Lineage settlement flags are incorrect: %', _lineage;
   END IF;
 END
 $owner_lineage$;
@@ -377,7 +413,11 @@ BEGIN
      OR (_result #>> '{budgets,0,actualSpend}')::numeric <> 5000
      OR (_result #>> '{budgets,0,committedSpend}')::numeric <> 777
      OR (_result #>> '{attention,awaitingApprovalCount}')::integer <> 1
-     OR (_result #>> '{attention,invoiceReviewCount}')::integer <> 1 THEN
+     OR (_result #>> '{attention,invoiceReviewCount}')::integer <> 1
+     OR (_result #>> '{attention,commitmentsToSettleCount}')::integer <> 1
+     OR (_result #>> '{attention,commitmentsToSettleAmount}')::numeric <> 777
+     OR jsonb_array_length(_result -> 'settlementCandidates') <> 1
+     OR _result #>> '{settlementCandidates,0,requestId}' <> 'bc000000-0000-4000-8000-000000000609' THEN
     RAISE EXCEPTION 'Other organization overview leaked or mis-scoped: %', _result;
   END IF;
   IF jsonb_array_length(_prices -> 'rows') <> 1
@@ -408,14 +448,30 @@ DECLARE
   _prices jsonb := public.get_price_intelligence_overview('bc000000-0000-4000-8000-000000000103');
 BEGIN
   IF _result -> 'budgets' <> '[]'::jsonb OR _result -> 'recentPurchases' <> '[]'::jsonb
+     OR _result -> 'settlementCandidates' <> '[]'::jsonb
      OR _prices -> 'rows' <> '[]'::jsonb OR (_prices ->> 'productCount')::integer <> 0 THEN
     RAISE EXCEPTION 'Empty organization state is incorrect: % %', _result, _prices;
   END IF;
 END
 $empty_org$;
 
--- The functions are read-only: STABLE, and not executable by anon.
+-- Viewing the dashboard (every call above, as every role) released or altered nothing.
 RESET ROLE;
+DO $no_mutation$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM commitment_state_before before
+    FULL JOIN public.supply_request_commitments now ON now.id = before.id
+    WHERE (before.id IS NULL AND now.organization_id IN ('bc000000-0000-4000-8000-000000000101', 'bc000000-0000-4000-8000-000000000102'))
+       OR (before.id IS NOT NULL AND (now.id IS NULL OR now.status IS DISTINCT FROM before.status
+         OR now.released_at IS DISTINCT FROM before.released_at OR now.amount IS DISTINCT FROM before.amount))
+  ) THEN
+    RAISE EXCEPTION 'Viewing the dashboard changed commitment state';
+  END IF;
+END
+$no_mutation$;
+
+-- The functions are read-only: STABLE, and not executable by anon.
 DO $grants$
 BEGIN
   IF EXISTS (

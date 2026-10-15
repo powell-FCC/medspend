@@ -18,7 +18,8 @@ new Function('require', 'exports', compiled)(createRequire(path), exports);
 const summary = { budget_id: 'budget', budget_name: 'Operating 2026', period_start: '2026-01-01', period_end: '2026-12-31', budget_amount: 1000, actual_spend: 250, committed_spend: 100, available_amount: 650, remaining_amount: 750, posted_invoice_count: 2, active_commitment_count: 1, incomplete_commitment_count: 0 };
 const scope = (value: typeof summary) => ({ id: value.budget_id, label: value.budget_name, periodStart: value.period_start, periodEnd: value.period_end, budgetIds: [value.budget_id],
   budgetAmount: value.budget_amount, actualSpend: value.actual_spend, committedSpend: value.committed_spend, availableAmount: value.available_amount,
-  postedInvoiceCount: value.posted_invoice_count, activeCommitmentCount: value.active_commitment_count, incompleteCommitmentCount: value.incomplete_commitment_count });
+  postedInvoiceCount: value.posted_invoice_count, activeCommitmentCount: value.active_commitment_count, incompleteCommitmentCount: value.incomplete_commitment_count,
+  settlementCandidateCount: 0, settlementCandidateAmount: 0 });
 const render = (value = summary) => renderToStaticMarkup(createElement(exports.FinancialSummary, { summary: scope(value), today: '2026-06-01' }));
 const fields = { name: 'Operating', amount: '0', period_start: '2026-01-01', period_end: '2026-12-31' };
 const org = '00000000-0000-4000-8000-000000000001';
@@ -39,7 +40,7 @@ test('creation validation rejects missing, negative, invalid and reversed fields
 });
 test('summary renders budget, actual, committed, available, period, and counts', () => {
   const html = render();
-  for (const text of ['Budget', 'Spent', 'Committed', 'Available', '$1,000.00', '$250.00', '$100.00', '$650.00', '2 posted invoices', '1 approved request']) assert.ok(html.includes(text), text);
+  for (const text of ['Budget', 'Spent', 'Committed', 'Available', '$1,000.00', '$250.00', '$100.00', '$650.00', '2 posted invoices', 'Active / unreleased · 1 request']) assert.ok(html.includes(text), text);
   assert.equal(formatUSD(12345.6), '$12,345.60');
   assert.equal(formatPeriod('2026-01-01', '2026-01-01'), 'Jan 1, 2026 – Jan 1, 2026');
 });
