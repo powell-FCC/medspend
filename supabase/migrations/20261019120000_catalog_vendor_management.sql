@@ -8,7 +8,7 @@
 --   * guard_vendor_catalog_link (trigger): API-role writes (authenticated/anon) can no longer
 --     set or change vendors.catalog_vendor_id directly, and no caller may repoint an existing
 --     non-null link to a different catalog vendor in one write. SECURITY DEFINER RPCs run as
---     the function owner, so Phase 5A.5 adoption keeps its existing NULL -> vendor behavior.
+--     the function owner and are bound by their own rules below.
 --   * link_organization_vendor_to_catalog_vendor (owner/admin RPC): NULL -> one explicitly
 --     chosen, existing, active catalog vendor, with a stale-write token. It never matches
 --     names, never creates catalog vendors, and refuses an already-linked vendor unless the
@@ -16,13 +16,19 @@
 --   * get_organization_vendor_catalog_coverage (owner/admin, SECURITY INVOKER, read-only):
 --     classifies the organization's own vendor SKU mappings for one linked vendor against
 --     that catalog vendor's listings, using the Phase 5A.4A SKU keys.
+--   * adopt_catalog_vendor_product (Phase 5A.5) redefined without its normalized-name vendor
+--     link: an unlinked same-name organization vendor is refused until it is linked here.
+--     After this migration the link RPC is the only path that sets catalog_vendor_id on an
+--     existing organization vendor.
 --
 -- Nothing here writes to any catalog_* table. Global catalog promotion is intentionally not
 -- implemented: catalog writes remain service-role only because no platform catalog-admin
 -- permission exists yet (see 20260824120000_phase5a4a_global_catalog_schema.sql).
 --
 -- No table, column, index, or constraint is changed and no data is modified.
--- Rollback: DROP FUNCTION public.get_organization_vendor_catalog_coverage(uuid, uuid);
+-- Rollback: re-run the adopt_catalog_vendor_product definition from
+--           20260827120000_phase5a5_catalog_adoption.sql (restores the name-based link);
+--           DROP FUNCTION public.get_organization_vendor_catalog_coverage(uuid, uuid);
 --           DROP FUNCTION public.link_organization_vendor_to_catalog_vendor(uuid, uuid, uuid, timestamptz);
 --           DROP TRIGGER vendors_guard_catalog_link ON public.vendors;
 --           DROP FUNCTION public.guard_vendor_catalog_link();
@@ -106,7 +112,7 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  -- Same lock as adopt_catalog_vendor_product, which can also link a vendor.
+  -- Same lock as adopt_catalog_vendor_product, which can create a linked vendor.
   PERFORM pg_advisory_xact_lock(
     hashtextextended('catalog-adoption:' || _organization_id::text, 0)
   );
@@ -363,5 +369,360 @@ GRANT EXECUTE ON FUNCTION public.get_organization_vendor_catalog_coverage(uuid, 
 
 COMMENT ON FUNCTION public.get_organization_vendor_catalog_coverage(uuid, uuid) IS
   'Owner/admin only, read-only. Classifies one organization vendor''s private SKU mappings against its linked catalog vendor by exact and separator-free SKU keys. Never writes and never promotes.';
+
+-- Phase 5A.5 adoption, redefined without its name-based vendor link. Previously, when no
+-- organization vendor was linked to the listing's catalog vendor, an active, unlinked
+-- organization vendor with the same normalized name was linked silently. It is now
+-- refused (55000) until an owner/admin links it explicitly through
+-- link_organization_vendor_to_catalog_vendor. Everything else is unchanged from
+-- 20260827120000_phase5a5_catalog_adoption.sql: an already-linked vendor adopts as
+-- before, a same-name vendor linked elsewhere is refused (23505), and an organization with
+-- no same-name active vendor still gets a new vendor row created from the catalog vendor
+-- itself (an explicit adoption of that identity, not an inference about an existing row).
+CREATE OR REPLACE FUNCTION public.adopt_catalog_vendor_product(
+  _organization_id uuid,
+  _catalog_vendor_product_id uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _catalog_vendor_product public.catalog_vendor_products%ROWTYPE;
+  _catalog_vendor public.catalog_vendors%ROWTYPE;
+  _catalog_product public.catalog_products%ROWTYPE;
+  _organization_vendor public.vendors%ROWTYPE;
+  _organization_product public.products%ROWTYPE;
+  _organization_vendor_product public.vendor_products%ROWTYPE;
+  _already_adopted boolean := false;
+  _vendor_created boolean := false;
+  _product_created boolean := false;
+  _vendor_product_created boolean := false;
+  _candidate_count bigint := 0;
+  _adopted_active boolean;
+  _vendor_product_active boolean;
+  _verified_unit text;
+BEGIN
+  IF _organization_id IS NULL OR _catalog_vendor_product_id IS NULL THEN
+    RAISE EXCEPTION 'organization_id and catalog_vendor_product_id are required'
+      USING ERRCODE = '22004';
+  END IF;
+
+  IF NOT COALESCE(public.is_org_admin(_organization_id, auth.uid()), false) THEN
+    RAISE EXCEPTION 'Only organization owners and admins can adopt catalog products'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Serialize catalog adoption within one organization. This closes races where
+  -- two different listings need to create or link the same local vendor/product.
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('catalog-adoption:' || _organization_id::text, 0)
+  );
+
+  SELECT *
+  INTO _catalog_vendor_product
+  FROM public.catalog_vendor_products
+  WHERE id = _catalog_vendor_product_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Catalog vendor product % does not exist', _catalog_vendor_product_id
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  SELECT *
+  INTO STRICT _catalog_vendor
+  FROM public.catalog_vendors
+  WHERE id = _catalog_vendor_product.catalog_vendor_id;
+
+  SELECT *
+  INTO STRICT _catalog_product
+  FROM public.catalog_products
+  WHERE id = _catalog_vendor_product.catalog_product_id;
+
+  _adopted_active :=
+    _catalog_vendor.active
+    AND _catalog_product.active
+    AND _catalog_vendor_product.active
+    AND NOT _catalog_vendor_product.discontinued;
+  _verified_unit := CASE
+    WHEN _catalog_vendor_product.package_status = 'verified'
+      THEN _catalog_vendor_product.package_unit
+    ELSE NULL
+  END;
+
+  SELECT *
+  INTO _organization_vendor_product
+  FROM public.vendor_products
+  WHERE organization_id = _organization_id
+    AND catalog_vendor_product_id = _catalog_vendor_product.id
+  ORDER BY created_at, id
+  LIMIT 1
+  FOR UPDATE;
+  _already_adopted := FOUND;
+
+  IF _already_adopted THEN
+    SELECT *
+    INTO STRICT _organization_vendor
+    FROM public.vendors
+    WHERE id = _organization_vendor_product.vendor_id
+      AND organization_id = _organization_id
+    FOR UPDATE;
+
+    SELECT *
+    INTO STRICT _organization_product
+    FROM public.products
+    WHERE id = _organization_vendor_product.product_id
+      AND organization_id = _organization_id
+    FOR UPDATE;
+
+    IF _organization_vendor.catalog_vendor_id IS DISTINCT FROM _catalog_vendor.id
+       OR _organization_product.catalog_product_id IS DISTINCT FROM _catalog_product.id THEN
+      RAISE EXCEPTION
+        'Existing catalog adoption % has mismatched vendor or product parents',
+        _organization_vendor_product.id
+        USING ERRCODE = '23514';
+    END IF;
+
+    RETURN jsonb_build_object(
+      'organizationId', _organization_id,
+      'catalogVendorProductId', _catalog_vendor_product.id,
+      'vendorId', _organization_vendor.id,
+      'productId', _organization_product.id,
+      'vendorProductId', _organization_vendor_product.id,
+      'vendorCreated', false,
+      'productCreated', false,
+      'vendorProductCreated', false,
+      'alreadyAdopted', true
+    );
+  END IF;
+
+  SELECT *
+  INTO _organization_vendor
+  FROM public.vendors
+  WHERE organization_id = _organization_id
+    AND catalog_vendor_id = _catalog_vendor.id
+  ORDER BY created_at, id
+  LIMIT 1
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    -- A same-name vendor is never treated as the catalog vendor. Unlinked, it must be
+    -- linked explicitly in Catalog Vendors; linked elsewhere, adoption is refused. Neither
+    -- case writes anything. The name is only checked so adoption does not create a second
+    -- active vendor beside it (vendors_active_name_uq).
+    SELECT *
+    INTO _organization_vendor
+    FROM public.vendors
+    WHERE organization_id = _organization_id
+      AND active
+      AND normalized_name = _catalog_vendor.normalized_name
+    ORDER BY created_at, id
+    LIMIT 1;
+
+    IF FOUND THEN
+      IF _organization_vendor.catalog_vendor_id IS NOT NULL THEN
+        RAISE EXCEPTION
+          'Active organization vendor % has the same normalized name but links to a different catalog vendor',
+          _organization_vendor.id
+          USING ERRCODE = '23505';
+      END IF;
+
+      RAISE EXCEPTION
+        'Organization vendor % is not linked to catalog vendor %; link it in Catalog Vendors before adopting',
+        _organization_vendor.id,
+        _catalog_vendor.id
+        USING ERRCODE = '55000';
+    ELSE
+      INSERT INTO public.vendors (
+        organization_id,
+        name,
+        normalized_name,
+        website,
+        active,
+        catalog_vendor_id
+      )
+      VALUES (
+        _organization_id,
+        _catalog_vendor.name,
+        _catalog_vendor.normalized_name,
+        _catalog_vendor.website,
+        _catalog_vendor.active,
+        _catalog_vendor.id
+      )
+      RETURNING * INTO _organization_vendor;
+      _vendor_created := true;
+    END IF;
+  END IF;
+
+  -- A reused inactive local vendor is an organization override. New child rows
+  -- must respect that local operational state even when the global row is active.
+  _adopted_active := _adopted_active AND _organization_vendor.active;
+
+  SELECT count(*)
+  INTO _candidate_count
+  FROM public.vendor_products
+  WHERE organization_id = _organization_id
+    AND vendor_id = _organization_vendor.id
+    AND lower(btrim(vendor_sku)) = lower(btrim(_catalog_vendor_product.vendor_sku));
+
+  IF _candidate_count > 1 THEN
+    RAISE EXCEPTION
+      'Multiple organization vendor products use exact vendor SKU % for vendor %; manual reconciliation is required',
+      _catalog_vendor_product.vendor_sku,
+      _organization_vendor.id
+      USING ERRCODE = '23505';
+  END IF;
+
+  IF _candidate_count = 1 THEN
+    SELECT *
+    INTO STRICT _organization_vendor_product
+    FROM public.vendor_products
+    WHERE organization_id = _organization_id
+      AND vendor_id = _organization_vendor.id
+      AND lower(btrim(vendor_sku)) = lower(btrim(_catalog_vendor_product.vendor_sku))
+    FOR UPDATE;
+
+    IF _organization_vendor_product.catalog_vendor_product_id IS NOT NULL
+       AND _organization_vendor_product.catalog_vendor_product_id <> _catalog_vendor_product.id THEN
+      RAISE EXCEPTION
+        'Organization vendor product % already links to a different catalog vendor product',
+        _organization_vendor_product.id
+        USING ERRCODE = '23505';
+    END IF;
+
+    SELECT *
+    INTO STRICT _organization_product
+    FROM public.products
+    WHERE id = _organization_vendor_product.product_id
+      AND organization_id = _organization_id
+    FOR UPDATE;
+
+    IF _organization_product.catalog_product_id IS NOT NULL
+       AND _organization_product.catalog_product_id <> _catalog_product.id THEN
+      RAISE EXCEPTION
+        'Organization product % already links to a different catalog product',
+        _organization_product.id
+        USING ERRCODE = '23505';
+    END IF;
+
+    IF _organization_product.catalog_product_id IS NULL THEN
+      UPDATE public.products
+      SET catalog_product_id = _catalog_product.id
+      WHERE id = _organization_product.id
+      RETURNING * INTO _organization_product;
+    END IF;
+
+    UPDATE public.vendor_products
+    SET catalog_vendor_product_id = _catalog_vendor_product.id
+    WHERE id = _organization_vendor_product.id
+    RETURNING * INTO _organization_vendor_product;
+  ELSE
+    SELECT *
+    INTO _organization_product
+    FROM public.products
+    WHERE organization_id = _organization_id
+      AND catalog_product_id = _catalog_product.id
+    ORDER BY created_at, id
+    LIMIT 1
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+      IF EXISTS (
+        SELECT 1
+        FROM public.products
+        WHERE organization_id = _organization_id
+          AND active
+          AND normalized_name = _catalog_product.normalized_name
+      ) THEN
+        RAISE EXCEPTION
+          'An active organization product already uses normalized name %; manual reconciliation is required',
+          _catalog_product.normalized_name
+          USING ERRCODE = '23505';
+      END IF;
+
+      INSERT INTO public.products (
+        organization_id,
+        name,
+        unit,
+        approved,
+        normalized_name,
+        description,
+        preferred_vendor_id,
+        manufacturer,
+        vendor_item_number,
+        unit_of_measure,
+        pack_size,
+        active,
+        staff_requestable,
+        catalog_product_id
+      )
+      VALUES (
+        _organization_id,
+        _catalog_product.name,
+        _verified_unit,
+        _adopted_active,
+        _catalog_product.normalized_name,
+        _catalog_product.description,
+        _organization_vendor.id,
+        _catalog_product.manufacturer,
+        _catalog_vendor_product.vendor_sku,
+        _verified_unit,
+        _catalog_vendor_product.package_description,
+        _adopted_active,
+        _adopted_active,
+        _catalog_product.id
+      )
+      RETURNING * INTO _organization_product;
+      _product_created := true;
+    END IF;
+
+    _vendor_product_active := _adopted_active AND _organization_product.active;
+
+    INSERT INTO public.vendor_products (
+      organization_id,
+      vendor_id,
+      product_id,
+      vendor_sku,
+      manufacturer_sku,
+      package_size,
+      unit_of_measure,
+      active,
+      catalog_vendor_product_id
+    )
+    VALUES (
+      _organization_id,
+      _organization_vendor.id,
+      _organization_product.id,
+      _catalog_vendor_product.vendor_sku,
+      _catalog_vendor_product.manufacturer_sku,
+      _catalog_vendor_product.package_description,
+      _verified_unit,
+      _vendor_product_active,
+      _catalog_vendor_product.id
+    )
+    RETURNING * INTO _organization_vendor_product;
+    _vendor_product_created := true;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'organizationId', _organization_id,
+    'catalogVendorProductId', _catalog_vendor_product.id,
+    'vendorId', _organization_vendor.id,
+    'productId', _organization_product.id,
+    'vendorProductId', _organization_vendor_product.id,
+    'vendorCreated', _vendor_created,
+    'productCreated', _product_created,
+    'vendorProductCreated', _vendor_product_created,
+    'alreadyAdopted', false
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.adopt_catalog_vendor_product(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.adopt_catalog_vendor_product(uuid, uuid) TO authenticated;
+
+COMMENT ON FUNCTION public.adopt_catalog_vendor_product(uuid, uuid) IS
+  'Atomically and idempotently adopts one global catalog vendor listing into an organization catalog. Owner/admin only; never links an existing organization vendor (link it in Catalog Vendors first); inventory is never created or changed.';
 
 COMMIT;

@@ -51,6 +51,14 @@ const linkRpc = between(
   "CREATE FUNCTION public.link_organization_vendor_to_catalog_vendor",
   "REVOKE ALL ON FUNCTION public.link_organization_vendor_to_catalog_vendor",
 );
+const adoptionRpc = between(
+  migrationCode,
+  "CREATE OR REPLACE FUNCTION public.adopt_catalog_vendor_product",
+  "REVOKE ALL ON FUNCTION public.adopt_catalog_vendor_product",
+);
+const legacyAdoption = read("../supabase/migrations/20260827120000_phase5a5_catalog_adoption.sql");
+const catalogServer = read("../src/lib/catalog.functions.ts");
+const catalogAdmin = read("../src/catalog-admin/catalog-admin.ts");
 const coverageRpc = between(
   migrationCode,
   "CREATE FUNCTION public.get_organization_vendor_catalog_coverage",
@@ -453,4 +461,97 @@ test("the behavior suite covers the boundary cases and the mutation check target
   assert.match(behavior, /^ROLLBACK;\s*$/m);
   assert.match(mutationCheck, new RegExp(migrationName.replace(".", "\\.")));
   assert.match(mutationCheck, /never point this at\n# production/);
+});
+
+// ADOPTION NEVER LINKS BY NAME
+
+test("the adoption redefinition differs from Phase 5A.5 only in the vendor-link block", () => {
+  const fnStart = "CREATE OR REPLACE FUNCTION public.adopt_catalog_vendor_product(";
+  const fnEnd =
+    "REVOKE ALL ON FUNCTION public.adopt_catalog_vendor_product(uuid, uuid) FROM PUBLIC";
+  const legacyFn = between(legacyAdoption, fnStart, fnEnd);
+  const newFn = between(migration, fnStart, fnEnd);
+  const blockEnd = "    ELSE\n      INSERT INTO public.vendors (";
+  const legacyBlock = between(
+    legacyFn,
+    "  IF NOT FOUND THEN\n    SELECT *\n    INTO _organization_vendor\n    FROM public.vendors\n    WHERE organization_id = _organization_id\n      AND active",
+    blockEnd,
+  );
+  const newBlock = between(newFn, "  IF NOT FOUND THEN\n    -- A same-name vendor", blockEnd);
+  assert.match(legacyBlock, /SET catalog_vendor_id = _catalog_vendor\.id/);
+  assert.doesNotMatch(newBlock, /SET catalog_vendor_id/);
+  assert.equal(newFn.replace(newBlock, legacyBlock), legacyFn);
+});
+
+test("adoption is redefined here without the legacy name-based vendor link", () => {
+  // The production-applied Phase 5A.5 migration is untouched and still holds the legacy link.
+  assert.match(
+    legacyAdoption,
+    /IF _organization_vendor\.catalog_vendor_id IS NULL THEN\s+UPDATE public\.vendors\s+SET catalog_vendor_id = _catalog_vendor\.id/,
+  );
+  // The redefinition never updates an existing vendor.
+  assert.doesNotMatch(adoptionRpc, /UPDATE public\.vendors/);
+  assert.match(
+    adoptionRpc,
+    /link it in Catalog Vendors before adopting',[\s\S]*?USING ERRCODE = '55000';/,
+  );
+  assert.match(
+    adoptionRpc,
+    /IF _organization_vendor\.catalog_vendor_id IS NOT NULL THEN\s+RAISE EXCEPTION\s+'Active organization vendor % has the same normalized name but links to a different catalog vendor'/,
+  );
+  // The same-name lookup no longer locks a row it might update.
+  assert.match(
+    adoptionRpc,
+    /AND normalized_name = _catalog_vendor\.normalized_name\s+ORDER BY created_at, id\s+LIMIT 1;/,
+  );
+  assert.match(adoptionRpc, /public\.is_org_admin\(_organization_id, auth\.uid\(\)\)/);
+  assert.match(
+    migrationCode,
+    /REVOKE ALL ON FUNCTION public\.adopt_catalog_vendor_product\(uuid, uuid\) FROM PUBLIC, anon;\s+GRANT EXECUTE ON FUNCTION public\.adopt_catalog_vendor_product\(uuid, uuid\) TO authenticated;/,
+  );
+});
+
+test("an unlinked vendor's adoption error sends owners and admins to Catalog Vendors", async () => {
+  const { CATALOG_VENDOR_LINK_REQUIRED_MESSAGE, isCatalogVendorLinkRequired } =
+    await import("../src/catalog-admin/catalog-admin.ts");
+  assert.match(
+    CATALOG_VENDOR_LINK_REQUIRED_MESSAGE,
+    /not linked to the global catalog\. Link it in Catalog Vendors/,
+  );
+  assert.doesNotMatch(CATALOG_VENDOR_LINK_REQUIRED_MESSAGE, /catalog_vendor_id|RPC|SQL/);
+  assert.equal(isCatalogVendorLinkRequired(CATALOG_VENDOR_LINK_REQUIRED_MESSAGE), true);
+  assert.equal(isCatalogVendorLinkRequired("Unable to add this item"), false);
+  assert.match(
+    catalogServer,
+    /error\.code === "55000" && String\(error\.message \?\? ""\)\.includes\("Catalog Vendors"\)[\s\S]*?CATALOG_VENDOR_LINK_REQUIRED_MESSAGE/,
+  );
+  assert.match(catalogAdmin, /export const CATALOG_VENDOR_LINK_REQUIRED_MESSAGE/);
+  assert.match(
+    catalogPage,
+    /isCatalogVendorLinkRequired\(notice\.message\)[\s\S]*?<Link to="\/catalog-vendors"[\s\S]*?Open Catalog Vendors/,
+  );
+  // The page never links the vendor itself.
+  assert.doesNotMatch(
+    catalogPage,
+    /linkOrganizationVendorFn|link_organization_vendor_to_catalog_vendor/,
+  );
+});
+
+test("the behavior suite covers adoption without a link and the coverage display cap", () => {
+  for (const expected of [
+    "refused adoption left vendor link, vendors, products, and mappings unchanged",
+    "vendor linked elsewhere keeps its link",
+    "explicitly linked vendor adopts under that vendor",
+    "repeat adoption is an idempotent no-op",
+    "row list is capped while counts are complete",
+  ]) {
+    assert.ok(behavior.includes(expected), `behavior suite covers: ${expected}`);
+  }
+  for (const mutant of [
+    "adoption links a same-name vendor again",
+    "adoption accepts a same-name vendor linked elsewhere",
+    "coverage row cap counts only displayed rows",
+  ]) {
+    assert.ok(mutationCheck.includes(mutant), `mutation check includes: ${mutant}`);
+  }
 });

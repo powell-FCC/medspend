@@ -29,6 +29,7 @@ import {
   canStockCatalogResult,
   catalogPackagePresentation,
   isCatalogAdminRole,
+  isCatalogVendorLinkRequired,
   type CatalogAdminDetail,
   type CatalogAdminResult,
 } from "@/catalog-admin/catalog-admin";
@@ -248,6 +249,14 @@ export function CatalogAdminPage({
             role="status"
           >
             {notice.message}
+            {notice.tone === "error" && isCatalogVendorLinkRequired(notice.message) && (
+              <>
+                {" "}
+                <Link to="/catalog-vendors" className="font-medium underline">
+                  Open Catalog Vendors
+                </Link>
+              </>
+            )}
           </div>
         )}
         {catalogQuery.error && (

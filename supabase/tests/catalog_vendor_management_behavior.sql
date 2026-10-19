@@ -81,7 +81,11 @@ INSERT INTO public.catalog_vendors (id, name, normalized_name, active)
 VALUES
   ('c7d00000-0000-4000-8000-000000000201', 'Henry Schein', 'placeholder', true),
   ('c7d00000-0000-4000-8000-000000000202', 'CVM Medline', 'placeholder', true),
-  ('c7d00000-0000-4000-8000-000000000203', 'CVM Retired Vendor', 'placeholder', false);
+  ('c7d00000-0000-4000-8000-000000000203', 'CVM Retired Vendor', 'placeholder', false),
+  -- Same normalized name as organization A's "Medline", which is linked to CVM Medline.
+  ('c7d00000-0000-4000-8000-000000000204', 'Medline', 'placeholder', true),
+  -- No organization vendor has this name.
+  ('c7d00000-0000-4000-8000-000000000205', 'CVM Brand New Supply', 'placeholder', true);
 
 INSERT INTO public.catalog_products (id, name, manufacturer, active, verification_status)
 VALUES
@@ -92,7 +96,9 @@ VALUES
   ('c7d00000-0000-4000-8000-000000000215', 'Discontinued Listing Product', NULL, true, 'verified'),
   ('c7d00000-0000-4000-8000-000000000216', 'CVM Adoptable Tape', NULL, true, 'verified'),
   ('c7d00000-0000-4000-8000-000000000217', 'Medline Only Product', NULL, true, 'verified'),
-  ('c7d00000-0000-4000-8000-000000000218', 'Rejected Listing Product', NULL, true, 'rejected');
+  ('c7d00000-0000-4000-8000-000000000218', 'Rejected Listing Product', NULL, true, 'rejected'),
+  ('c7d00000-0000-4000-8000-000000000219', 'Medline Namesake Product', NULL, true, 'verified'),
+  ('c7d00000-0000-4000-8000-000000000220', 'Brand New Supply Product', NULL, true, 'verified');
 
 INSERT INTO public.catalog_vendor_products (
   id, catalog_vendor_id, catalog_product_id, vendor_sku, normalized_vendor_sku,
@@ -106,7 +112,9 @@ VALUES
   ('c7d00000-0000-4000-8000-000000000225', 'c7d00000-0000-4000-8000-000000000201', 'c7d00000-0000-4000-8000-000000000215', '777-0002', 'x', 'unknown', false, true, 'verified'),
   ('c7d00000-0000-4000-8000-000000000226', 'c7d00000-0000-4000-8000-000000000201', 'c7d00000-0000-4000-8000-000000000216', 'ADOPT-1', 'x', 'unknown', true, false, 'verified'),
   ('c7d00000-0000-4000-8000-000000000227', 'c7d00000-0000-4000-8000-000000000202', 'c7d00000-0000-4000-8000-000000000217', 'ONLY-ML', 'x', 'unknown', true, false, 'verified'),
-  ('c7d00000-0000-4000-8000-000000000228', 'c7d00000-0000-4000-8000-000000000201', 'c7d00000-0000-4000-8000-000000000218', 'REJ-9', 'x', 'unknown', true, false, 'rejected');
+  ('c7d00000-0000-4000-8000-000000000228', 'c7d00000-0000-4000-8000-000000000201', 'c7d00000-0000-4000-8000-000000000218', 'REJ-9', 'x', 'unknown', true, false, 'rejected'),
+  ('c7d00000-0000-4000-8000-000000000229', 'c7d00000-0000-4000-8000-000000000204', 'c7d00000-0000-4000-8000-000000000219', 'MED-1', 'x', 'unknown', true, false, 'verified'),
+  ('c7d00000-0000-4000-8000-000000000230', 'c7d00000-0000-4000-8000-000000000205', 'c7d00000-0000-4000-8000-000000000220', 'NEW-1', 'x', 'unknown', true, false, 'verified');
 
 INSERT INTO public.vendors (id, organization_id, name, normalized_name, active, catalog_vendor_id)
 VALUES
@@ -139,6 +147,12 @@ VALUES
   ('c7d00000-0000-4000-8000-000000000507', 'c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000301', 'c7d00000-0000-4000-8000-000000000407', '2677976', NULL, NULL, false),
   ('c7d00000-0000-4000-8000-000000000508', 'c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000301', 'c7d00000-0000-4000-8000-000000000408', 'REJ-9', NULL, NULL, true),
   ('c7d00000-0000-4000-8000-000000000509', 'c7d00000-0000-4000-8000-000000000102', 'c7d00000-0000-4000-8000-000000000304', 'c7d00000-0000-4000-8000-000000000409', 'B-SECRET-1', NULL, NULL, true);
+
+-- 1,005 more organization B mappings: the row list is capped at 1,000, the counts are not.
+INSERT INTO public.vendor_products (organization_id, vendor_id, product_id, vendor_sku, active)
+SELECT 'c7d00000-0000-4000-8000-000000000102', 'c7d00000-0000-4000-8000-000000000304',
+  'c7d00000-0000-4000-8000-000000000409', 'B-BULK-' || lpad(n::text, 4, '0'), true
+FROM generate_series(1, 1005) n;
 
 -- Invoice, line, inventory and price history that linking and coverage must leave alone.
 INSERT INTO public.vendor_invoices (id, organization_id, uploaded_by, storage_path, original_filename, file_size, mime_type)
@@ -199,6 +213,45 @@ SELECT pg_temp.cvm_assert(
 SELECT pg_temp.cvm_assert(
   (SELECT catalog_vendor_id IS NULL FROM public.vendors WHERE id = 'c7d00000-0000-4000-8000-000000000301'),
   'same-name catalog vendor was not linked implicitly'
+);
+
+-- Adoption never links by name. Organization A's unlinked "Henry Schein" has exactly the
+-- catalog vendor's normalized name; adopting one of that catalog vendor's listings is
+-- refused until the vendor is linked explicitly, and writes nothing.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', 'c7d00000-0000-4000-8000-000000000001', true);
+SELECT pg_temp.cvm_expect_error(
+  $$SELECT public.adopt_catalog_vendor_product('c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000226')$$,
+  'link it in Catalog Vendors before adopting'
+);
+-- The listing's SKU is not mapped yet, so this also covers the "no mapping yet" case.
+SELECT pg_temp.cvm_expect_error(
+  $$SELECT public.adopt_catalog_vendor_product('c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000221')$$,
+  'link it in Catalog Vendors before adopting'
+);
+SELECT pg_temp.cvm_assert(
+  (SELECT catalog_vendor_id IS NULL FROM public.vendors WHERE id = 'c7d00000-0000-4000-8000-000000000301')
+  AND (SELECT count(*) FROM public.vendors WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101') = 3
+  AND (SELECT count(*) FROM public.products WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101') = 8
+  AND (SELECT count(*) FROM public.vendor_products WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101') = 8
+  AND NOT EXISTS (SELECT 1 FROM public.vendor_products WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101' AND catalog_vendor_product_id IS NOT NULL),
+  'refused adoption left vendor link, vendors, products, and mappings unchanged'
+);
+
+-- A same-name vendor linked to a different catalog vendor is refused and not repointed.
+SELECT pg_temp.cvm_expect_error(
+  $$SELECT public.adopt_catalog_vendor_product('c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000229')$$,
+  'links to a different catalog vendor'
+);
+SELECT pg_temp.cvm_assert(
+  (SELECT catalog_vendor_id = 'c7d00000-0000-4000-8000-000000000202' FROM public.vendors WHERE id = 'c7d00000-0000-4000-8000-000000000302'),
+  'vendor linked elsewhere keeps its link'
+);
+
+-- Another organization's owner cannot adopt into organization A.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', 'c7d00000-0000-4000-8000-000000000004', true);
+SELECT pg_temp.cvm_expect_error(
+  $$SELECT public.adopt_catalog_vendor_product('c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000230')$$,
+  'Only organization owners and admins can adopt catalog products'
 );
 
 -- 4. Unauthorized role: staff can neither link nor read coverage.
@@ -358,6 +411,31 @@ SELECT pg_temp.cvm_assert(
 SELECT pg_catalog.set_config('request.jwt.claim.sub', 'c7d00000-0000-4000-8000-000000000001', true);
 INSERT INTO cvm_state
 SELECT 'adoption', public.adopt_catalog_vendor_product('c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000226');
+SELECT pg_temp.cvm_assert(
+  (SELECT value @> '{"vendorId": "c7d00000-0000-4000-8000-000000000301", "vendorCreated": false, "productCreated": true, "vendorProductCreated": true, "alreadyAdopted": false}'::jsonb
+   FROM cvm_state WHERE name = 'adoption'),
+  format('explicitly linked vendor adopts under that vendor: %s', (SELECT value FROM cvm_state WHERE name = 'adoption'))
+);
+SELECT pg_temp.cvm_assert(
+  (public.adopt_catalog_vendor_product('c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000226')
+   @> jsonb_build_object('alreadyAdopted', true, 'vendorProductId', (SELECT value ->> 'vendorProductId' FROM cvm_state WHERE name = 'adoption'))),
+  'repeat adoption is an idempotent no-op'
+);
+
+-- With no organization vendor of that name, adoption still creates a new vendor from the
+-- catalog vendor itself (Phase 5A.5 behavior, not a name inference about an existing row).
+SELECT pg_temp.cvm_assert(
+  public.adopt_catalog_vendor_product('c7d00000-0000-4000-8000-000000000101', 'c7d00000-0000-4000-8000-000000000230')
+  @> '{"vendorCreated": true, "alreadyAdopted": false}'::jsonb,
+  'adoption with no same-name vendor reports a created vendor'
+);
+-- Separate statement: a query cannot see rows written by a function it calls.
+SELECT pg_temp.cvm_assert(
+  (SELECT count(*) FROM public.vendors
+       WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101'
+         AND name = 'CVM Brand New Supply' AND catalog_vendor_id = 'c7d00000-0000-4000-8000-000000000205') = 1,
+  'adoption with no same-name vendor creates one vendor from the catalog vendor'
+);
 
 -- COVERAGE 9-14.
 INSERT INTO cvm_state
@@ -450,12 +528,23 @@ SELECT pg_temp.cvm_assert(
   'organization B mapping is absent from organization A coverage'
 );
 SELECT pg_catalog.set_config('request.jwt.claim.sub', 'c7d00000-0000-4000-8000-000000000004', true);
+INSERT INTO cvm_state
+SELECT 'otherCoverage', public.get_organization_vendor_catalog_coverage(
+  'c7d00000-0000-4000-8000-000000000102', 'c7d00000-0000-4000-8000-000000000304');
 SELECT pg_temp.cvm_assert(
-  (SELECT jsonb_agg(row_value ->> 'vendorSku')
-   FROM jsonb_array_elements(public.get_organization_vendor_catalog_coverage(
-     'c7d00000-0000-4000-8000-000000000102', 'c7d00000-0000-4000-8000-000000000304') -> 'rows') row_value)
-  = '["B-SECRET-1"]'::jsonb,
-  'organization B coverage contains only its own mapping'
+  NOT EXISTS (
+    SELECT 1 FROM cvm_state, jsonb_array_elements(value -> 'rows') row_value
+    WHERE name = 'otherCoverage' AND row_value ->> 'vendorSku' NOT LIKE 'B-%'
+  ),
+  'organization B coverage contains only its own mappings'
+);
+-- Display cap: rows stop at 1,000; summary counts cover all 1,006 mappings.
+SELECT pg_temp.cvm_assert(
+  (SELECT jsonb_array_length(value -> 'rows') = 1000
+      AND (value ->> 'truncated')::boolean
+      AND value -> 'summary' = '{"mapped": 1006, "represented": 0, "notRepresented": 1006, "inactiveMappings": 0}'::jsonb
+   FROM cvm_state WHERE name = 'otherCoverage'),
+  format('row list is capped while counts are complete: %s', (SELECT value -> 'summary' FROM cvm_state WHERE name = 'otherCoverage'))
 );
 
 RESET ROLE;
@@ -475,12 +564,12 @@ SELECT pg_temp.cvm_assert(
 );
 SELECT pg_temp.cvm_assert(
   (SELECT count(*) FROM public.vendor_products
-   WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101' AND id::text NOT LIKE 'c7d00000-%') = 1,
-  'only the explicit adoption added a mapping'
+   WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101' AND id::text NOT LIKE 'c7d00000-%') = 2,
+  'only the two successful adoptions added mappings'
 );
 SELECT pg_temp.cvm_assert(
-  (SELECT count(*) FROM public.vendors WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101') = 3,
-  'linking and adoption created no organization vendor'
+  (SELECT count(*) FROM public.vendors WHERE organization_id = 'c7d00000-0000-4000-8000-000000000101') = 4,
+  'only the no-same-name adoption created an organization vendor'
 );
 SELECT pg_temp.cvm_assert(
   (SELECT catalog_vendor_id IS NULL FROM public.vendors WHERE id = 'c7d00000-0000-4000-8000-000000000303')

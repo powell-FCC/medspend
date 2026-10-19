@@ -11,6 +11,9 @@
 # PGHOST/PGPORT/PGUSER environment variables. Each mutant replaces the functions inside one
 # transaction, runs the suite there, and rolls everything back.
 #
+# The adoption mutants cover the redefined Phase 5A.5 adoption: restoring its name-based link
+# must fail the suite.
+#
 # Organization scoping inside get_organization_vendor_catalog_coverage is deliberately not
 # mutated: it runs with the caller's privileges, so vendor and mapping RLS enforces the same
 # boundary and such a mutant cannot be observed (defense in depth, not a gap).
@@ -52,6 +55,29 @@ mutants=(
   "ambiguous keys treated as uncataloged|        WHEN keyed.match_count > 1 THEN 'ambiguous'|        WHEN false THEN 'ambiguous'"
   "adopted listing not recognized|        WHEN adopted.id IS NOT NULL THEN 'linked'|        WHEN false THEN 'linked'"
   "inactive mappings counted|      'mapped', count(*) FILTER (WHERE active),|      'mapped', count(*),"
+  "adoption links a same-name vendor again|      RAISE EXCEPTION
+        'Organization vendor % is not linked to catalog vendor %; link it in Catalog Vendors before adopting',
+        _organization_vendor.id,
+        _catalog_vendor.id
+        USING ERRCODE = '55000';|      UPDATE public.vendors
+      SET catalog_vendor_id = _catalog_vendor.id
+      WHERE id = _organization_vendor.id
+      RETURNING * INTO _organization_vendor;"
+  "adoption accepts a same-name vendor linked elsewhere|      IF _organization_vendor.catalog_vendor_id IS NOT NULL THEN
+        RAISE EXCEPTION
+          'Active organization vendor|      IF false THEN
+        RAISE EXCEPTION
+          'Active organization vendor"
+  "adoption admin check removed|  IF NOT COALESCE(public.is_org_admin(_organization_id, auth.uid()), false) THEN
+    RAISE EXCEPTION 'Only organization owners and admins can adopt catalog products'|  IF false THEN
+    RAISE EXCEPTION 'Only organization owners and admins can adopt catalog products'"
+  "coverage row cap counts only displayed rows|    'truncated', count(*) > 1000
+  )
+  INTO _result
+  FROM ordered;|    'truncated', count(*) > 1000
+  )
+  INTO _result
+  FROM ordered WHERE position <= 1000;"
   "inactive uncataloged rows counted|      'notRepresented', count(*) FILTER (WHERE active AND status = 'not_cataloged'),|      'notRepresented', count(*) FILTER (WHERE status = 'not_cataloged'),"
 )
 
