@@ -154,7 +154,10 @@ export function CatalogAdminPage({
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
             Find a verified global identity, review its source trail, adopt it for{" "}
-            {active.organizationName}, and add adopted products to inventory when needed.
+            {active.organizationName}, and add adopted products to inventory when needed.{" "}
+            <Link to="/catalog-vendors" className="text-primary hover:underline">
+              Manage catalog vendor links
+            </Link>
           </p>
         </header>
 

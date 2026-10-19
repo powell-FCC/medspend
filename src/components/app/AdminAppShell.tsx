@@ -13,6 +13,7 @@ import {
   LogOut,
   Building,
   LibraryBig,
+  Link2,
 } from "lucide-react";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,6 +25,7 @@ const nav = [
   { to: "/purchases", label: "Orders", icon: ShoppingCart },
   { to: "/vendors", label: "Vendors", icon: Building2 },
   { to: "/products", label: "Catalog", icon: LibraryBig },
+  { to: "/catalog-vendors", label: "Catalog Vendors", icon: Link2 },
   { to: "/upload", label: "Upload Invoice", icon: Upload, ownerOnly: true },
   { to: "/invoices", label: "Invoices", icon: FileText, ownerOnly: true },
   { to: "/supply-requests", label: "Supply Requests", icon: Users },

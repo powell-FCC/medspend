@@ -2257,6 +2257,19 @@ export type Database = {
         Args: { _catalog_vendor_product_id: string; _organization_id: string }
         Returns: Json
       }
+      get_organization_vendor_catalog_coverage: {
+        Args: { _organization_id: string; _vendor_id: string }
+        Returns: Json
+      }
+      link_organization_vendor_to_catalog_vendor: {
+        Args: {
+          _catalog_vendor_id: string
+          _expected_updated_at: string
+          _organization_id: string
+          _vendor_id: string
+        }
+        Returns: Json
+      }
       confirm_invoice_item_product: {
         Args: {
           _invoice_item_id: string
