@@ -61,7 +61,7 @@ export function describeCatalogUnavailable(
   if (reason === "no_vendor")
     return "Select an existing vendor on this invoice to search that vendor's catalog.";
   if (reason === "vendor_not_linked_to_catalog")
-    return `${vendorName || "This vendor"} is not linked to a catalog vendor, so only your products can be searched.`;
+    return `${vendorName || "This vendor"} is not linked to a catalog vendor, so only your products can be searched. An owner or admin can link it under Catalog Vendors.`;
   return `The catalog for ${vendorName || "this vendor"} is not available.`;
 }
 

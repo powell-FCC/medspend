@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedBudgetRouteImport } from './routes/_authenticated/budget'
 import { Route as AuthenticatedBudgetPurchasingRouteImport } from './routes/_authenticated/budget-purchasing'
+import { Route as AuthenticatedCatalogVendorsRouteImport } from './routes/_authenticated/catalog-vendors'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedInventoryRouteImport } from './routes/_authenticated/inventory'
 import { Route as AuthenticatedInvoicesRouteImport } from './routes/_authenticated/invoices'
@@ -58,6 +59,12 @@ const AuthenticatedBudgetPurchasingRoute =
   AuthenticatedBudgetPurchasingRouteImport.update({
     id: '/budget-purchasing',
     path: '/budget-purchasing',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedCatalogVendorsRoute =
+  AuthenticatedCatalogVendorsRouteImport.update({
+    id: '/catalog-vendors',
+    path: '/catalog-vendors',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
@@ -173,6 +180,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/budget': typeof AuthenticatedBudgetRoute
   '/budget-purchasing': typeof AuthenticatedBudgetPurchasingRoute
+  '/catalog-vendors': typeof AuthenticatedCatalogVendorsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/inventory': typeof AuthenticatedInventoryRoute
   '/invoices': typeof AuthenticatedInvoicesRouteWithChildren
@@ -199,6 +207,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/budget': typeof AuthenticatedBudgetRoute
   '/budget-purchasing': typeof AuthenticatedBudgetPurchasingRoute
+  '/catalog-vendors': typeof AuthenticatedCatalogVendorsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/inventory': typeof AuthenticatedInventoryRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
@@ -226,6 +235,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/budget': typeof AuthenticatedBudgetRoute
   '/_authenticated/budget-purchasing': typeof AuthenticatedBudgetPurchasingRoute
+  '/_authenticated/catalog-vendors': typeof AuthenticatedCatalogVendorsRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/inventory': typeof AuthenticatedInventoryRoute
   '/_authenticated/invoices': typeof AuthenticatedInvoicesRouteWithChildren
@@ -254,6 +264,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/budget'
     | '/budget-purchasing'
+    | '/catalog-vendors'
     | '/dashboard'
     | '/inventory'
     | '/invoices'
@@ -280,6 +291,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/budget'
     | '/budget-purchasing'
+    | '/catalog-vendors'
     | '/dashboard'
     | '/inventory'
     | '/onboarding'
@@ -306,6 +318,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/budget'
     | '/_authenticated/budget-purchasing'
+    | '/_authenticated/catalog-vendors'
     | '/_authenticated/dashboard'
     | '/_authenticated/inventory'
     | '/_authenticated/invoices'
@@ -371,6 +384,13 @@ declare module '@tanstack/react-router' {
       path: '/budget-purchasing'
       fullPath: '/budget-purchasing'
       preLoaderRoute: typeof AuthenticatedBudgetPurchasingRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/catalog-vendors': {
+      id: '/_authenticated/catalog-vendors'
+      path: '/catalog-vendors'
+      fullPath: '/catalog-vendors'
+      preLoaderRoute: typeof AuthenticatedCatalogVendorsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard': {
@@ -548,6 +568,7 @@ const AuthenticatedStaffRequestsRouteWithChildren =
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedBudgetRoute: typeof AuthenticatedBudgetRoute
   AuthenticatedBudgetPurchasingRoute: typeof AuthenticatedBudgetPurchasingRoute
+  AuthenticatedCatalogVendorsRoute: typeof AuthenticatedCatalogVendorsRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedInventoryRoute: typeof AuthenticatedInventoryRoute
   AuthenticatedInvoicesRoute: typeof AuthenticatedInvoicesRouteWithChildren
@@ -568,6 +589,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedBudgetRoute: AuthenticatedBudgetRoute,
   AuthenticatedBudgetPurchasingRoute: AuthenticatedBudgetPurchasingRoute,
+  AuthenticatedCatalogVendorsRoute: AuthenticatedCatalogVendorsRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedInventoryRoute: AuthenticatedInventoryRoute,
   AuthenticatedInvoicesRoute: AuthenticatedInvoicesRouteWithChildren,

@@ -29,6 +29,7 @@ import {
   canStockCatalogResult,
   catalogPackagePresentation,
   isCatalogAdminRole,
+  isCatalogVendorLinkRequired,
   type CatalogAdminDetail,
   type CatalogAdminResult,
 } from "@/catalog-admin/catalog-admin";
@@ -154,7 +155,10 @@ export function CatalogAdminPage({
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
             Find a verified global identity, review its source trail, adopt it for{" "}
-            {active.organizationName}, and add adopted products to inventory when needed.
+            {active.organizationName}, and add adopted products to inventory when needed.{" "}
+            <Link to="/catalog-vendors" className="text-primary hover:underline">
+              Manage catalog vendor links
+            </Link>
           </p>
         </header>
 
@@ -245,6 +249,14 @@ export function CatalogAdminPage({
             role="status"
           >
             {notice.message}
+            {notice.tone === "error" && isCatalogVendorLinkRequired(notice.message) && (
+              <>
+                {" "}
+                <Link to="/catalog-vendors" className="font-medium underline">
+                  Open Catalog Vendors
+                </Link>
+              </>
+            )}
           </div>
         )}
         {catalogQuery.error && (

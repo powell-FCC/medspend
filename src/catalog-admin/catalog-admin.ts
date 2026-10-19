@@ -140,6 +140,18 @@ export interface CatalogStockResult {
   active: boolean;
 }
 
+/**
+ * Adoption never links an existing organization vendor to a catalog vendor by name. When
+ * the organization's vendor of that name is unlinked, an owner/admin links it explicitly in
+ * Catalog Vendors first.
+ */
+export const CATALOG_VENDOR_LINK_REQUIRED_MESSAGE =
+  "This vendor is not linked to the global catalog. Link it in Catalog Vendors before adding this catalog item.";
+
+export function isCatalogVendorLinkRequired(message: string | null | undefined): boolean {
+  return message === CATALOG_VENDOR_LINK_REQUIRED_MESSAGE;
+}
+
 export function isCatalogAdminRole(role: string | null | undefined): boolean {
   return role === "owner" || role === "admin";
 }

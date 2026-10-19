@@ -164,6 +164,10 @@ export function ProductMatchDialog({
                 : ""}{" "}
               No stock is added until the invoice is approved.
             </p>
+            <p className="text-xs text-muted-foreground" data-hint="organization-only">
+              Saved for your organization only. It is not added to the shared vendor catalog; owners
+              and admins can see it under Catalog Vendors.
+            </p>
           </div>
         ) : (
           <>

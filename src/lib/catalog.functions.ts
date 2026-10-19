@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import {
   CATALOG_ADMIN_PAGE_SIZE,
+  CATALOG_VENDOR_LINK_REQUIRED_MESSAGE,
   escapePostgresLike,
   isCatalogAdminRole,
   normalizeCatalogSku,
@@ -699,6 +700,9 @@ export const adoptCatalogVendorProductFn = createServerFn({ method: "POST" })
     if (error) {
       if (error.code === "42501") throw new Error("Forbidden");
       if (error.code === "P0002") throw new Error("This catalog item no longer exists");
+      if (error.code === "55000" && String(error.message ?? "").includes("Catalog Vendors")) {
+        throw new Error(CATALOG_VENDOR_LINK_REQUIRED_MESSAGE);
+      }
       if (error.code === "23505" || error.code === "23514") {
         throw new Error(
           "Existing organization catalog links need review before this item can be added",
