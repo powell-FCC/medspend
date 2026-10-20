@@ -252,7 +252,7 @@ The admin budget-impact preview for a `submitted` request already reads live lin
 
 ## Follow-ups
 
-- Requester withdrawal as its own phase.
+- Requester withdrawal as its own phase. Done in Phase 6C.2 as cancellation: see `docs/phase6c2-staff-request-cancellation.md`.
 - Remaining direct-write capabilities that are not decision paths but may deserve hardening:
   - members can still `INSERT` a `submitted` request directly, skipping `submit_supply_request` line validation (it would have no lines);
   - admins can `DELETE` requests directly (committed requests are protected by `ON DELETE RESTRICT`);

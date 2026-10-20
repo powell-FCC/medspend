@@ -2183,6 +2183,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cancel_submitted_supply_request: {
+        Args: {
+          _organization_id: string
+          _request_id: string
+        }
+        Returns: Json
+      }
       get_product_price_intelligence: {
         Args: { _organization_id: string; _product_id: string }
         Returns: Json
@@ -2526,6 +2533,7 @@ export type Database = {
         | "received"
         | "completed"
         | "denied"
+        | "cancelled"
       supply_request_type: "reorder" | "low_stock" | "out_of_stock" | "new_item"
     }
     CompositeTypes: {
@@ -2663,6 +2671,7 @@ export const Constants = {
         "received",
         "completed",
         "denied",
+        "cancelled",
       ],
       supply_request_type: ["reorder", "low_stock", "out_of_stock", "new_item"],
     },

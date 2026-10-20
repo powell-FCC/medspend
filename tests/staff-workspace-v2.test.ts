@@ -515,6 +515,7 @@ test("every canonical status has one plain-language label that keeps its meaning
     received: ["Ready", "Received and ready for you", "READY"],
     completed: ["Completed", "Request completed", "COMPLETED"],
     denied: ["Declined", "This request was declined", "DECLINED"],
+    cancelled: ["Cancelled", "You cancelled this request", "CANCELLED"],
   } as const;
   for (const status of SUPPLY_REQUEST_STATUSES) {
     const result = translateStaffRequestStatus(status);
@@ -564,7 +565,10 @@ test("quick picks read only the requester's own bounded, organization-scoped his
     fn,
     /\.eq\("organization_id", data\.organizationId\)\s+\.eq\("requested_by", context\.userId\)/,
   );
-  assert.match(fn, /\.neq\("status", "denied"\)/);
+  assert.match(
+    fn,
+    /\.not\("status", "in", `\(\$\{QUICK_PICK_EXCLUDED_STATUSES\.join\(","\)\}\)`\)/,
+  );
   assert.match(fn, /\.limit\(QUICK_PICK_HISTORY_REQUESTS\)/);
   assert.match(
     fn,
@@ -623,9 +627,16 @@ test("the staff timeline uses only stored events", () => {
     "export const getStaffRequestDetailFn",
     "export const listOrgRequestsFn",
   );
-  assert.match(detail, /\{ label: "Submitted", occurredAt: row\.created_at, message: null \}/);
-  assert.match(detail, /if \(!update\.status_to\) return \[\];/);
+  assert.match(detail, /timeline: buildStaffRequestTimeline\(\s+row\.created_at,/);
   assert.doesNotMatch(detail, /ordered_at|received_at|new Date\(\)/);
+  const builder = between(
+    read("src/supply-requests/staff-dashboard.ts"),
+    "export function buildStaffRequestTimeline",
+    "\n}\n",
+  );
+  assert.match(builder, /\{ label: "Submitted", occurredAt: submittedAt, message: null \}/);
+  assert.match(builder, /if \(!update\.status_to\) return \[\];/);
+  assert.doesNotMatch(builder, /ordered_at|received_at|new Date\(\)/);
 });
 
 test("staff routes reach no admin mutation, budget, purchasing or QR feature", () => {

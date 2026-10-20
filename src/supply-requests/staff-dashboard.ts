@@ -2,9 +2,15 @@ import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 
 // Staff-facing groupings of the canonical lifecycle. They are presentation only: the
 // database statuses are unchanged. READY is the admin "Ready for Staff" queue
-// (status 'received'). Declined is terminal and asks nothing of the requester, so it is
-// not an "attention" state.
-export const STAFF_REQUEST_STATUS_GROUPS = ["ACTIVE", "READY", "COMPLETED", "DECLINED"] as const;
+// (status 'received'). Declined and cancelled are terminal and ask nothing of the
+// requester, so neither is an "attention" state.
+export const STAFF_REQUEST_STATUS_GROUPS = [
+  "ACTIVE",
+  "READY",
+  "COMPLETED",
+  "DECLINED",
+  "CANCELLED",
+] as const;
 
 export type StaffRequestStatusGroup = (typeof STAFF_REQUEST_STATUS_GROUPS)[number];
 
@@ -53,7 +59,7 @@ export type StaffDashboardViewModel = {
   };
   // Every open request (bounded), newest first. READY requests are included.
   openRequests: StaffRequestViewModel[];
-  // Completed and declined requests, newest first, one page at a time.
+  // Completed, declined and cancelled requests, newest first, one page at a time.
   pastRequests: StaffRequestViewModel[];
   hasMorePastRequests: boolean;
 };
@@ -68,6 +74,7 @@ export type StaffRequestDetailViewModel = StaffRequestViewModel & {
   timeline: StaffRequestTimelineItem[];
   lifecycleStatus: SupplyRequestStatus;
   canEdit: boolean;
+  canCancel: boolean;
   editGuidance: string | null;
   requestType: "reorder" | "low_stock" | "out_of_stock" | "new_item";
   teamId: string | null;
@@ -85,6 +92,7 @@ const STAFF_STATUS: Readonly<Record<SupplyRequestStatus, StaffRequestStatus>> = 
   received: { label: "Ready", description: "Received and ready for you", group: "READY" },
   completed: { label: "Completed", description: "Request completed", group: "COMPLETED" },
   denied: { label: "Declined", description: "This request was declined", group: "DECLINED" },
+  cancelled: { label: "Cancelled", description: "You cancelled this request", group: "CANCELLED" },
 };
 
 export const STAFF_OPEN_STATUSES = [
@@ -98,7 +106,16 @@ export const STAFF_OPEN_STATUSES = [
 export const STAFF_PAST_STATUSES = [
   "completed",
   "denied",
+  "cancelled",
 ] as const satisfies readonly SupplyRequestStatus[];
+
+export function isStaffOpenRequest(request: Pick<StaffRequestViewModel, "statusGroup">): boolean {
+  return request.statusGroup === "ACTIVE" || request.statusGroup === "READY";
+}
+
+export function isStaffPastRequest(request: Pick<StaffRequestViewModel, "statusGroup">): boolean {
+  return !isStaffOpenRequest(request);
+}
 
 // Bounds for the staff history queries. Open requests are few by nature; past requests
 // page in so a long history never loads at once.
@@ -139,4 +156,40 @@ export function summarizeStaffRequests(
     },
     { activeRequests: 0, readyRequests: 0, completedRequests: 0 },
   );
+}
+
+// The staff-safe audited updates, as list_staff_supply_request_updates returns them.
+export type StaffRequestUpdateRow = {
+  status_to: SupplyRequestStatus | null;
+  staff_visible_note: string | null;
+  event_kind: string | null;
+  created_at: string;
+};
+
+// Only stored events: the request's creation time and the staff-safe audited updates.
+// Nothing is inferred from the current status.
+export function buildStaffRequestTimeline(
+  submittedAt: string,
+  updates: StaffRequestUpdateRow[],
+): StaffRequestTimelineItem[] {
+  return [
+    { label: "Submitted", occurredAt: submittedAt, message: null },
+    ...updates.flatMap((update): StaffRequestTimelineItem[] => {
+      if (update.event_kind === "requester_edited") {
+        return [{ label: "You edited this request", occurredAt: update.created_at, message: null }];
+      }
+      if (update.event_kind === "requester_cancelled") {
+        return [{ label: "Request cancelled", occurredAt: update.created_at, message: null }];
+      }
+      if (!update.status_to) return [];
+      const translated = translateStaffRequestStatus(update.status_to);
+      return [
+        {
+          label: translated.label,
+          occurredAt: update.created_at,
+          message: update.staff_visible_note,
+        },
+      ];
+    }),
+  ];
 }

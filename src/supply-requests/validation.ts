@@ -45,3 +45,10 @@ export const multiItemSupplyRequestInputSchema = z.object({
 export const updateSubmittedSupplyRequestInputSchema = multiItemSupplyRequestInputSchema.extend({
   requestId: z.string().uuid(),
 });
+
+// Phase 6C.2: cancellation names only the request. Ownership, organization and the
+// cancellable window are decided by cancel_submitted_supply_request.
+export const cancelSubmittedSupplyRequestInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  requestId: z.string().uuid(),
+});

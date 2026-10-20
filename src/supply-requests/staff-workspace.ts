@@ -10,6 +10,7 @@
 import { trustedRequestPackage } from "./admin-request-inbox.ts";
 import type { StaffProductSelection } from "./staff-request-cart.ts";
 import type { SupplyRequestItemViewModel } from "./staff-dashboard.ts";
+import type { SupplyRequestStatus } from "./lifecycle.ts";
 
 export type RequestLineIdentity = {
   productId: string | null;
@@ -80,6 +81,13 @@ export const UNAVAILABLE_REASON = "No longer available to request";
 export const QUICK_PICK_HISTORY_REQUESTS = 40;
 export const QUICK_PICK_LIMIT = 6;
 export const FREQUENT_MIN_REQUESTS = 2;
+
+// Requests that never went ahead are not evidence of need, so their lines are never
+// suggested. "Request again" still works from them: it reads one request on demand.
+export const QUICK_PICK_EXCLUDED_STATUSES = [
+  "denied",
+  "cancelled",
+] as const satisfies readonly SupplyRequestStatus[];
 
 function one<T>(value: OneOrMany<T>): T | null {
   if (Array.isArray(value)) return value[0] ?? null;

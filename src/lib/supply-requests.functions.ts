@@ -3,11 +3,13 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   SUPPLY_REQUEST_STATUSES,
+  canRequesterCancelSupplyRequest,
   canRequesterEditSupplyRequest,
   requesterEditGuidance,
 } from "@/supply-requests/lifecycle";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 import {
+  cancelSubmittedSupplyRequestInputSchema,
   multiItemSupplyRequestInputSchema,
   updateSubmittedSupplyRequestInputSchema,
 } from "@/supply-requests/validation";
@@ -19,6 +21,9 @@ import {
   STAFF_PAST_REQUEST_MAX,
   STAFF_PAST_REQUEST_PAGE_SIZE,
   STAFF_PAST_STATUSES,
+  buildStaffRequestTimeline,
+  isStaffOpenRequest,
+  isStaffPastRequest,
   summarizeStaffRequests,
   translateStaffRequestStatus,
   type StaffDashboardViewModel,
@@ -275,6 +280,28 @@ export const updateSubmittedSupplyRequestFn = createServerFn({ method: "POST" })
     return result as { id: string; status: "submitted"; itemCount: number; updatedAt: string };
   });
 
+// Phase 6C.2 requester cancellation. Ownership, organization, the 'submitted'-only
+// window, the status change and its audit event all happen in one locked database RPC.
+// The request, its lines and its note are kept.
+export const cancelSubmittedSupplyRequestFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => cancelSubmittedSupplyRequestInputSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMembership(context, data.organizationId);
+    const { data: result, error } = await context.supabase.rpc("cancel_submitted_supply_request", {
+      _organization_id: data.organizationId,
+      _request_id: data.requestId,
+    });
+    if (error) throw new Error(error.message);
+    return result as unknown as {
+      id: string;
+      status: "cancelled";
+      alreadyCancelled: boolean;
+      cancelledAt: string | null;
+      updatedAt: string;
+    };
+  });
+
 export const listMyRequestsFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ organizationId: z.string().uuid() }).parse(d))
@@ -419,12 +446,8 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
         staffMessage: message?.message ?? null,
       };
     });
-    const openRequests = requests.filter(
-      (request) => request.statusGroup === "ACTIVE" || request.statusGroup === "READY",
-    );
-    const pastRequests = requests.filter(
-      (request) => request.statusGroup === "COMPLETED" || request.statusGroup === "DECLINED",
-    );
+    const openRequests = requests.filter(isStaffOpenRequest);
+    const pastRequests = requests.filter(isStaffPastRequest);
 
     return {
       summary: summarizeStaffRequests(requests),
@@ -469,6 +492,7 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
       id: row.id,
       lifecycleStatus,
       canEdit: canRequesterEditSupplyRequest(lifecycleStatus),
+      canCancel: canRequesterCancelSupplyRequest(lifecycleStatus),
       editGuidance: requesterEditGuidance(lifecycleStatus),
       requestType: row.request_type,
       teamId: row.team_id,
@@ -485,23 +509,15 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
       submittedAt: row.created_at,
       lastUpdatedAt: row.updated_at,
       staffMessage: latestMessage?.staff_visible_note ?? null,
-      timeline: [
-        // Only stored events: the request's creation time and the staff-safe audited
-        // updates. Nothing is inferred from the current status.
-        { label: "Submitted", occurredAt: row.created_at, message: null },
-        ...visibleUpdates.flatMap((update) => {
-          if (update.event_kind === "requester_edited") {
-            return [{ label: "You edited this request", occurredAt: update.created_at, message: null }];
-          }
-          if (!update.status_to) return [];
-          const translated = translateStaffRequestStatus(update.status_to as SupplyRequestStatus);
-          return [{
-            label: translated.label,
-            occurredAt: update.created_at,
-            message: update.staff_visible_note,
-          }];
-        }),
-      ],
+      timeline: buildStaffRequestTimeline(
+        row.created_at,
+        visibleUpdates.map((update) => ({
+          status_to: update.status_to as SupplyRequestStatus | null,
+          staff_visible_note: update.staff_visible_note,
+          event_kind: update.event_kind,
+          created_at: update.created_at,
+        })),
+      ),
     };
     return detail;
   });
