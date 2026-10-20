@@ -14,8 +14,14 @@ import {
 import { adminRequestDecisionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
 import { releaseCommitmentSchema, type RequestBudgetImpact } from "@/supply-requests/commitments";
 import {
+  STAFF_OPEN_REQUEST_LIMIT,
+  STAFF_OPEN_STATUSES,
+  STAFF_PAST_REQUEST_MAX,
+  STAFF_PAST_REQUEST_PAGE_SIZE,
+  STAFF_PAST_STATUSES,
   summarizeStaffRequests,
   translateStaffRequestStatus,
+  type StaffDashboardViewModel,
   type StaffRequestViewModel,
   type StaffRequestDetailViewModel,
   type SupplyRequestItemViewModel,
@@ -71,7 +77,7 @@ type InventoryRequestIdentityRow = {
   sku: string | null;
 };
 
-async function requireMembership(context: { supabase: any; userId: string }, organizationId: string) {
+export async function requireMembership(context: { supabase: any; userId: string }, organizationId: string) {
   const { data, error } = await context.supabase.from("organization_memberships")
     .select("organization_id, role, default_team_id, default_location_id").eq("user_id", context.userId)
     .eq("organization_id", organizationId).eq("active", true).maybeSingle();
@@ -99,7 +105,7 @@ async function requireRelatedRecord(
   if (!data) throw new Error(`Selected ${table.slice(0, -1)} is unavailable for this organization`);
 }
 
-async function loadRequestItems(
+export async function loadRequestItems(
   db: any,
   organizationId: string,
   requests: Array<{ id: string; product_id: string | null; free_text_item: string | null; quantity: number | null; products?: unknown }>,
@@ -324,25 +330,58 @@ export const listMyRequestsFn = createServerFn({ method: "POST" })
     }); });
   });
 
+// Staff Workspace v2: every open request (bounded) plus one page of past requests.
+// Requester-owned and organization-scoped; items and staff-safe updates load in one
+// batched query each, never per row.
 export const getStaffDashboardFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ organizationId: z.string().uuid() }).parse(d))
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        organizationId: z.string().uuid(),
+        pastLimit: z
+          .number()
+          .int()
+          .min(1)
+          .max(STAFF_PAST_REQUEST_MAX)
+          .default(STAFF_PAST_REQUEST_PAGE_SIZE),
+      })
+      .parse(d),
+  )
   .handler(async ({ data, context }) => {
     await requireMembership(context, data.organizationId);
-    const { data: rows, error } = await context.supabase
-      .from("supply_requests")
-      .select("id,product_id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)")
-      .eq("organization_id", data.organizationId)
-      .eq("requested_by", context.userId)
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    const ids = (rows ?? []).map((row) => row.id);
-    const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows ?? []);
+    const columns =
+      "id,product_id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)";
+    const [openResult, pastResult] = await Promise.all([
+      context.supabase
+        .from("supply_requests")
+        .select(columns)
+        .eq("organization_id", data.organizationId)
+        .eq("requested_by", context.userId)
+        .in("status", [...STAFF_OPEN_STATUSES])
+        .order("created_at", { ascending: false })
+        .limit(STAFF_OPEN_REQUEST_LIMIT),
+      context.supabase
+        .from("supply_requests")
+        .select(columns)
+        .eq("organization_id", data.organizationId)
+        .eq("requested_by", context.userId)
+        .in("status", [...STAFF_PAST_STATUSES])
+        .order("created_at", { ascending: false })
+        .limit(data.pastLimit + 1),
+    ]);
+    if (openResult.error) throw new Error(openResult.error.message);
+    if (pastResult.error) throw new Error(pastResult.error.message);
+    const hasMorePastRequests = (pastResult.data ?? []).length > data.pastLimit;
+    const rows = [...(openResult.data ?? []), ...(pastResult.data ?? []).slice(0, data.pastLimit)];
+    const ids = rows.map((row) => row.id);
+    const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows);
     const latestMessages = new Map<string, { message: string; createdAt: string }>();
     if (ids.length) {
       const { data: updates, error: updatesError } = await context.supabase
         .rpc("list_staff_supply_request_updates", {
-          _organization_id: data.organizationId, _request_ids: ids,
+          _organization_id: data.organizationId,
+          _request_ids: ids,
         })
         .not("staff_visible_note", "is", null)
         .order("created_at", { ascending: false });
@@ -357,7 +396,7 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
       }
     }
 
-    const recentRequests: StaffRequestViewModel[] = (rows ?? []).map((row) => {
+    const requests: StaffRequestViewModel[] = rows.map((row) => {
       const status = translateStaffRequestStatus(row.status as SupplyRequestStatus);
       const product = row.products as { name: string; unit_of_measure: string | null } | null;
       const message = latestMessages.get(row.id);
@@ -367,10 +406,12 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
         id: row.id,
         itemCount: items.length,
         items,
-        itemName: summarizeRequestItems(items) || product?.name || row.free_text_item || "Requested item",
-        quantity: items.length === 1 ? first?.quantity ?? row.quantity : null,
-        unit: items.length === 1 ? first?.unit ?? product?.unit_of_measure ?? null : null,
+        itemName:
+          summarizeRequestItems(items) || product?.name || row.free_text_item || "Requested item",
+        quantity: items.length === 1 ? (first?.quantity ?? row.quantity) : null,
+        unit: items.length === 1 ? (first?.unit ?? product?.unit_of_measure ?? null) : null,
         statusLabel: status.label,
+        statusDescription: status.description,
         statusGroup: status.group,
         submittedAt: row.created_at,
         lastUpdatedAt:
@@ -378,12 +419,19 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
         staffMessage: message?.message ?? null,
       };
     });
+    const openRequests = requests.filter(
+      (request) => request.statusGroup === "ACTIVE" || request.statusGroup === "READY",
+    );
+    const pastRequests = requests.filter(
+      (request) => request.statusGroup === "COMPLETED" || request.statusGroup === "DECLINED",
+    );
 
     return {
-      summary: summarizeStaffRequests(recentRequests),
-      recentRequests,
-      attentionItems: recentRequests.filter((request) => request.statusGroup === "ACTION_REQUIRED"),
-    };
+      summary: summarizeStaffRequests(requests),
+      openRequests,
+      pastRequests,
+      hasMorePastRequests,
+    } satisfies StaffDashboardViewModel;
   });
 
 export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
@@ -432,12 +480,15 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
       quantity: items.length === 1 ? first?.quantity ?? row.quantity : null,
       unit: items.length === 1 ? first?.unit ?? product?.unit_of_measure ?? null : null,
       statusLabel: status.label,
+      statusDescription: status.description,
       statusGroup: status.group,
       submittedAt: row.created_at,
       lastUpdatedAt: row.updated_at,
       staffMessage: latestMessage?.staff_visible_note ?? null,
       timeline: [
-        { label: "Requested", occurredAt: row.created_at, message: null },
+        // Only stored events: the request's creation time and the staff-safe audited
+        // updates. Nothing is inferred from the current status.
+        { label: "Submitted", occurredAt: row.created_at, message: null },
         ...visibleUpdates.flatMap((update) => {
           if (update.event_kind === "requester_edited") {
             return [{ label: "You edited this request", occurredAt: update.created_at, message: null }];

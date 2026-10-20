@@ -31,6 +31,7 @@ const behavior = read("../supabase/tests/phase6c_staff_request_forgiveness_behav
 const server = read("../src/lib/supply-requests.functions.ts");
 const composer = read("../src/routes/_authenticated/staff/request.tsx");
 const staffDetail = read("../src/routes/_authenticated/staff/requests.$id.tsx");
+const picker = read("../src/components/staff/StaffProductPicker.tsx");
 const adminDetail = read("../src/components/admin/supply-requests/AdminRequestDetail.tsx");
 const adminRoute = read("../src/routes/_authenticated/supply-requests.tsx");
 const types = read("../src/integrations/supabase/types.ts");
@@ -397,7 +398,7 @@ test("staff detail exposes edit eligibility and the edit event without admin-onl
   assert.doesNotMatch(detail, /internal_note|internalNote|invoice|purchase/);
 
   assert.match(staffDetail, /request\.data\.canEdit \?/);
-  assert.match(staffDetail, /to="\/staff\/request" search=\{\{ edit: request\.data\.id \}\}/);
+  assert.match(staffDetail, /to="\/staff\/request"\s+search=\{\{ edit: request\.data\.id \}\}/);
   assert.match(staffDetail, /Edit request/);
   assert.match(staffDetail, /request\.data\.editGuidance/);
 });
@@ -427,12 +428,17 @@ test("initial submission requires confirmation and Enter cannot submit accidenta
   assert.match(composer, /Keep editing/);
   assert.match(composer, />\s*Submit request\s*</);
   assert.match(composer, /describeSubmission\(items/);
-  assert.match(composer, /if \(event\.key === "Enter"\) event\.preventDefault\(\);/);
-  assert.match(composer, /if \(event\.key !== "Enter"\) return;\s+event\.preventDefault\(\);\s+addItem\(\);/);
+  // Staff Workspace v2 moved the search and custom-item inputs into the shared picker.
+  assert.match(picker, /if \(event\.key === "Enter"\) event\.preventDefault\(\);/);
+  assert.match(
+    picker,
+    /if \(event\.key !== "Enter"\) return;\s+event\.preventDefault\(\);\s+addItem\(\);/,
+  );
+  assert.match(picker, /type="button"[\s\S]*Add to Request/);
 });
 
 test("successful submission explains the edit-until-review rule and links to the request", () => {
-  assert.match(composer, /Request Submitted/);
+  assert.match(composer, /Request submitted/);
   assert.match(composer, /You can still edit this request until review begins\./);
   assert.match(composer, /to="\/staff\/requests\/\$id"\s+params=\{\{ id: submittedRequestId \}\}/);
   assert.match(composer, /View request/);

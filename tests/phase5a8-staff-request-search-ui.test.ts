@@ -180,22 +180,25 @@ test("unavailable defaults and selections never supply invalid request context",
 });
 
 test("staff route uses unified search and represents the mobile search states", async () => {
-  const route = await readFile(
-    new URL("../src/routes/_authenticated/staff/request.tsx", import.meta.url),
-    "utf8",
-  );
+  const read = (path: string) => readFile(new URL(path, import.meta.url), "utf8");
+  const route = await read("../src/routes/_authenticated/staff/request.tsx");
+  // Staff Workspace v2: search state and rendering are shared by the workspace and the
+  // composer, so they live in the picker and its hook.
+  const searchHook = await read("../src/components/staff/useStaffProductSearch.ts");
+  const picker = await read("../src/components/staff/StaffProductPicker.tsx");
 
-  assert.match(route, /useServerFn\(searchSupplyRequestProductsFn\)/);
-  assert.doesNotMatch(route, /\bsearchProductsFn\b/);
-  assert.match(route, /useDebouncedValue\(normalizedQuery, 300\)/);
-  assert.match(route, /Search by product name, size, manufacturer, vendor, or SKU/);
-  assert.match(route, /Searching after you pause/);
-  assert.match(route, /aria-label="Searching supplies"/);
-  assert.match(route, /aria-label="Search results"/);
-  assert.match(route, /No matching supplies found/);
-  assert.match(route, /We couldn't search supplies/);
-  assert.match(route, /product\.productName/);
-  assert.match(route, /getStaffRequestProductDisplayLines\(product\)/);
+  assert.match(route, /useStaffProductSearch\(active\?\.organizationId, query\)/);
+  assert.match(searchHook, /useServerFn\(searchSupplyRequestProductsFn\)/);
+  assert.doesNotMatch(route + searchHook + picker, /\bsearchProductsFn\b/);
+  assert.match(searchHook, /useDebouncedValue\(normalizedQuery, 300\)/);
+  assert.match(picker, /Search by product name, size, manufacturer, vendor, or SKU/);
+  assert.match(picker, /Searching after you pause/);
+  assert.match(picker, /label="Searching supplies"/);
+  assert.match(picker, /label="Search results"/);
+  assert.match(picker, /No matching supplies found/);
+  assert.match(picker, /We couldn't search supplies/);
+  assert.match(picker, /product\.productName/);
+  assert.match(picker, /getStaffRequestProductDisplayLines\(product\)/);
   assert.match(route, /items\.map\(toSubmissionItem\)/);
   assert.match(route, /teamId: resolvedTeamId/);
   assert.match(route, /locationId: resolvedLocationId/);
@@ -205,9 +208,11 @@ test("staff route uses unified search and represents the mobile search states", 
     /const showLocationSelector = !hasActiveDefaultLocation && locations\.length > 1/,
   );
   assert.match(route, /if \(!resolvedTeamId \|\| !resolvedLocationId\)/);
-  assert.doesNotMatch(route, /\.rpc\(/);
-  assert.doesNotMatch(route, /\b(?:adopt|stock)(?:Catalog|Inventory)\w*Fn\b/);
-  assert.doesNotMatch(route, /identitySource/);
+  for (const source of [route, picker]) {
+    assert.doesNotMatch(source, /\.rpc\(/);
+    assert.doesNotMatch(source, /\b(?:adopt|stock)(?:Catalog|Inventory)\w*Fn\b/);
+    assert.doesNotMatch(source, /identitySource/);
+  }
 });
 
 test("staff product details put a trustworthy specification before compact metadata", () => {

@@ -1,16 +1,16 @@
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 
-export const STAFF_REQUEST_STATUS_GROUPS = [
-  "ACTIVE",
-  "READY",
-  "COMPLETED",
-  "ACTION_REQUIRED",
-] as const;
+// Staff-facing groupings of the canonical lifecycle. They are presentation only: the
+// database statuses are unchanged. READY is the admin "Ready for Staff" queue
+// (status 'received'). Declined is terminal and asks nothing of the requester, so it is
+// not an "attention" state.
+export const STAFF_REQUEST_STATUS_GROUPS = ["ACTIVE", "READY", "COMPLETED", "DECLINED"] as const;
 
 export type StaffRequestStatusGroup = (typeof STAFF_REQUEST_STATUS_GROUPS)[number];
 
 export type StaffRequestStatus = {
   label: string;
+  description: string;
   group: StaffRequestStatusGroup;
 };
 
@@ -22,6 +22,7 @@ export type StaffRequestViewModel = {
   quantity: number | null;
   unit: string | null;
   statusLabel: string;
+  statusDescription: string;
   statusGroup: StaffRequestStatusGroup;
   submittedAt: string;
   lastUpdatedAt: string;
@@ -50,8 +51,11 @@ export type StaffDashboardViewModel = {
     readyRequests: number;
     completedRequests: number;
   };
-  recentRequests: StaffRequestViewModel[];
-  attentionItems: StaffRequestViewModel[];
+  // Every open request (bounded), newest first. READY requests are included.
+  openRequests: StaffRequestViewModel[];
+  // Completed and declined requests, newest first, one page at a time.
+  pastRequests: StaffRequestViewModel[];
+  hasMorePastRequests: boolean;
 };
 
 export type StaffRequestTimelineItem = {
@@ -71,15 +75,36 @@ export type StaffRequestDetailViewModel = StaffRequestViewModel & {
   notes: string | null;
 };
 
+// Each label keeps the canonical meaning of its status. 'received' is the admin
+// "Ready for Staff" state; 'ordered' and 'approved' say only what has happened.
 const STAFF_STATUS: Readonly<Record<SupplyRequestStatus, StaffRequestStatus>> = {
-  submitted: { label: "Submitted", group: "ACTIVE" },
-  under_review: { label: "Reviewing", group: "ACTIVE" },
-  approved: { label: "Approved", group: "ACTIVE" },
-  ordered: { label: "Ordered", group: "ACTIVE" },
-  received: { label: "Ready", group: "READY" },
-  completed: { label: "Completed", group: "COMPLETED" },
-  denied: { label: "Declined", group: "ACTION_REQUIRED" },
+  submitted: { label: "Submitted", description: "Waiting for review", group: "ACTIVE" },
+  under_review: { label: "Under review", description: "Being reviewed", group: "ACTIVE" },
+  approved: { label: "Approved", description: "Approved, not yet ordered", group: "ACTIVE" },
+  ordered: { label: "Ordered", description: "Ordered, waiting for delivery", group: "ACTIVE" },
+  received: { label: "Ready", description: "Received and ready for you", group: "READY" },
+  completed: { label: "Completed", description: "Request completed", group: "COMPLETED" },
+  denied: { label: "Declined", description: "This request was declined", group: "DECLINED" },
 };
+
+export const STAFF_OPEN_STATUSES = [
+  "submitted",
+  "under_review",
+  "approved",
+  "ordered",
+  "received",
+] as const satisfies readonly SupplyRequestStatus[];
+
+export const STAFF_PAST_STATUSES = [
+  "completed",
+  "denied",
+] as const satisfies readonly SupplyRequestStatus[];
+
+// Bounds for the staff history queries. Open requests are few by nature; past requests
+// page in so a long history never loads at once.
+export const STAFF_OPEN_REQUEST_LIMIT = 100;
+export const STAFF_PAST_REQUEST_PAGE_SIZE = 20;
+export const STAFF_PAST_REQUEST_MAX = 200;
 
 export function translateStaffRequestStatus(status: SupplyRequestStatus): StaffRequestStatus {
   return STAFF_STATUS[status];
@@ -90,7 +115,21 @@ export function summarizeRequestItems(items: SupplyRequestItemViewModel[]): stri
   return `${items.length} items`;
 }
 
-export function summarizeStaffRequests(requests: StaffRequestViewModel[]): StaffDashboardViewModel["summary"] {
+// "Gloves, Tape and 2 more" — a short, human summary of what a request contains.
+export function describeRequestContents(
+  items: Pick<SupplyRequestItemViewModel, "name">[],
+  shown = 2,
+): string {
+  if (items.length === 0) return "No items";
+  const names = items.slice(0, shown).map((item) => item.name);
+  const remaining = items.length - names.length;
+  if (remaining <= 0) return names.join(", ");
+  return `${names.join(", ")} and ${remaining} more`;
+}
+
+export function summarizeStaffRequests(
+  requests: StaffRequestViewModel[],
+): StaffDashboardViewModel["summary"] {
   return requests.reduce(
     (summary, request) => {
       if (request.statusGroup === "ACTIVE") summary.activeRequests += 1;

@@ -23,6 +23,7 @@ const route = await readFile(
   new URL("src/routes/_authenticated/staff/request.tsx", root),
   "utf8",
 );
+const picker = await readFile(new URL("src/components/staff/StaffProductPicker.tsx", root), "utf8");
 const cart = await readFile(
   new URL("src/supply-requests/staff-request-cart.ts", root),
   "utf8",
@@ -114,22 +115,30 @@ test("the unified result gains display metadata without changing structured iden
 });
 
 test("the route renders name, then specification, then compact vendor metadata", () => {
-  const resultBlock = route.match(
-    /products\.data\.map\(\(product\) => \([\s\S]*?<ProductDetails product=\{product\} \/>[\s\S]*?\)\)}/,
-  )?.[0];
-  assert.ok(resultBlock);
+  // Staff Workspace v2: results render through the shared picker's product row.
+  assert.match(
+    picker,
+    /search\.results\.map\(\(product\) => \(\s*<StaffProductRow key=\{product\.resultId\} product=\{product\}/,
+  );
+  const resultBlock = picker.slice(
+    picker.indexOf("export function StaffProductRow"),
+    picker.indexOf("function ProductList"),
+  );
+  assert.ok(resultBlock.includes("<ProductDetails product={product} />"));
   assert.ok(resultBlock.indexOf("product.productName") < resultBlock.indexOf("ProductDetails"));
 
-  const detailsBlock = route.slice(
-    route.indexOf("function ProductDetails"),
-    route.indexOf("function RequestPage"),
+  const detailsBlock = picker.slice(
+    picker.indexOf("export function ProductDetails"),
+    picker.indexOf("type CartControls"),
   );
   assert.ok(detailsBlock.length > 0);
   assert.match(detailsBlock, /getStaffRequestProductDisplayLines\(product\)/);
   assert.match(detailsBlock, /line\.kind === "specification"/);
   assert.match(detailsBlock, /text-sm font-medium/);
   assert.match(detailsBlock, /text-xs/);
-  assert.doesNotMatch(route, /source_record|sourceRecord|catalog implementation|package trust/i);
+  for (const source of [route, picker]) {
+    assert.doesNotMatch(source, /source_record|sourceRecord|catalog implementation|package trust/i);
+  }
 });
 
 test("database behavior coverage is rollback-only and verifies safe omission and size search", () => {

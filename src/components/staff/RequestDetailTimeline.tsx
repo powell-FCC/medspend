@@ -3,19 +3,41 @@ import type { StaffRequestTimelineItem } from "@/supply-requests/staff-dashboard
 
 const date = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 
+// Stored events only (creation time and staff-safe audited updates). This is a summary
+// for the requester, not the audit log.
 export function RequestDetailTimeline({ items }: { items: StaffRequestTimelineItem[] }) {
   return (
-    <ol className="space-y-0">
+    <ol aria-label="Request history">
       {items.map((item, index) => (
-        <li key={`${item.label}-${item.occurredAt}`} className="relative flex gap-4 pb-6 last:pb-0">
-          {index < items.length - 1 && <span className="absolute left-[15px] top-8 h-[calc(100%-1.25rem)] w-px bg-[#d8dee6]" />}
-          <span className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full bg-[#071d38] text-white">
-            <Check className="size-4" aria-hidden="true" />
+        <li
+          key={`${item.label}-${item.occurredAt}-${index}`}
+          className="relative flex gap-3.5 pb-5 last:pb-0"
+        >
+          {index < items.length - 1 && (
+            <span
+              className="absolute left-[11px] top-7 h-[calc(100%-1.5rem)] w-px bg-[#d8dee6]"
+              aria-hidden="true"
+            />
+          )}
+          <span
+            className="relative z-10 mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#071d38] text-white"
+            aria-hidden="true"
+          >
+            <Check className="size-3.5" />
           </span>
-          <div className="pt-1">
-            <div className="font-medium text-[#071d38]">{item.label}</div>
-            <time className="text-sm text-[#6b7685]" dateTime={item.occurredAt}>{date.format(new Date(item.occurredAt))}</time>
-            {item.message && <p className="mt-1 text-sm text-[#4f5c6c]">{item.message}</p>}
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-[#071d38]">
+              {item.label}
+              <span className="font-normal text-[#6b7685]"> · </span>
+              <time className="font-normal text-[#6b7685]" dateTime={item.occurredAt}>
+                {date.format(new Date(item.occurredAt))}
+              </time>
+            </div>
+            {item.message && (
+              <p className="mt-1 text-sm leading-6 text-[#4f5c6c] [overflow-wrap:anywhere]">
+                {item.message}
+              </p>
+            )}
           </div>
         </li>
       ))}

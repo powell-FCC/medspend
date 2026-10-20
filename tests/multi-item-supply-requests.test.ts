@@ -60,9 +60,13 @@ test('staff and admin view models load child lines while preserving legacy fallb
 
 test('staff cart and both detail surfaces render complete item lists', async () => {
   const staffForm = await readFile(new URL('../src/routes/_authenticated/staff/request.tsx', import.meta.url), 'utf8');
-  assert.match(staffForm, /Add to Request/);
-  assert.match(staffForm, /Your Request/);
-  assert.match(staffForm, /Remove \$\{item\.name\}/);
+  const picker = await readFile(new URL('../src/components/staff/StaffProductPicker.tsx', import.meta.url), 'utf8');
+  const cartList = await readFile(new URL('../src/components/staff/StaffCartList.tsx', import.meta.url), 'utf8');
+  assert.match(picker, /Add to Request/);
+  assert.match(staffForm, /Your request · \{describeCartCount\(items\)\}/);
+  assert.match(staffForm, /<StaffCartList/);
+  assert.match(cartList, /items\.map\(\(item\) =>/);
+  assert.match(cartList, /Remove \$\{item\.name\}/);
   const staffDetail = await readFile(new URL('../src/routes/_authenticated/staff/requests.$id.tsx', import.meta.url), 'utf8');
   const adminDetail = await readFile(new URL('../src/components/admin/supply-requests/AdminRequestDetail.tsx', import.meta.url), 'utf8');
   assert.match(staffDetail, /request\.data\.items\.map/);
