@@ -22,6 +22,10 @@ const staffRoute = await readFile(
   new URL("src/routes/_authenticated/staff/request.tsx", root),
   "utf8",
 );
+const staffSearchHook = await readFile(
+  new URL("src/components/staff/useStaffProductSearch.ts", root),
+  "utf8",
+);
 
 const submissionRpc = migration.match(
   /CREATE OR REPLACE FUNCTION public\.submit_supply_request\([\s\S]*?\n\$\$;/,
@@ -279,8 +283,10 @@ test("backend plumbing preserves new IDs and powers the Phase 5A.8 search UI", (
   assert.match(server, /export const searchSupplyRequestProductsFn/);
   assert.match(server, /unifiedSupplyRequestSearchResultSchema\.array\(\)\.parse/);
   assert.match(server, /rpc\(\s*"search_supply_request_products"/);
-  assert.match(staffRoute, /useServerFn\(searchSupplyRequestProductsFn\)/);
-  assert.doesNotMatch(staffRoute, /\bsearchProductsFn\b/);
+  // Staff Workspace v2: the composer and workspace share one search hook.
+  assert.match(staffRoute, /useStaffProductSearch\(/);
+  assert.match(staffSearchHook, /useServerFn\(searchSupplyRequestProductsFn\)/);
+  assert.doesNotMatch(staffRoute + staffSearchHook, /\bsearchProductsFn\b/);
 });
 
 test("generated database types expose the added line columns and search RPC", () => {

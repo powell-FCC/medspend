@@ -1,7 +1,7 @@
 import type { UnifiedSupplyRequestSearchResult } from "../lib/supply-requests.functions";
 import type { SupplyRequestItemViewModel } from "./staff-dashboard";
 
-type StructuredProductSelection = Pick<
+export type StaffProductSelection = Pick<
   UnifiedSupplyRequestSearchResult,
   | "productName"
   | "manufacturer"
@@ -22,7 +22,7 @@ type StaffRequestCartItemBase = {
 };
 
 export type StructuredStaffRequestCartItem = StaffRequestCartItemBase &
-  StructuredProductSelection & {
+  StaffProductSelection & {
     kind: "structured";
   };
 
@@ -44,7 +44,7 @@ export type StaffRequestSubmissionItem = {
 
 export function createStructuredCartItem(
   key: string,
-  selection: StructuredProductSelection,
+  selection: StaffProductSelection,
   quantity: number,
 ): StructuredStaffRequestCartItem {
   return {
@@ -88,6 +88,69 @@ export function changeCartItemQuantity(
   return items.map((item) =>
     item.key === key ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item,
   );
+}
+
+// The submission RPC accepts at most this many lines per request.
+export const STAFF_CART_MAX_LINES = 50;
+
+// Exact identity of a structured line. Two lines merge only when every identity field
+// matches, so adding an item never silently swaps one source for another.
+export function cartSelectionIdentityKey(
+  selection: Pick<
+    StaffProductSelection,
+    "productId" | "inventoryItemId" | "vendorProductId" | "catalogVendorProductId"
+  >,
+): string {
+  return [
+    selection.productId,
+    selection.inventoryItemId,
+    selection.vendorProductId,
+    selection.catalogVendorProductId,
+  ]
+    .map((value) => value ?? "")
+    .join("|");
+}
+
+export function findCartLineForSelection(
+  items: StaffRequestCartItem[],
+  selection: Parameters<typeof cartSelectionIdentityKey>[0],
+): StructuredStaffRequestCartItem | undefined {
+  const identity = cartSelectionIdentityKey(selection);
+  return items.find(
+    (item): item is StructuredStaffRequestCartItem =>
+      item.kind === "structured" && cartSelectionIdentityKey(item) === identity,
+  );
+}
+
+// One-tap add: a product already in the cart gains quantity instead of a second line.
+export function addProductToCart(
+  items: StaffRequestCartItem[],
+  key: string,
+  selection: StaffProductSelection,
+  quantity = 1,
+): StaffRequestCartItem[] {
+  const existing = findCartLineForSelection(items, selection);
+  if (existing) return changeCartItemQuantity(items, existing.key, quantity);
+  if (items.length >= STAFF_CART_MAX_LINES) return items;
+  return [...items, createStructuredCartItem(key, selection, quantity)];
+}
+
+export function addCustomItemToCart(
+  items: StaffRequestCartItem[],
+  key: string,
+  freeTextItem: string,
+  quantity = 1,
+): StaffRequestCartItem[] {
+  if (!freeTextItem.trim() || items.length >= STAFF_CART_MAX_LINES) return items;
+  return [...items, createCustomCartItem(key, freeTextItem, quantity)];
+}
+
+export function describeItemCount(count: number): string {
+  return `${count} ${count === 1 ? "item" : "items"}`;
+}
+
+export function describeCartCount(items: StaffRequestCartItem[]): string {
+  return describeItemCount(items.length);
 }
 
 export function removeCartItem(items: StaffRequestCartItem[], key: string): StaffRequestCartItem[] {

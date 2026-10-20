@@ -11,12 +11,12 @@ import type { SupplyRequestStatus } from "../src/supply-requests/lifecycle.ts";
 test("staff lifecycle values have friendly labels and groups", () => {
   const expected = {
     submitted: ["Submitted", "ACTIVE"],
-    under_review: ["Reviewing", "ACTIVE"],
+    under_review: ["Under review", "ACTIVE"],
     approved: ["Approved", "ACTIVE"],
     ordered: ["Ordered", "ACTIVE"],
     received: ["Ready", "READY"],
     completed: ["Completed", "COMPLETED"],
-    denied: ["Declined", "ACTION_REQUIRED"],
+    denied: ["Declined", "DECLINED"],
   } as const;
   for (const [status, translated] of Object.entries(expected)) {
     const result = translateStaffRequestStatus(status as SupplyRequestStatus);
@@ -28,13 +28,18 @@ test("staff lifecycle values have friendly labels and groups", () => {
 test("summary counts active, ready, and completed without counting completed as active", () => {
   const request = (statusGroup: StaffRequestViewModel["statusGroup"]): StaffRequestViewModel => ({
     id: crypto.randomUUID(), itemName: "Tape", quantity: 1, unit: "roll",
-    statusLabel: "Status", statusGroup, submittedAt: "2026-01-01T00:00:00Z",
+    itemCount: 1,
+    items: [],
+    statusLabel: "Status",
+    statusDescription: "Status",
+    statusGroup,
+    submittedAt: "2026-01-01T00:00:00Z",
     lastUpdatedAt: "2026-01-01T00:00:00Z", staffMessage: null,
   });
   assert.deepEqual(
     summarizeStaffRequests([
       request("ACTIVE"), request("ACTIVE"), request("READY"), request("COMPLETED"),
-      request("ACTION_REQUIRED"),
+      request("DECLINED"),
     ]),
     { activeRequests: 2, readyRequests: 1, completedRequests: 1 },
   );
@@ -92,7 +97,7 @@ test("mobile request flow keeps request categories out of the visible interface"
   const route = await readFile(new URL("../src/routes/_authenticated/staff/request.tsx", import.meta.url), "utf8");
   assert.match(route, /What do you need\?/);
   assert.match(route, /Search supplies/);
-  assert.match(route, /Request Submitted/);
+  assert.match(route, /Request submitted/);
   assert.doesNotMatch(route, />Type</);
   assert.doesNotMatch(route, /Report low stock|Report out of stock/);
 });
