@@ -35,27 +35,9 @@ Cancelling changes only `supply_requests.status`. The request row, its lines, re
 
 The migrations rewrite no data: no status remapping, no deletes, and no policy, grant or unrelated function is dropped or recreated. The preflight refuses to run if the enum value is missing, if the RPC already exists, or if any `cancelled` request or update row already exists.
 
-Pre-apply checks:
+Release checks live in `supabase/release/phase6c2/`. `precheck.sql` and `postcheck.sql` are read-only, assertion-backed fingerprints, and the README lists the exact pre/post diff to expect. Both were validated end to end on a disposable database migrated from `main`.
 
-```sql
-SELECT enum_range(NULL::public.supply_request_status);            -- no 'cancelled' yet
-SELECT count(*) FROM public.supply_request_updates WHERE event_kind IS NOT NULL
-  AND event_kind <> 'requester_edited';                            -- 0
-```
-
-Post-apply checks:
-
-```sql
-SELECT enum_range(NULL::public.supply_request_status);            -- ends with 'cancelled'
-SELECT pg_get_constraintdef(oid) FROM pg_constraint
-  WHERE conname = 'supply_request_updates_event_kind_check';       -- three branches
-SELECT has_function_privilege('anon', 'public.cancel_submitted_supply_request(uuid,uuid)', 'EXECUTE'),
-       has_function_privilege('authenticated', 'public.cancel_submitted_supply_request(uuid,uuid)', 'EXECUTE');
-                                                                   -- false, true
-SELECT count(*) FROM public.supply_requests WHERE status = 'cancelled';  -- 0
-```
-
-Ship order: apply the two migrations in order, then deploy the application. An older UI never offers cancellation, and the new UI's only new call is `cancel_submitted_supply_request`. `src/integrations/supabase/types.ts` was hand-edited (enum value and RPC); regenerate and compare after applying.
+Ship order: apply the two migrations in order, then deploy the application. An older UI never offers cancellation, and the new UI's only new call is `cancel_submitted_supply_request`. `src/integrations/supabase/types.ts` was hand-edited (enum value and RPC). Before release, `supabase gen types` was run against disposable databases before and after the migrations, and its delta matched the hand edits exactly. Regenerate from production after applying, as a final check.
 
 ## Canonical mutation: `cancel_submitted_supply_request(_organization_id, _request_id)`
 
