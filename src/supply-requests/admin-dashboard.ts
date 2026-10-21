@@ -69,6 +69,8 @@ const QUEUE_TRANSLATIONS: Readonly<Record<SupplyRequestStatus, AdminQueueTransla
   received: { queueGroup: "READY_FOR_STAFF", statusLabel: "Ready for Staff", nextAction: "Complete Request" },
   completed: { queueGroup: "COMPLETED", statusLabel: "Completed", nextAction: null },
   denied: { queueGroup: "COMPLETED", statusLabel: "Declined", nextAction: null },
+  // Phase 6C.2: withdrawn by the requester before review. History only; no admin action.
+  cancelled: { queueGroup: "COMPLETED", statusLabel: "Cancelled by requester", nextAction: null },
 };
 
 const REQUEST_TYPE_LABELS = {

@@ -32,7 +32,9 @@ import {
   createStructuredCartItem,
   describeCartCount,
   describeItemCount,
+  EMPTY_EDIT_STATE,
   describeSubmission,
+  editCompletion,
   editRequestTypeIntent,
   removeCartItem,
   resolveEditRequestContextId,
@@ -42,6 +44,7 @@ import {
   type StaffProductSelection,
   type StaffRequestCartItem,
 } from "@/supply-requests/staff-request-cart";
+import { CancelRequestAction } from "@/components/staff/CancelRequestAction";
 import { StaffCartList } from "@/components/staff/StaffCartList";
 import { useStaffCart } from "@/components/staff/StaffCartProvider";
 import { StaffProductPicker } from "@/components/staff/StaffProductPicker";
@@ -390,6 +393,12 @@ function RequestPage() {
     locationName: locations.find((location) => location.id === resolvedLocationId)?.name ?? null,
   });
   const hasItems = items.length > 0;
+  // Edit mode only. Removing the last line leaves cancellation as the way forward,
+  // never an empty save.
+  const editIsEmpty = isEditMode && editCompletion(items) === "cancel_only";
+  const showCancelFromEdit = isEditMode && !!editingRequest?.canCancel && !!active;
+  const openCancelledRequest = () =>
+    void navigate({ to: "/staff/requests/$id", params: { id: editingRequest!.id } });
   const againSource = !isEditMode ? cart.againSource : null;
 
   return (
@@ -462,6 +471,26 @@ function RequestPage() {
                 <X className="size-4" aria-hidden="true" />
               </button>
             </div>
+          </section>
+        )}
+
+        {editIsEmpty && (
+          <section
+            aria-labelledby="empty-edit-title"
+            className="rounded-2xl border border-[#f1cbd0] bg-white p-5 shadow-[0_4px_18px_rgba(7,29,56,0.04)]"
+          >
+            <h2 id="empty-edit-title" className="text-base font-semibold text-[#071d38]">
+              {EMPTY_EDIT_STATE.title}
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-[#526174]">{EMPTY_EDIT_STATE.body}</p>
+            {showCancelFromEdit && (
+              <CancelRequestAction
+                organizationId={active!.organizationId}
+                requestId={editingRequest!.id}
+                onCancelled={openCancelledRequest}
+                className="mt-4"
+              />
+            )}
           </section>
         )}
 
@@ -557,11 +586,6 @@ function RequestPage() {
             </section>
           </>
         )}
-        {isEditMode && items.length === 0 && (
-          <p className="rounded-xl bg-[#f4f6f8] p-3 text-sm text-[#526174]">
-            A request needs at least one item. Add an item to save your changes.
-          </p>
-        )}
 
         {hasItems && (
           <div className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 -mx-1 space-y-2 rounded-2xl bg-[#f5f7f9]/95 px-1 pb-1 pt-2 backdrop-blur">
@@ -588,6 +612,25 @@ function RequestPage() {
           </div>
         )}
       </form>
+      {showCancelFromEdit && hasItems && (
+        <section
+          aria-labelledby="cancel-request-title"
+          className="mt-10 border-t border-[#e1e6ec] pt-6"
+        >
+          <h2 id="cancel-request-title" className="text-sm font-semibold text-[#34445a]">
+            No longer need this request?
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-[#667384]">
+            Cancelling stops review. The request stays in your history.
+          </p>
+          <CancelRequestAction
+            organizationId={active!.organizationId}
+            requestId={editingRequest!.id}
+            onCancelled={openCancelledRequest}
+            className="mt-3"
+          />
+        </section>
+      )}
       <AlertDialog open={confirmingSubmit} onOpenChange={setConfirmingSubmit}>
         <AlertDialogContent className="w-[calc(100%-2rem)] rounded-2xl">
           <AlertDialogHeader>

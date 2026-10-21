@@ -291,3 +291,23 @@ export function resolveEditRequestContextId(
   }
   return resolveRequestContextId(membershipDefaultId, "", availableOptions);
 }
+
+// Phase 6C.2: a request can never be saved with zero items. When an edit removes the
+// last line, the composer offers cancellation instead of a save it cannot make.
+export type EditCompletion = "save" | "cancel_only";
+
+export function editCompletion(items: StaffRequestCartItem[]): EditCompletion {
+  return items.length > 0 ? "save" : "cancel_only";
+}
+
+export const EMPTY_EDIT_STATE = {
+  title: "No items left in this request.",
+  body: "A request can't be saved without items. Add an item to keep this request, or cancel it if you no longer need anything.",
+} as const;
+
+export const CANCEL_REQUEST_CONFIRMATION = {
+  title: "Cancel this request?",
+  body: "This request will no longer be reviewed or fulfilled. It will remain in your request history.",
+  confirm: "Cancel request",
+  keep: "Keep request",
+} as const;

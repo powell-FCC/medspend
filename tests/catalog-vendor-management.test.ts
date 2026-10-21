@@ -304,7 +304,11 @@ test("the migration never writes the global catalog", () => {
 
 test("the migration is new, last, and leaves earlier migrations alone", () => {
   const migrations = readdirSync(new URL("../supabase/migrations/", import.meta.url)).sort();
-  assert.equal(migrations.at(-1), migrationName);
+  // Later phases append their own migrations after this one.
+  assert.ok(
+    migrations.indexOf(migrationName) >
+      migrations.indexOf("20261015120000_budget_purchasing_command_center.sql"),
+  );
 });
 
 test("coverage statuses: represented means any catalog listing, never a judgment on the product", () => {

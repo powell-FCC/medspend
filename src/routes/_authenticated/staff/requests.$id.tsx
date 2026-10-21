@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { getStaffRequestDetailFn } from "@/lib/supply-requests.functions";
+import { CancelRequestAction } from "@/components/staff/CancelRequestAction";
 import { RequestDetailHeader } from "@/components/staff/RequestDetailHeader";
 import { RequestDetailTimeline } from "@/components/staff/RequestDetailTimeline";
 import { useStaffCart } from "@/components/staff/StaffCartProvider";
@@ -139,6 +140,14 @@ function StaffRequestDetail() {
                 >
                   <Pencil className="size-4" aria-hidden="true" /> Edit request
                 </Link>
+                {request.data.canCancel && active && (
+                  <CancelRequestAction
+                    organizationId={active.organizationId}
+                    requestId={request.data.id}
+                    onCancelled={() => window.scrollTo({ top: 0 })}
+                    className="mt-2"
+                  />
+                )}
               </div>
             ) : (
               request.data.editGuidance && (

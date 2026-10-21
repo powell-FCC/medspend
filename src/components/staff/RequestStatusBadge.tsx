@@ -7,6 +7,7 @@ const tones: Record<StaffRequestStatusGroup, string> = {
   READY: "border-[#ffd7bc] bg-[#fff0e5] text-[#a84300]",
   COMPLETED: "border-[#d9e6de] bg-[#edf7f1] text-[#286443]",
   DECLINED: "border-[#f1cbd0] bg-[#fff0f1] text-[#a83340]",
+  CANCELLED: "border-[#dfe3e8] bg-[#f4f5f7] text-[#5b6675]",
 };
 
 export function RequestStatusBadge({

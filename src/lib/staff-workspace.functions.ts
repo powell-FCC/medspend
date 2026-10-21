@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { loadRequestItems, requireMembership } from "@/lib/supply-requests.functions";
 import {
+  QUICK_PICK_EXCLUDED_STATUSES,
   QUICK_PICK_HISTORY_REQUESTS,
   buildQuickPicks,
   buildRequestAgainLines,
@@ -100,13 +101,14 @@ export const getStaffQuickPicksFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMembership(context, data.organizationId);
     const db = context.supabase as unknown as Db;
-    // The requester's own recent requests only. Declined requests are not suggested.
+    // The requester's own recent requests only. Declined and cancelled requests are not
+    // suggested.
     const { data: requests, error } = await db
       .from("supply_requests")
       .select("id,created_at")
       .eq("organization_id", data.organizationId)
       .eq("requested_by", context.userId)
-      .neq("status", "denied")
+      .not("status", "in", `(${QUICK_PICK_EXCLUDED_STATUSES.join(",")})`)
       .order("created_at", { ascending: false })
       .limit(QUICK_PICK_HISTORY_REQUESTS);
     if (error) throw new Error(error.message);

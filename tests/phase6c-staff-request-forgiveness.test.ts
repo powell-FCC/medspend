@@ -35,6 +35,7 @@ const picker = read("../src/components/staff/StaffProductPicker.tsx");
 const adminDetail = read("../src/components/admin/supply-requests/AdminRequestDetail.tsx");
 const adminRoute = read("../src/routes/_authenticated/supply-requests.tsx");
 const types = read("../src/integrations/supabase/types.ts");
+const staffDashboard = read("../src/supply-requests/staff-dashboard.ts");
 
 const between = (source: string, start: string, end?: string) => {
   const from = source.indexOf(start);
@@ -142,9 +143,19 @@ test("only submitted requests are requester-editable; review and every later sta
 });
 
 test("the lifecycle graph is unchanged: no regression to submitted and no new statuses", () => {
+  // Phase 6C.2 appends only the terminal 'cancelled' status, in its own migration.
   assert.deepEqual(
     [...SUPPLY_REQUEST_STATUSES],
-    ["submitted", "under_review", "approved", "ordered", "received", "completed", "denied"],
+    [
+      "submitted",
+      "under_review",
+      "approved",
+      "ordered",
+      "received",
+      "completed",
+      "denied",
+      "cancelled",
+    ],
   );
   for (const status of SUPPLY_REQUEST_STATUSES) {
     assert.equal(canTransitionSupplyRequest(status, "submitted"), false, status);
@@ -393,8 +404,10 @@ test("staff detail exposes edit eligibility and the edit event without admin-onl
   assert.match(detail, /canEdit: canRequesterEditSupplyRequest\(lifecycleStatus\)/);
   assert.match(detail, /editGuidance: requesterEditGuidance\(lifecycleStatus\)/);
   assert.match(detail, /eq\("requested_by", context\.userId\)/);
-  assert.match(detail, /update\.event_kind === "requester_edited"/);
-  assert.match(detail, /You edited this request/);
+  // Phase 6C.2 moved the timeline mapping into a pure, tested helper.
+  assert.match(detail, /buildStaffRequestTimeline\(/);
+  assert.match(staffDashboard, /update\.event_kind === "requester_edited"/);
+  assert.match(staffDashboard, /You edited this request/);
   assert.doesNotMatch(detail, /internal_note|internalNote|invoice|purchase/);
 
   assert.match(staffDetail, /request\.data\.canEdit \?/);
