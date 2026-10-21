@@ -283,10 +283,10 @@ test("admin navigation exposes Catalog on desktop and mobile while staff navigat
 
 test("catalog stocking does not broaden owner-only inventory management", async () => {
   const inventoryPage = await readFile(inventoryPagePath, "utf8");
-  assert.match(inventoryPage, /const owner = active\?\.role === 'owner'/);
+  assert.match(inventoryPage, /const owner = active\?\.role === ['"]owner['"]/);
   assert.match(inventoryPage, /enabled: Boolean\(active\?\.organizationId && owner\)/);
   assert.match(inventoryPage, /Only organization owners can manage inventory/);
-  assert.doesNotMatch(inventoryPage, /role === 'admin'|isCatalogAdminRole/);
+  assert.doesNotMatch(inventoryPage, /role === ['"]admin['"]|isCatalogAdminRole/);
 });
 
 test("catalog UI renders provenance and lifecycle actions without optimistic table writes", async () => {

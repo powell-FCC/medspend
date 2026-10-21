@@ -496,6 +496,7 @@ export type Database = {
           id: string
           idempotency_key: string | null
           inventory_item_id: string
+          inventory_location_id: string | null
           new_quantity: number
           organization_id: string
           previous_quantity: number
@@ -511,6 +512,7 @@ export type Database = {
           id?: string
           idempotency_key?: string | null
           inventory_item_id: string
+          inventory_location_id: string | null
           new_quantity: number
           organization_id: string
           previous_quantity: number
@@ -526,6 +528,7 @@ export type Database = {
           id?: string
           idempotency_key?: string | null
           inventory_item_id?: string
+          inventory_location_id?: string | null
           new_quantity?: number
           organization_id?: string
           previous_quantity?: number
@@ -535,6 +538,13 @@ export type Database = {
           source_type?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "inventory_adjustments_location_org_fk"
+            columns: ["inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
+            referencedColumns: ["id", "organization_id"]
+          },
           {
             foreignKeyName: "inventory_adjustments_inventory_item_id_fkey"
             columns: ["inventory_item_id"]
@@ -669,6 +679,99 @@ export type Database = {
           },
         ]
       }
+      inventory_location_balances: {
+        Row: {
+          created_at: string
+          inventory_item_id: string
+          inventory_location_id: string
+          organization_id: string
+          quantity: number
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          inventory_item_id: string
+          inventory_location_id: string
+          organization_id: string
+          quantity?: number
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          inventory_item_id?: string
+          inventory_location_id?: string
+          organization_id?: string
+          quantity?: number
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_location_balances_inventory_item_id_organization_id_fkey"
+            columns: ["inventory_item_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_location_balances_inventory_location_id_organization_id_fkey"
+            columns: ["inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_location_balances_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_locations: {
+        Row: {
+          active: boolean
+          created_at: string
+          description: string | null
+          id: string
+          kind: string
+          name: string
+          organization_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          description?: string | null
+          id?: string
+          kind?: string
+          name: string
+          organization_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          description?: string | null
+          id?: string
+          kind?: string
+          name?: string
+          organization_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_locations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       inventory_price_history: {
         Row: {
           created_at: string
@@ -759,6 +862,71 @@ export type Database = {
             columns: ["vendor_product_id", "organization_id"]
             isOneToOne: false
             referencedRelation: "vendor_products"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      inventory_transfers: {
+        Row: {
+          created_at: string
+          created_by: string
+          from_inventory_location_id: string
+          id: string
+          idempotency_key: string
+          inventory_item_id: string
+          organization_id: string
+          quantity: number
+          to_inventory_location_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          from_inventory_location_id: string
+          id?: string
+          idempotency_key: string
+          inventory_item_id: string
+          organization_id: string
+          quantity: number
+          to_inventory_location_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          from_inventory_location_id?: string
+          id?: string
+          idempotency_key?: string
+          inventory_item_id?: string
+          organization_id?: string
+          quantity?: number
+          to_inventory_location_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_transfers_from_inventory_location_id_organization_id_fkey"
+            columns: ["from_inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_transfers_inventory_item_id_organization_id_fkey"
+            columns: ["inventory_item_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_transfers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_transfers_to_inventory_location_id_organization_id_fkey"
+            columns: ["to_inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
             referencedColumns: ["id", "organization_id"]
           },
         ]
@@ -2251,6 +2419,16 @@ export type Database = {
           route: string
         }[]
       }
+      adjust_inventory_location_quantity: {
+        Args: {
+          _adjustment_amount: number
+          _inventory_item_id: string
+          _inventory_location_id: string
+          _organization_id: string
+          _reason: string
+        }
+        Returns: Json
+      }
       adjust_inventory_quantity: {
         Args: {
           _adjustment_amount: number
@@ -2297,6 +2475,10 @@ export type Database = {
           _source_file_id: string
         }
         Returns: Json
+      }
+      create_inventory_location: {
+        Args: { _description?: string; _name: string; _organization_id: string }
+        Returns: string
       }
       create_invitation: {
         Args: {
@@ -2350,6 +2532,23 @@ export type Database = {
           user_id: string
         }[]
       }
+      set_inventory_location_active: {
+        Args: {
+          _active: boolean
+          _inventory_location_id: string
+          _organization_id: string
+        }
+        Returns: undefined
+      }
+      update_inventory_location: {
+        Args: {
+          _description?: string
+          _inventory_location_id: string
+          _name: string
+          _organization_id: string
+        }
+        Returns: undefined
+      }
       update_organization_member: {
         Args: { _organization_id: string; _membership_id: string; _changes: Json }
         Returns: undefined
@@ -2362,6 +2561,17 @@ export type Database = {
           _invoice_item_id: string
           _organization_id: string
           _source_file_id: string
+        }
+        Returns: Json
+      }
+      move_inventory_stock: {
+        Args: {
+          _from_inventory_location_id: string
+          _idempotency_key: string
+          _inventory_item_id: string
+          _organization_id: string
+          _quantity: number
+          _to_inventory_location_id: string
         }
         Returns: Json
       }

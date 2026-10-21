@@ -232,12 +232,15 @@ test("migration is new, ordered after Phase 6C, transactional, and guarded", () 
   // tests/beta-invoice-manual-catalog-matching.test.ts. The catalog vendor management
   // migration redefines adopt_catalog_vendor_product only to remove its name-based vendor
   // link; tests/catalog-vendor-management.test.ts holds it to the Phase 5A.5 text elsewhere.
+  // Phase 7A.1 redefines post_reviewed_invoice only to route its receipt through the
+  // location-aware inventory mutation; tests/phase7a1-location-aware-inventory.test.ts holds
+  // it to the beta-hardening text everywhere else.
   const betaHardening = "20261012120000_beta_invoice_manual_catalog_matching.sql";
-  const redefinedBy: Record<string, string> = {
-    confirm_invoice_item_product: betaHardening,
-    create_product_from_invoice_item: betaHardening,
-    post_reviewed_invoice: betaHardening,
-    adopt_catalog_vendor_product: "20261019120000_catalog_vendor_management.sql",
+  const redefinedBy: Record<string, string[]> = {
+    confirm_invoice_item_product: [betaHardening],
+    create_product_from_invoice_item: [betaHardening],
+    post_reviewed_invoice: [betaHardening, "20261021120000_phase7a1_location_aware_inventory.sql"],
+    adopt_catalog_vendor_product: ["20261019120000_catalog_vendor_management.sql"],
   };
   for (const later of migrations.slice(migrations.indexOf(migrationName) + 1)) {
     const code = read(`../supabase/migrations/${later}`).replace(/--.*$/gm, "");
@@ -253,7 +256,7 @@ test("migration is new, ordered after Phase 6C, transactional, and guarded", () 
       "post_reviewed_invoice",
       "adopt_catalog_vendor_product",
     ]) {
-      if (redefinedBy[name] === later) continue;
+      if (redefinedBy[name]?.includes(later)) continue;
       assert.doesNotMatch(
         code,
         new RegExp(
