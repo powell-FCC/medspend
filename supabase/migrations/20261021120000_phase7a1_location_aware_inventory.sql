@@ -44,13 +44,22 @@ BEGIN
 END
 $preflight$;
 
--- Snapshot every item quantity so the end of this migration can prove nothing changed.
-CREATE TEMP TABLE phase7a1_pre_quantities ON COMMIT DROP AS
-  SELECT id, organization_id, quantity FROM public.inventory_items;
-CREATE TEMP TABLE phase7a1_pre_counts ON COMMIT DROP AS
-  SELECT
-    (SELECT count(*) FROM public.inventory_items) AS items,
-    (SELECT count(*) FROM public.inventory_adjustments) AS adjustments;
+-- Snapshot every item quantity so the end of this migration can prove nothing changed. The
+-- snapshot is a transaction-local setting, not a table, so it ends with this transaction and
+-- the file creates no table without RLS. (The Supabase SQL Editor's "Run and enable RLS"
+-- appends ALTER TABLE statements after COMMIT for such tables; with the earlier temp-table
+-- snapshot that reported a false failure after a successful commit.)
+DO $snapshot$
+BEGIN
+  PERFORM pg_catalog.set_config('phase7a1.pre_snapshot', jsonb_build_object(
+    'items', (SELECT count(*) FROM public.inventory_items),
+    'adjustments', (SELECT count(*) FROM public.inventory_adjustments),
+    'quantities', coalesce((
+      SELECT jsonb_object_agg(id, jsonb_build_array(organization_id, quantity))
+      FROM public.inventory_items), '{}'::jsonb)
+  )::text, true);
+END
+$snapshot$;
 
 -- ---------------------------------------------------------------------------------------
 -- Physical inventory locations. Deliberately separate from public.locations, which are
@@ -1430,16 +1439,22 @@ SET CONSTRAINTS public.inventory_items_balance_invariant, public.inventory_locat
 DO $postcheck$
 DECLARE
   _bad bigint;
+  _pre jsonb := nullif(current_setting('phase7a1.pre_snapshot', true), '')::jsonb;
 BEGIN
-  IF (SELECT count(*) FROM public.inventory_items) <> (SELECT items FROM phase7a1_pre_counts)
-     OR (SELECT count(*) FROM public.inventory_adjustments) <> (SELECT adjustments FROM phase7a1_pre_counts) THEN
+  IF _pre IS NULL THEN
+    RAISE EXCEPTION 'Phase 7A.1 postcheck: the pre-migration quantity snapshot is missing';
+  END IF;
+  IF (SELECT count(*) FROM public.inventory_items) <> (_pre ->> 'items')::bigint
+     OR (SELECT count(*) FROM public.inventory_adjustments) <> (_pre ->> 'adjustments')::bigint THEN
     RAISE EXCEPTION 'Phase 7A.1 postcheck: inventory item or adjustment count changed';
   END IF;
 
   SELECT count(*) INTO _bad
-  FROM phase7a1_pre_quantities pre
-  LEFT JOIN public.inventory_items item ON item.id = pre.id
-  WHERE item.id IS NULL OR item.quantity <> pre.quantity OR item.organization_id <> pre.organization_id;
+  FROM jsonb_each(_pre -> 'quantities') pre
+  LEFT JOIN public.inventory_items item ON item.id = pre.key::uuid
+  WHERE item.id IS NULL
+     OR item.quantity <> (pre.value ->> 1)::numeric
+     OR item.organization_id <> (pre.value ->> 0)::uuid;
   IF _bad <> 0 THEN RAISE EXCEPTION 'Phase 7A.1 postcheck: % inventory items changed quantity', _bad; END IF;
 
   SELECT count(*) INTO _bad

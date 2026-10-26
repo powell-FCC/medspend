@@ -15,8 +15,11 @@ Run each step as a separate SQL Editor query: paste the **whole file**, run it o
    - STOP on any error. `precheck: Phase 7A.1 tables already exist` means the migration is already applied; do **not** apply it again. `precheck: function definition differs from repository main: …` means production has drifted from main `f8a60fd`.
 2. **`supabase/migrations/20261021120000_phase7a1_location_aware_inventory.sql`**
    - Paste the whole file and run it once. It is one transaction (`BEGIN … COMMIT`) with its own preflight and an in-migration postcheck. Any error rolls it back completely; that is tested with an induced failure just before `COMMIT`.
+   - The Editor may ask you to confirm destructive operations (the migration drops and recreates a check constraint and drops one policy). It should **not** offer "Run and enable RLS": the file creates no table without RLS. If it does, stop, because you are not running this file.
    - Success: no error.
-   - STOP on any error. Run `precheck.sql` again: it should pass with the same rows as step 1, which proves nothing was left behind. Then investigate before retrying.
+   - STOP on any error, and **inspect the schema before doing anything else**. An error reported after `COMMIT` can mean the migration's effects are already durable (see the incident below). Run `precheck.sql` again:
+     - it passes with the same rows as step 1: nothing was left behind; investigate before retrying;
+     - it reports `precheck: Phase 7A.1 tables already exist`: the migration committed. Do **not** run it again; run `postcheck.sql` to confirm the end state.
    - A second run is refused with `Phase 7A.1 inventory location tables already exist unexpectedly`. That is the intended guard against applying it twice.
 3. **`postcheck.sql`**
    - Success: a grid of fingerprint rows. Download it as `phase7a1_post.csv`.
@@ -87,6 +90,31 @@ If the application served traffic between the two runs, receipts can legitimatel
   - `delete_invoice_permanently` is executable by authenticated only (not anon, not PUBLIC);
   - application roles cannot write balances, locations, transfers or the ledger directly;
   - the deferred invariant triggers are installed.
+
+## Production incident: a false failure after a successful commit
+
+The first production run returned `relation "phase7a1_pre_quantities" does not exist`, although the migration had already committed. The full production postcheck later passed, showing the intended end state, with every data fingerprint identical to the precheck.
+
+- **Cause:** that version snapshotted quantities into `CREATE TEMP TABLE … ON COMMIT DROP` tables. The SQL Editor flags every `CREATE TABLE` without a matching `ENABLE ROW LEVEL SECURITY`. Its "Run and enable RLS" option then appends `ALTER TABLE … ENABLE ROW LEVEL SECURITY;` statements to the **end** of the query, which is after `COMMIT`. By then the temp tables were gone, so the first appended statement failed. Nothing after it ran.
+- **Why the release checks missed it:** they sent the file exactly as written. They never sent the text the Editor builds from it.
+- **Fix:** the snapshot is now a transaction-local setting (`phase7a1.pre_snapshot`). The migration creates no temp table, the Editor sends it unchanged, and nothing follows `COMMIT`. The per-item quantity-preservation assertion is unchanged and still runs before `COMMIT`. The end state is identical: same schema, function hashes, grants and data.
+- **Regression check:** `supabase/tests/phase7a1_sql_editor_check.sh` covers this. It rewrites both versions of the migration the way the Editor does (`supabase/tests/support/studio_sql_editor_rewrite.mjs`, ported from Supabase Studio) and sends each as one query.
+  - The original version reproduces the incident: it commits, then reports the error.
+  - The current version returns success.
+  - The two end states are compared, and must match exactly.
+
+The general lesson for any manually applied migration: an error message does not prove a rollback. Before rerunning anything, check whether the migration's objects exist.
+
+## Migration history
+
+Production is migrated by hand through the SQL Editor (Phase 6C.2 was applied the same way). The repository has no CI or script that runs `supabase db push`. The SQL Editor does not write `supabase_migrations.schema_migrations`, so that history does not list this migration.
+
+If an operator ever runs `supabase db push` against production, the CLI will treat every hand-applied migration as pending, this one included.
+
+- **This migration:** its preflight refuses it with `Phase 7A.1 inventory location tables already exist unexpectedly`, before it changes anything.
+- **Other hand-applied migrations:** they may not be guarded the same way.
+
+Before any ledger-driven deploy, run `supabase migration list` against production. Mark hand-applied migrations as applied with `supabase migration repair --status applied <version>` only after confirming their objects exist. Never run `db push` blind.
 
 ## Provenance
 

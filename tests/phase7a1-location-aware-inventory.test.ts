@@ -280,6 +280,38 @@ test("the migration is one transaction with a preflight and an in-migration post
   assert.match(migration, /the migration must not write inventory history/);
 });
 
+test("the Supabase SQL Editor sends the migration and release scripts unchanged", async () => {
+  // The Editor's "Run and enable RLS" appends ALTER TABLE statements after COMMIT for every
+  // table created without RLS. The first production run hit that with the old temp-table
+  // snapshot: committed, then reported `relation "phase7a1_pre_quantities" does not exist`.
+  const rewriteModule = new URL(
+    "../supabase/tests/support/studio_sql_editor_rewrite.mjs",
+    import.meta.url,
+  ).href;
+  const { tablesMissingRLS, appendEnableRLS } = (await import(rewriteModule)) as {
+    tablesMissingRLS: (sql: string) => { tableName: string }[];
+    appendEnableRLS: (sql: string, tables: { tableName: string }[]) => string;
+  };
+  for (const [name, sql] of [
+    ["migration", migration],
+    ["precheck", precheck],
+    ["postcheck", postcheck],
+  ]) {
+    assert.deepEqual(tablesMissingRLS(sql), [], `${name} has no table the Editor would flag`);
+    assert.equal(appendEnableRLS(sql, tablesMissingRLS(sql)), sql);
+  }
+  assert.doesNotMatch(migrationCode, /CREATE\s+TEMP/i);
+  assert.equal(migrationCode.slice(migrationCode.lastIndexOf("\nCOMMIT;") + 8).trim(), "");
+  assert.match(migration, /set_config\('phase7a1\.pre_snapshot', [\s\S]*?, true\)/);
+  // The old artifact's shape is still recognised, so the port stays meaningful.
+  assert.deepEqual(
+    tablesMissingRLS("BEGIN;\nCREATE TEMP TABLE snap ON COMMIT DROP AS SELECT 1;\nCOMMIT;").map(
+      (t) => t.tableName,
+    ),
+    ["snap"],
+  );
+});
+
 test("inventory locations are a new concept, separate from public.locations", () => {
   assert.match(migrationCode, /CREATE TABLE public\.inventory_locations/);
   assert.doesNotMatch(
