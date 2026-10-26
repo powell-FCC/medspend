@@ -506,6 +506,22 @@ test("delete_invoice_permanently gains the Unassigned and count-checkpoint guard
   }
 });
 
+test("delete_invoice_permanently is authenticated-only after the migration", () => {
+  assert.match(
+    migrationCode,
+    /REVOKE ALL ON FUNCTION public\.delete_invoice_permanently\(uuid, uuid\) FROM PUBLIC, anon;\s+GRANT EXECUTE ON FUNCTION public\.delete_invoice_permanently\(uuid, uuid\) TO authenticated;/,
+  );
+  for (const marker of [
+    "authenticated retains EXECUTE on delete_invoice_permanently",
+    "anon cannot EXECUTE delete_invoice_permanently",
+    "PUBLIC cannot EXECUTE delete_invoice_permanently",
+    "permission denied for function delete_invoice_permanently",
+    "refused deletions changed nothing",
+  ]) {
+    assert.ok(behavior.includes(marker), marker);
+  }
+});
+
 test("moves are idempotent, owner-only and lock deterministically", () => {
   const move = between(migration, "CREATE FUNCTION public.move_inventory_stock(", "$$;");
   assert.match(move, /ARRAY\['owner'\]/);
@@ -525,10 +541,33 @@ test("moves are idempotent, owner-only and lock deterministically", () => {
 });
 
 test("release scripts and SQL suites cover the reviewed boundaries", () => {
-  assert.match(precheck, /BEGIN READ ONLY;/);
-  assert.match(postcheck, /BEGIN READ ONLY;/);
-  assert.match(precheck, /\\ir fingerprint\.sql/);
+  // Supabase SQL Editor safe: no psql meta-commands, no transaction control, and each file
+  // ends with the exact fingerprint statement so its result grid is the diffable output.
+  const fingerprint = read("supabase/release/phase7a1/fingerprint.sql");
+  const statement = fingerprint.slice(fingerprint.indexOf("SELECT section, key, value FROM ("));
+  for (const [name, script] of [
+    ["precheck", precheck],
+    ["postcheck", postcheck],
+    ["fingerprint", fingerprint],
+  ]) {
+    const code = script.replace(/--.*$/gm, "");
+    assert.doesNotMatch(code, /^\s*\\/m, `${name} uses a psql meta-command`);
+    assert.doesNotMatch(
+      code.replace(/DO \$(\w+)\$[\s\S]*?\$\1\$;/g, ""),
+      /^\s*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)\b/im,
+      `${name} controls transactions`,
+    );
+    assert.doesNotMatch(
+      code,
+      /\b(INSERT INTO|UPDATE public\.|DELETE FROM|CREATE |ALTER |DROP )/i,
+      `${name} writes`,
+    );
+    assert.ok(script.endsWith(statement), `${name} ends with the fingerprint statement`);
+  }
   assert.doesNotMatch(postcheck, /HASH_/);
+  assert.match(postcheck, /delete_invoice_permanently grants are not authenticated-only/);
+  assert.match(fingerprint, / public=/);
+  assert.match(precheck, /precheck: Phase 7A\.1 tables already exist/);
   for (const marker of [
     "Unassigned holds 20",
     "receipt of 25 lands in Unassigned",

@@ -686,12 +686,36 @@ RESET ROLE;
 SELECT pg_temp.assert(pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101') = (SELECT value FROM phase7a1_snapshots WHERE name = 'before_checkpoint_delete'),
   'checkpoint-blocked deletion changed nothing');
 
--- Staff and foreign owners still cannot delete invoices.
+-- Grants on the destructive deletion function: authenticated only, never anon or PUBLIC.
+SELECT pg_temp.assert(has_function_privilege('authenticated', 'public.delete_invoice_permanently(uuid, uuid)', 'EXECUTE'),
+  'authenticated retains EXECUTE on delete_invoice_permanently');
+SELECT pg_temp.assert(NOT has_function_privilege('anon', 'public.delete_invoice_permanently(uuid, uuid)', 'EXECUTE'),
+  'anon cannot EXECUTE delete_invoice_permanently');
+SELECT pg_temp.assert(NOT EXISTS (
+  SELECT 1 FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+  WHERE p.oid = 'public.delete_invoice_permanently(uuid, uuid)'::regprocedure
+    AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'), 'PUBLIC cannot EXECUTE delete_invoice_permanently');
+INSERT INTO phase7a1_snapshots VALUES ('before_refused_deletes', pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101'));
+SET LOCAL ROLE anon;
+SELECT pg_temp.expect_error($$SELECT public.delete_invoice_permanently('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000601')$$,
+  'permission denied for function delete_invoice_permanently');
+RESET ROLE;
+
+-- Authenticated non-owners (staff, admin, another organization's owner) are still refused
+-- by the function's own owner check, and nothing changes.
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000003');
 SELECT pg_temp.expect_error($$SELECT public.delete_invoice_permanently('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000601')$$,
   'Forbidden: owner access required');
+SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000002');
+SELECT pg_temp.expect_error($$SELECT public.delete_invoice_permanently('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000601')$$,
+  'Forbidden: owner access required');
+SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000004');
+SELECT pg_temp.expect_error($$SELECT public.delete_invoice_permanently('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000601')$$,
+  'Forbidden: owner access required');
 RESET ROLE;
+SELECT pg_temp.assert(pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101') = (SELECT value FROM phase7a1_snapshots WHERE name = 'before_refused_deletes')
+  AND EXISTS (SELECT 1 FROM public.invoices WHERE id = '7a100000-0000-4000-8000-000000000701'), 'refused deletions changed nothing');
 
 -- ---------------------------------------------------------------------------------------
 -- 5, 10. Tenant isolation: organization B is untouched by everything above.

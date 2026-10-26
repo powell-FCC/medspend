@@ -1398,7 +1398,9 @@ BEGIN
   );
 END;
 $function$;
-REVOKE ALL ON FUNCTION public.delete_invoice_permanently(uuid, uuid) FROM PUBLIC;
+-- Hardening: main left EXECUTE with anon (Supabase default privileges). The internal owner
+-- check already refused anonymous callers; destructive functions should not rely on that alone.
+REVOKE ALL ON FUNCTION public.delete_invoice_permanently(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_invoice_permanently(uuid, uuid) TO authenticated;
 
 COMMENT ON TABLE public.inventory_locations IS

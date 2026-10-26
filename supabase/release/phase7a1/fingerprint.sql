@@ -1,5 +1,7 @@
--- Phase 7A.1 release fingerprint. Read-only; included by precheck.sql and postcheck.sql.
--- Every row is (section, key, value) so the two outputs can be diffed line by line.
+-- Phase 7A.1 release fingerprint: one read-only SELECT, safe to paste into the Supabase SQL
+-- Editor or run with psql. precheck.sql and postcheck.sql end with this exact statement
+-- (tests/phase7a1-location-aware-inventory.test.ts keeps the three copies identical).
+-- Every row is (section, key, value) so the pre and post outputs can be diffed line by line.
 
 SELECT section, key, value FROM (
   -- Functions this phase adds or replaces, and the neighbours it must leave alone:
@@ -9,6 +11,8 @@ SELECT section, key, value FROM (
       SELECT md5(pg_get_functiondef(p.oid)) || ' secdef=' || p.prosecdef
         || ' authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
         || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+        || ' public=' || EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+                                 WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = fn.name
       ORDER BY p.oid LIMIT 1
@@ -152,8 +156,21 @@ SELECT section, key, value FROM (
     coalesce(md5(string_agg(id::text || ':' || status::text || ':' || amount::text, ',' ORDER BY id)), 'empty')
   FROM public.supply_request_commitments
   UNION ALL
+  SELECT 8, 'rows', 'supply_request_items hash',
+    coalesce(md5(string_agg(id::text || ':' || supply_request_id::text || ':' || quantity::text, ',' ORDER BY id)), 'empty')
+  FROM public.supply_request_items
+  UNION ALL
+  SELECT 8, 'rows', 'supply_request_commitment_items hash',
+    coalesce(md5(string_agg(to_jsonb(ci)::text, ',' ORDER BY ci.id)), 'empty')
+  FROM public.supply_request_commitment_items ci
+  UNION ALL
   SELECT 8, 'rows', 'locations (sites) hash',
     coalesce(md5(string_agg(id::text || ':' || name || ':' || active::text, ',' ORDER BY id)), 'empty')
   FROM public.locations
+
+  -- Per-organization inventory totals, readable at a glance.
+  UNION ALL
+  SELECT 9, 'org_total', organization_id::text, count(*)::text || ' items, total ' || sum(quantity)::text
+  FROM public.inventory_items GROUP BY organization_id
 ) fingerprint
 ORDER BY ord, section, key;

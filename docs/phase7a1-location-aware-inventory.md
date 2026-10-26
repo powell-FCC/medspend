@@ -114,7 +114,9 @@ Before any move or count exists, deletion results are identical to main: `phase7
 
 `receive_invoice_inventory_item` (Phase 2C) is unused by the app. Its `EXECUTE` privilege was held by `PUBLIC`, and so by `anon`. It already required the owner role internally, so neither staff nor anon could change inventory through it. It now refuses `PUBLIC`/`anon` at the grant level too, and also requires a signed-in caller explicitly. It stays owner-only, matching owner-only invoice posting, and was not broadened to admins.
 
-The four-argument `adjust_inventory_quantity` was likewise executable by `anon`, behind the same internal owner check. It is now `authenticated`-only.
+The four-argument `adjust_inventory_quantity` was likewise executable by `anon` and `PUBLIC`, behind the same internal owner check. It is now `authenticated`-only.
+
+`delete_invoice_permanently` kept `anon` EXECUTE on main (Supabase default privileges), relying only on its internal owner check. Because 7A.1 recreates this destructive function, the migration now revokes it from `PUBLIC` and `anon` and grants it to `authenticated` only. Its internal authorization and deletion behavior are unchanged.
 
 ## Migration and release
 
@@ -124,14 +126,18 @@ The migration is additive and safe before the app deploys:
 - It writes no history and fabricates no locations: each organization gets Unassigned, and each item's current quantity becomes its Unassigned balance.
 - It ends with an in-migration postcheck: identical item and adjustment counts, every quantity unchanged, `quantity = SUM(balances)` for every item, all stock in Unassigned, and one Unassigned per organization.
 
-Release order:
+An induced failure just before `COMMIT` rolls back everything, so the database fingerprint matches the precheck byte for byte. A second application is refused by the preflight with a clear error, and so is a precheck against an already-migrated database. Operator mistakes stop loudly rather than being silently absorbed.
+
+Release order (each step is SQL Editor safe; see `supabase/release/phase7a1/README.md`):
 
 1. `supabase/release/phase7a1/precheck.sql`
 2. Apply the migration.
-3. `supabase/release/phase7a1/postcheck.sql`, then diff the two outputs (see that folder's README).
+3. `supabase/release/phase7a1/postcheck.sql`, then compare the two outputs.
 4. Merge and deploy the app.
 
-The deployed app keeps working at every step: it calls only signatures that still exist with the same behavior.
+The deployed app keeps working at every step. `supabase/tests/run_phase7a1_old_app_compat.sh` replays main's exact inventory list, create, edit, four-argument adjust, archive, category rename, posting, deletion, catalog adoption/stocking and intelligence reads. It runs them against a main-only database and a migrated one, and both pass.
+
+`src/integrations/supabase/types.ts` was validated against `supabase gen types` output from a migrated local database. The migration changes exactly 12 generated entries (4 tables, 8 functions), and the committed file matches the generator for each of them.
 
 ## Boundary with 7A.2
 
@@ -166,5 +172,6 @@ The count-freshness and overdue capability will come from `physical_count` adjus
 - `tests/phase7a1-location-aware-inventory.test.ts`: helpers, migration structure, the `post_reviewed_invoice` body-equality check, server functions, and rendered owner UI.
 - `supabase/tests/phase7a1_location_aware_inventory_behavior.sql`: rollback-only, with deferred checks forced before rollback. Covers balances, receiving, moves, compatibility and location adjustments, legacy receive authorization, direct-write rejection, invariant rollback, archive rules, deletion guards, RLS and tenant isolation.
 - `supabase/tests/phase7a1_mutation_check.sh`: 15 mutants, all killed.
-- `supabase/tests/phase7a1_backfill_check.sh`: seeded pre-7A.1 history, precheck/postcheck diff, and deletion parity with main.
+- `supabase/tests/phase7a1_backfill_check.sh`: seeded pre-7A.1 history; SQL Editor-mode precheck, migration and postcheck; an induced-failure rollback; refused reapplication and repeat precheck; the pre/post diff; and deletion parity with main.
+- `supabase/tests/run_phase7a1_old_app_compat.sh` with `tests/phase7a1-old-app-compat.test.ts`: the deployed app's PostgREST calls, on main and on 7A.1.
 - `supabase/tests/phase7a1_race_check.sh`: the two-session scenarios above.

@@ -5,9 +5,11 @@
 #   1. Boot a fresh container and apply every migration BEFORE 7A.1 (main f8a60fd's schema).
 #   2. Seed real pre-7A.1 history (integration/phase7a1_backfill_fixture.sql) through main's
 #      own posting and adjustment functions, and copy that database as "pre".
-#   3. Run release/phase7a1/precheck.sql, apply the 7A.1 migration, run postcheck.sql, and
-#      diff the two outputs: every data line must be identical; only the documented schema
-#      lines may differ.
+#   3. Run release/phase7a1/precheck.sql, an intentionally failing copy of the migration (must
+#      roll back completely), the 7A.1 migration, postcheck.sql, then a second application and a
+#      repeat precheck (both must be refused). Every release file is sent as ONE query, as the
+#      Supabase SQL Editor sends it; pre/postcheck run read-only. Diff pre and post: every data
+#      line must be identical; only the documented schema lines may differ.
 #   4. Run the same invoice deletions on "pre" (main code) and on the migrated database, and
 #      require identical results: deletion behaves exactly as before while all stock is
 #      Unassigned and no move or count exists.
@@ -36,7 +38,7 @@ sleep 5
 
 psql -q -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -f "$root/supabase/tests/integration/local_stack_setup.sql" >/dev/null
 for migration in "$root"/supabase/migrations/*.sql; do
-  [ "$(basename "$migration")" \< "$target" ] || continue
+  [[ "$(basename "$migration")" < "$target" ]] || continue
   psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$migration" >/dev/null
 done
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$root/supabase/tests/integration/phase7a1_backfill_fixture.sql" >/dev/null
@@ -50,9 +52,51 @@ done
 psql -q -U supabase_admin -d template1 -c "ALTER DATABASE pre OWNER TO postgres" >/dev/null
 
 cd "$root"
-psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At -F ' | ' -f supabase/release/phase7a1/precheck.sql > "$work/pre.txt"
-psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "supabase/migrations/$target" >/dev/null
-psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At -F ' | ' -f supabase/release/phase7a1/postcheck.sql > "$work/post.txt"
+# Every release file runs exactly as the Supabase SQL Editor sends it: the whole file as ONE
+# simple query (no psql meta-commands possible). Pre/postcheck also run with
+# default_transaction_read_only=on, proving they write nothing.
+editor() { psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "${2:-postgres}" -At -F ' | ' -c "$(cat "$1")"; }
+readonly_editor() { PGOPTIONS="$PGOPTIONS -c default_transaction_read_only=on" editor "$@"; }
+fingerprint() { readonly_editor supabase/release/phase7a1/fingerprint.sql "${1:-postgres}"; }
+expect_failure() {  # <label> <expected message> <command...>
+  local label="$1" expected="$2"; shift 2
+  if out="$("$@" 2>&1)"; then echo "FAIL: $label unexpectedly succeeded" >&2; exit 1; fi
+  echo "$out" | grep -qF "$expected" || { echo "FAIL: $label: unexpected error: $out" >&2; exit 1; }
+  echo "ok - $label refused: $expected"
+}
+
+readonly_editor supabase/release/phase7a1/precheck.sql > "$work/pre.txt"
+cmp -s "$work/pre.txt" <(fingerprint) || { echo "FAIL: precheck output is not exactly the fingerprint" >&2; exit 1; }
+
+# An induced failure late in the migration (after tables, functions and backfill) must roll
+# everything back: the fingerprint afterwards is byte-for-byte the precheck fingerprint.
+python3 - "supabase/migrations/$target" "$work/broken.sql" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+marker = "\nCOMMIT;\n"
+assert text.count(marker) == 1
+open(sys.argv[2], "w").write(text.replace(marker, "\nDO $induced$ BEGIN RAISE EXCEPTION 'induced failure before COMMIT'; END $induced$;\nCOMMIT;\n"))
+PY
+expect_failure "induced mid-migration failure" "induced failure before COMMIT" editor "$work/broken.sql"
+cmp -s "$work/pre.txt" <(fingerprint) || { echo "FAIL: the failed migration left changes behind" >&2; exit 1; }
+[ "$(psql -X -U postgres -d postgres -Atc "SELECT count(*) FROM pg_class WHERE relname LIKE 'inventory_location%' OR relname = 'inventory_transfers'")" = "0" ] \
+  || { echo "FAIL: partial 7A.1 objects survived the failed migration" >&2; exit 1; }
+readonly_editor supabase/release/phase7a1/precheck.sql > "$work/pre_after_failure.txt"
+cmp -s "$work/pre.txt" "$work/pre_after_failure.txt" || { echo "FAIL: precheck changed after the failed attempt" >&2; exit 1; }
+echo "ok - induced failure rolled back completely; precheck passes again"
+
+editor "supabase/migrations/$target" >/dev/null
+readonly_editor supabase/release/phase7a1/postcheck.sql > "$work/post.txt"
+cmp -s "$work/post.txt" <(fingerprint) || { echo "FAIL: postcheck output is not exactly the fingerprint" >&2; exit 1; }
+
+# Operator mistakes are refused loudly, not absorbed: a second application of the migration
+# and a precheck against an already-migrated database both stop with a clear message, and
+# change nothing.
+expect_failure "second application of the migration" "Phase 7A.1 inventory location tables already exist unexpectedly" \
+  editor "supabase/migrations/$target"
+expect_failure "precheck on an already-migrated database" "precheck: Phase 7A.1 tables already exist" \
+  readonly_editor supabase/release/phase7a1/precheck.sql
+cmp -s "$work/post.txt" <(fingerprint) || { echo "FAIL: the refused reapplication changed something" >&2; exit 1; }
 
 # Lines allowed to differ: timestamps, assertion banners, new/replaced function bodies,
 # overloads of new functions, object counts, and inventory-table policy/trigger/grant
@@ -72,8 +116,16 @@ for line in 'rows | inventory_items quantity hash' 'rows | inventory organizatio
   [ -n "$pre_value" ] && [ "$pre_value" = "$post_value" ] || { echo "FAIL: $line changed" >&2; exit 1; }
   case "$pre_value" in *'| empty') echo "FAIL: $line is empty; the fixture did not load" >&2; exit 1 ;; esac
 done
+for expected in \
+  'function | delete_invoice_permanently | ac77d1b05aa44675b295936021189673 secdef=true authenticated=true anon=false public=false' \
+  'function | receive_invoice_inventory_item | c843e23a4f8b8c432f26acb5dc885570 secdef=true authenticated=true anon=false public=false' \
+  'function | adjust_inventory_quantity | e9e178ef7fa6dc4e50441b40adc8e1e9 secdef=true authenticated=true anon=false public=false' \
+  'function | inventory_apply_balance_delta | 83513cd3324f6045147a855bec061b64 secdef=true authenticated=false anon=false public=false' \
+  'grants | inventory_location_balances | authenticated=SELECT,service_role=SELECT'; do
+  grep -qxF "$expected" "$work/post.txt" || { echo "FAIL: postcheck lacks: $expected" >&2; exit 1; }
+done
 echo "--- documented pre/post differences"
-diff "$work/pre.txt" "$work/post.txt" | grep -E '^[<>]' | grep -v -E '_at \|' || true
+diff "$work/pre.txt" "$work/post.txt" | grep -E "^[<>]" || true
 
 # Backfill specifics on the seeded data.
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
