@@ -16,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getInventoryStatus, inventoryStatusLabel } from "@/inventory/status";
-import { formatQuantity, physicalLocationCount } from "@/inventory/locations";
+import { formatQuantity, stockLocationLabel } from "@/inventory/locations";
 import type { InventoryItem, InventoryLocation, InventoryLocationBalance } from "@/types/inventory";
 
 const tones = {
@@ -43,10 +43,7 @@ export function InventoryTable({
   onAdjust: (item: InventoryItem) => void;
   onLocations: (item: InventoryItem) => void;
 }) {
-  const placement = (item: InventoryItem) => {
-    const count = physicalLocationCount(item.id, locations, balances);
-    return count === 0 ? "Unassigned" : `${count} location${count === 1 ? "" : "s"}`;
-  };
+  const placement = (item: InventoryItem) => stockLocationLabel(item.id, locations, balances);
   if (!items.length)
     return (
       <div className="rounded-xl border border-dashed bg-card px-6 py-16 text-center">

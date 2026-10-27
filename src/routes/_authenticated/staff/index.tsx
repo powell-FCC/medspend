@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ClipboardList, PackageCheck } from "lucide-react";
+import { ChevronRight, ClipboardList, PackageCheck, ScanLine } from "lucide-react";
 import { useState } from "react";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { useAuth } from "@/hooks/use-auth";
@@ -29,9 +29,9 @@ export const Route = createFileRoute("/_authenticated/staff/")({
 const WORKSPACE_OPEN_REQUESTS = 3;
 
 // Staff Workspace: an action workspace, not a dashboard. Top to bottom it answers
-// "anything ready for me?", "what do I need?", "what have I requested?" and "what do I
-// usually ask for?". A future primary action (e.g. Scan Inventory QR) slots in beside
-// Request Supplies without reshaping the page.
+// "anything ready for me?", "what do I need?", "what's on this shelf?" (Scan Inventory QR),
+// "what have I requested?" and "what do I usually ask for?". It shows no inventory data:
+// counting happens on /count.
 function StaffHome() {
   const { active } = useActiveOrg();
   const { user } = useAuth();
@@ -112,6 +112,22 @@ function StaffHome() {
           {...cartControls}
         />
       </section>
+
+      <Link
+        to="/count"
+        className="flex min-h-[4.5rem] items-center gap-3 rounded-3xl border border-[#e1e6ec] bg-white px-4 py-3 shadow-[0_8px_28px_rgba(7,29,56,0.06)] active:bg-[#f8fafb]"
+      >
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#fff1e6]">
+          <ScanLine className="size-5 text-[#d95700]" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold text-[#071d38]">Scan Inventory QR</span>
+          <span className="block text-sm text-[#697687]">
+            Count what's on a shelf, cabinet or cart.
+          </span>
+        </span>
+        <ChevronRight className="size-5 shrink-0 text-[#9aa5b1]" aria-hidden="true" />
+      </Link>
 
       <section aria-labelledby="my-requests-title">
         <StaffSectionHeader

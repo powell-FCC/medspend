@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
+import { takePendingAuthRedirect } from "@/lib/auth-ux";
 
 function NotFoundComponent() {
   return (
@@ -125,6 +126,27 @@ function RootComponent() {
     });
     return () => sub.subscription.unsubscribe();
   }, [router, queryClient]);
+
+  // OAuth sign-in returns to the site root; resume the page that asked for sign-in (for
+  // example a scanned /count/<token> label) once a session exists.
+  useEffect(() => {
+    const resume = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+      let pending: string | undefined;
+      try {
+        pending = takePendingAuthRedirect(window.sessionStorage);
+      } catch {
+        return;
+      }
+      if (pending) router.navigate({ to: pending, replace: true });
+    };
+    void resume();
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN") void resume();
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [router]);
 
   return (
     <QueryClientProvider client={queryClient}>

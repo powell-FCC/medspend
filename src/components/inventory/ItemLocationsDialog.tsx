@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import {
   formatQuantity,
   itemLocationBreakdown,
+  reconcileMoveSource,
   sortInventoryLocations,
   validateMove,
 } from "@/inventory/locations";
@@ -67,6 +68,18 @@ export function ItemLocationsDialog({
   const destinations = sortInventoryLocations(
     locations.filter((location) => location.active && location.id !== fromId),
   );
+
+  // Balances refresh after every move; keep the form's source on a location that still has
+  // stock (reopening the dialog used to be the only fix).
+  const sourceIds = sources.map((location) => location.id).join(",");
+  useEffect(() => {
+    if (!item) return;
+    const next = reconcileMoveSource({ fromId, toId }, sourceIds ? sourceIds.split(",") : []);
+    if (next.fromId !== fromId) {
+      setFromId(next.fromId);
+      setToId(next.toId);
+    }
+  }, [item, sourceIds, fromId, toId]);
 
   useEffect(() => {
     if (!item) return;

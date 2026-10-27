@@ -279,7 +279,8 @@ test("backend plumbing preserves new IDs and powers the Phase 5A.8 search UI", (
     assert.match(server, new RegExp(property));
   }
   assert.match(server, /from\("catalog_vendor_products"\)/);
-  assert.match(server, /from\("inventory_items"\)/);
+  // Phase 7A.2-0: request-line inventory identities come from a membership-checked function.
+  assert.match(server, /rpc\("get_supply_request_inventory_identities"/);
   assert.match(server, /export const searchSupplyRequestProductsFn/);
   assert.match(server, /unifiedSupplyRequestSearchResultSchema\.array\(\)\.parse/);
   assert.match(server, /rpc\(\s*"search_supply_request_products"/);

@@ -29,8 +29,9 @@ function uniqueIds(values: Array<string | null | undefined>) {
 }
 
 // One bounded query per identity table, under the caller's row-level security. Staff
-// see only their organization's products and active inventory; the global catalog is
-// readable to every authenticated user, as search already exposes it.
+// see only their organization's products and active inventory (inventory through
+// get_supply_request_inventory_identities: staff cannot read inventory_items itself); the
+// global catalog is readable to every authenticated user, as search already exposes it.
 async function loadAvailabilityLookups(
   db: Db,
   organizationId: string,
@@ -49,12 +50,10 @@ async function loadAvailabilityLookups(
           .in("id", productIds)
       : empty,
     inventoryIds.length
-      ? db
-          .from("inventory_items")
-          .select("id,name,unit,manufacturer,vendor_name,sku")
-          .eq("organization_id", organizationId)
-          .eq("active", true)
-          .in("id", inventoryIds)
+      ? db.rpc("get_supply_request_inventory_identities", {
+          _organization_id: organizationId,
+          _inventory_item_ids: inventoryIds,
+        })
       : empty,
     catalogIds.length
       ? db
@@ -78,8 +77,11 @@ async function loadAvailabilityLookups(
     products: new Map(
       ((products.data ?? []) as ProductAvailabilityRow[]).map((row) => [row.id, row]),
     ),
+    // Only active items can be requested again, whatever the caller's role.
     inventory: new Map(
-      ((inventory.data ?? []) as InventoryAvailabilityRow[]).map((row) => [row.id, row]),
+      ((inventory.data ?? []) as Array<InventoryAvailabilityRow & { active: boolean }>)
+        .filter((row) => row.active)
+        .map(({ active: _active, ...row }) => [row.id, row]),
     ),
     catalog: new Map(
       ((catalog.data ?? []) as CatalogAvailabilityRow[]).map((row) => [row.id, row]),

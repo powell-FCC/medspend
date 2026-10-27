@@ -19,9 +19,15 @@ import {
   setInventoryLocationActiveFn,
   updateInventoryLocationFn,
 } from "@/lib/inventory.functions";
+import {
+  issueLocationLabelFn,
+  listLocationCountStatusFn,
+  revokeLocationLabelsFn,
+} from "@/lib/inventory-count.functions";
 import type {
   InventoryItem,
   InventoryItemInput,
+  InventoryLocation,
   LocationAdjustmentReason,
 } from "@/types/inventory";
 import { CategoryDialog } from "./CategoryDialog";
@@ -29,6 +35,7 @@ import { InventoryItemDialog } from "./InventoryItemDialog";
 import { InventoryLocationsPanel } from "./InventoryLocationsPanel";
 import { ItemLocationsDialog } from "./ItemLocationsDialog";
 import { InventoryTable } from "./InventoryTable";
+import { QrLabelDialog } from "./QrLabelDialog";
 import { QuantityAdjustmentDialog } from "./QuantityAdjustmentDialog";
 
 export function InventoryPage() {
@@ -44,6 +51,10 @@ export function InventoryPage() {
   const updateLocation = useServerFn(updateInventoryLocationFn);
   const setLocationActive = useServerFn(setInventoryLocationActiveFn);
   const moveStock = useServerFn(moveInventoryStockFn);
+  const listCountStatus = useServerFn(listLocationCountStatusFn);
+  const issueLabel = useServerFn(issueLocationLabelFn);
+  const revokeLabels = useServerFn(revokeLocationLabelsFn);
+  const [labelLocation, setLabelLocation] = useState<InventoryLocation>();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [status, setStatus] = useState<"all" | "active" | "archived">("active");
@@ -63,8 +74,21 @@ export function InventoryPage() {
       }),
     enabled: Boolean(active?.organizationId && owner),
   });
+  const countStatus = useQuery({
+    queryKey: ["inventory-count-status", active?.organizationId],
+    queryFn: () => listCountStatus({ data: { organizationId: active!.organizationId } }),
+    enabled: Boolean(active?.organizationId && owner),
+  });
+  const countStatusByLocation = new Map(
+    (countStatus.data ?? []).map((row) => [row.locationId, row] as const),
+  );
   const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: ["inventory", active?.organizationId] });
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["inventory", active?.organizationId] }),
+      queryClient.invalidateQueries({
+        queryKey: ["inventory-count-status", active?.organizationId],
+      }),
+    ]);
   const locations = inventory.data?.locations ?? [];
   const balances = inventory.data?.balances ?? [];
   // Keep the open locations dialog on the refreshed item row after a move.
@@ -182,8 +206,35 @@ export function InventoryPage() {
             });
             await refresh();
           }}
+          countStatus={countStatus.isSuccess ? countStatusByLocation : undefined}
+          onQrLabel={setLabelLocation}
         />
       )}
+      <QrLabelDialog
+        location={labelLocation}
+        activeLabelCount={
+          labelLocation ? (countStatusByLocation.get(labelLocation.id)?.activeLabelCount ?? 0) : 0
+        }
+        origin={typeof window === "undefined" ? "" : window.location.origin}
+        onOpenChange={(open) => !open && setLabelLocation(undefined)}
+        onIssue={async () => {
+          const label = await issueLabel({
+            data: { organizationId: active.organizationId, locationId: labelLocation!.id },
+          });
+          await refresh();
+          return label;
+        }}
+        onReplace={async () => {
+          await revokeLabels({
+            data: { organizationId: active.organizationId, locationId: labelLocation!.id },
+          });
+          const label = await issueLabel({
+            data: { organizationId: active.organizationId, locationId: labelLocation!.id },
+          });
+          await refresh();
+          return label;
+        }}
+      />
       {inventory.isLoading && <InventoryLoading />}
       {inventory.isError && (
         <InventoryError

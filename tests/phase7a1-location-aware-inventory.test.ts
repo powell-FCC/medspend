@@ -636,7 +636,9 @@ test("the 7A.1 app calls only location-aware RPCs, and item edits never change q
   assert.match(types, /move_inventory_stock: \{/);
   assert.match(page, /InventoryLocationsPanel/);
   assert.match(page, /ItemLocationsDialog/);
-  assert.doesNotMatch(page + server, /qr|scanner|physical count/i);
+  // Phase 7A.2 adds QR labels to the page; the 7A.1 inventory server module stays count-free
+  // (counts live in inventory-count.functions.ts).
+  assert.doesNotMatch(server, /qr|scanner|physical count/i);
 });
 
 // ---------------------------------------------------------------------------------------
