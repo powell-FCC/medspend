@@ -169,6 +169,30 @@ export function buildCountSubmission(
   });
 }
 
+// The page a count form was started from. A save is checked against the versions staff were
+// shown, so a background refetch (an auth refresh invalidating every query, say) never swaps
+// the form's items, entries or versions: only data loaded after an explicit reload does.
+export interface PinnedCountPage {
+  page: CountPage;
+  loadedAt: number;
+}
+
+export function nextPinnedCountPage(
+  pinned: PinnedCountPage | null,
+  latest: { page: CountPage | undefined; loadedAt: number },
+  reloadRequestedAt: number | null,
+): PinnedCountPage | null {
+  if (!latest.page) return pinned;
+  if (!pinned) return { page: latest.page, loadedAt: latest.loadedAt };
+  if (
+    reloadRequestedAt !== null &&
+    latest.loadedAt >= reloadRequestedAt &&
+    latest.loadedAt !== pinned.loadedAt
+  )
+    return { page: latest.page, loadedAt: latest.loadedAt };
+  return pinned;
+}
+
 export type CountErrorKind = "stale" | "unavailable" | "forbidden" | "other";
 
 export function countErrorKind(message: string): CountErrorKind {

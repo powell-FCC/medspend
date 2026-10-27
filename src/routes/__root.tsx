@@ -12,7 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
-import { takePendingAuthRedirect } from "@/lib/auth-ux";
+import { authEventInvalidates, takePendingAuthRedirect } from "@/lib/auth-ux";
 
 function NotFoundComponent() {
   return (
@@ -119,8 +119,11 @@ function RootComponent() {
   const router = useRouter();
 
   useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
+    let userId: string | null | undefined;
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      const previousUserId = userId;
+      userId = session?.user?.id ?? null;
+      if (!authEventInvalidates(event, previousUserId, userId)) return;
       router.invalidate();
       if (event !== "SIGNED_OUT") queryClient.invalidateQueries();
     });
