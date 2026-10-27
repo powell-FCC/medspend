@@ -83,6 +83,42 @@ AS $$
     'transfers', (SELECT count(*) FROM public.inventory_transfers WHERE organization_id = _organization))
 $$;
 
+-- A zero-change physical_count checkpoint for one item, dated _at, written as postgres. On
+-- the 7A.1 schema it is a bare ledger row; once Phase 7A.2 exists, where every
+-- physical_count row belongs to a count line, it is a one-line count session.
+CREATE FUNCTION pg_temp.checkpoint(_item uuid, _location uuid, _quantity numeric, _at timestamptz)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  _org uuid := '7a100000-0000-4000-8000-000000000101';
+  _owner uuid := '7a100000-0000-4000-8000-000000000001';
+BEGIN
+  IF pg_catalog.to_regclass('public.inventory_count_sessions') IS NULL THEN
+    INSERT INTO public.inventory_adjustments (organization_id, inventory_item_id, inventory_location_id, adjustment_amount,
+      previous_quantity, new_quantity, reason, created_by, source_type, created_at)
+    VALUES (_org, _item, _location, 0, _quantity, _quantity, 'Correction', _owner, 'physical_count', _at);
+    RETURN;
+  END IF;
+  EXECUTE $sql$
+    WITH session AS (
+      INSERT INTO public.inventory_count_sessions (organization_id, inventory_location_id, counted_by, submitted_at,
+        line_count, changed_count, idempotency_key, request_hash)
+      VALUES ($1, $3, $2, $5, 1, 0, 'phase7a1-checkpoint-' || $4::text || '-' || $3::text, repeat('0', 64))
+      RETURNING id),
+    line AS (
+      INSERT INTO public.inventory_count_lines (organization_id, count_session_id, inventory_item_id, inventory_location_id,
+        previous_quantity, counted_quantity, delta, observed_version, item_name, item_unit, created_at)
+      SELECT $1, session.id, $4, $3, 0, 0, 0, 1, item.name, item.unit, $5
+      FROM session, public.inventory_items item WHERE item.id = $4
+      RETURNING id)
+    INSERT INTO public.inventory_adjustments (organization_id, inventory_item_id, inventory_location_id, adjustment_amount,
+      previous_quantity, new_quantity, reason, created_by, source_type, created_at, inventory_count_line_id)
+    SELECT $1, $4, $3, 0, $6, $6, 'Physical count', $2, 'physical_count', $5, line.id FROM line
+  $sql$ USING _org, _owner, _location, _item, _at, _quantity;
+END;
+$$;
+
 CREATE TEMP TABLE phase7a1_snapshots (name text PRIMARY KEY, value jsonb) ON COMMIT DROP;
 GRANT ALL ON phase7a1_snapshots TO authenticated;
 
@@ -645,10 +681,7 @@ SELECT pg_temp.assert(EXISTS (SELECT 1 FROM public.invoices WHERE id = '7a100000
 
 -- After moving stock back, deletion works and removes the receipt from Unassigned only.
 -- A physical count dated before the receipt does not block it.
-INSERT INTO public.inventory_adjustments (organization_id, inventory_item_id, inventory_location_id, adjustment_amount,
-  previous_quantity, new_quantity, reason, created_by, source_type, created_at)
-VALUES ('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000501', pg_temp.loc('l2'), 0,
-  0, 0, 'Correction', '7a100000-0000-4000-8000-000000000001', 'physical_count', now() - interval '1 day');
+SELECT pg_temp.checkpoint('7a100000-0000-4000-8000-000000000501', pg_temp.loc('l2'), 0, now() - interval '1 day');
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000001');
 SELECT public.move_inventory_stock('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000501',
@@ -673,10 +706,7 @@ END
 $check_delete$;
 
 -- J. A physical count at any location after the receipt blocks deleting that invoice.
-INSERT INTO public.inventory_adjustments (organization_id, inventory_item_id, inventory_location_id, adjustment_amount,
-  previous_quantity, new_quantity, reason, created_by, source_type)
-VALUES ('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000502', pg_temp.loc('l1'), 0,
-  4, 4, 'Correction', '7a100000-0000-4000-8000-000000000001', 'physical_count');
+SELECT pg_temp.checkpoint('7a100000-0000-4000-8000-000000000502', pg_temp.loc('l1'), 4, now());
 INSERT INTO phase7a1_snapshots VALUES ('before_checkpoint_delete', pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101'));
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000001');

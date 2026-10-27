@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Runs tests/phase7a1-old-app-compat.test.ts twice against disposable local stacks (Postgres +
-# PostgREST): first on a database migrated to main only (control), then on one with the Phase
-# 7A.1 migration applied. Both runs replay the deployed application's exact inventory, posting,
-# deletion and stocking calls; both must pass.
+# Runs tests/phase7a1-old-app-compat.test.ts against disposable local stacks (Postgres +
+# PostgREST): on a database migrated to main before 7A.1 (control), with the Phase 7A.1
+# migration applied, and with the Phase 7A.2 count migration applied as well (the state
+# production is in between that migration and the 7A.2 application deploy; the staff read
+# hardening runs only after the deploy). Every run replays the deployed 7A.1 application's
+# exact inventory, posting, deletion, stocking and staff calls; all must pass.
 #
 # Nothing here reads .env files or talks to a hosted project. Containers listen on 127.0.0.1
 # only and are removed when the script exits.
@@ -17,6 +19,7 @@ db_port="${MEDSPEND_7A1_COMPAT_DB_PORT:-55480}"
 rest_port="${MEDSPEND_7A1_COMPAT_REST_PORT:-55481}"
 jwt_secret="local-test-only-jwt-secret-not-used-anywhere-else"
 target="20261021120000_phase7a1_location_aware_inventory.sql"
+counts="20261027120000_phase7a2_inventory_physical_counts.sql"
 export PGPASSWORD=postgres PGHOST=127.0.0.1 PGPORT="$db_port" PGOPTIONS="-c client_min_messages=warning"
 
 cleanup() { docker rm -f "$rest_container" "$db_container" >/dev/null 2>&1 || true; }
@@ -41,8 +44,14 @@ run_stack() {
   # Fixture history is written by main's own functions, before 7A.1, as in production.
   psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$root/supabase/tests/integration/phase7a1_backfill_fixture.sql" >/dev/null
   psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$root/supabase/tests/integration/phase7a1_old_app_compat_fixture.sql" >/dev/null
-  if [ "$schema" = "7a1" ]; then
+  if [ "$schema" != "main" ]; then
     psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$root/supabase/migrations/$target" >/dev/null
+  fi
+  if [ "$schema" = "7a2" ]; then
+    for migration in "$root"/supabase/migrations/*.sql; do
+      [[ "$(basename "$migration")" > "$target" && ! "$(basename "$migration")" > "$counts" ]] || continue
+      psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$migration" >/dev/null
+    done
   fi
   docker run -d --name "$rest_container" --network "container:$db_container" \
     -e PGRST_DB_URI="postgres://authenticator:local-test-only@127.0.0.1:5432/postgres" \
@@ -61,4 +70,6 @@ echo "=== control: main schema"
 run_stack main
 echo "=== Phase 7A.1 applied"
 run_stack 7a1
-echo "run_phase7a1_old_app_compat: both runs passed"
+echo "=== Phase 7A.2 count migration applied (before the hardening step)"
+run_stack 7a2
+echo "run_phase7a1_old_app_compat: all three runs passed"
