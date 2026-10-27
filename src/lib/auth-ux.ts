@@ -44,6 +44,20 @@ export function takePendingAuthRedirect(
   }
 }
 
+// Which auth events refetch the app. supabase-js also sends SIGNED_IN when a hidden tab
+// becomes visible and it recovers the same session; nobody signed in, so nothing reloads
+// (reloading would also restart an open inventory count from the newest versions). A
+// SIGNED_IN before the first session is known, or for a different user, still reloads.
+export function authEventInvalidates(
+  event: string,
+  previousUserId: string | null | undefined,
+  nextUserId: string | null,
+): boolean {
+  if (event === "SIGNED_OUT" || event === "USER_UPDATED") return true;
+  if (event !== "SIGNED_IN") return false;
+  return previousUserId === undefined || previousUserId !== nextUserId;
+}
+
 export function confirmationRedirectUrl(origin: string, redirect?: string): string {
   const url = new URL("/auth/confirm", origin);
   const safeRedirect = safeAuthRedirect(redirect);
