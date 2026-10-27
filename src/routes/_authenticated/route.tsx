@@ -20,14 +20,20 @@ export const Route = createFileRoute("/_authenticated")({
   ),
 });
 
-const ADMIN_ROUTES = ["/budget-purchasing", "/budget", "/dashboard", "/inventory", "/upload", "/purchases", "/invoices", "/products", "/catalog-vendors", "/vendors", "/supply-requests", "/settings"];
-const STAFF_ROUTES = ["/staff", "/profile"];
+// /count (physical inventory counts) belongs to every role: owners and admins count too.
+const ADMIN_ROUTES = ["/budget-purchasing", "/budget", "/dashboard", "/inventory", "/upload", "/purchases", "/invoices", "/products", "/catalog-vendors", "/vendors", "/supply-requests", "/settings", "/count"];
+const STAFF_ROUTES = ["/staff", "/profile", "/count"];
 
 function isAdminPath(p: string) {
   return ADMIN_ROUTES.some((r) => p === r || p.startsWith(r + "/"));
 }
 function isStaffPath(p: string) {
   return STAFF_ROUTES.some((r) => p === r || p.startsWith(r + "/"));
+}
+// A scanned QR label (/count/<token>) chooses its own organization once membership is
+// verified, so it must not be sent through /select-organization first and lose its path.
+function isCountLabelPath(p: string) {
+  return /^\/count\/[A-Za-z0-9_-]{43}\/?$/.test(p);
 }
 
 function ShellSwitcher() {
@@ -43,7 +49,9 @@ function ShellSwitcher() {
       return;
     }
     if (memberships.length > 1 && !active) {
-      if (pathname !== "/select-organization") navigate({ to: "/select-organization", replace: true });
+      if (pathname !== "/select-organization" && !isCountLabelPath(pathname)) {
+        navigate({ to: "/select-organization", replace: true });
+      }
       return;
     }
   }, [loading, memberships, active, pathname, navigate]);
@@ -76,6 +84,7 @@ function ShellSwitcher() {
     return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Redirecting…</div>;
   }
   if (!active) {
+    if (isCountLabelPath(pathname)) return <Outlet />;
     return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Select an organization…</div>;
   }
 

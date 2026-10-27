@@ -19,7 +19,7 @@ if (configured && !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(REST_URL)) {
   throw new Error(`Refusing to run integration tests against a non-local address: ${REST_URL}`);
 }
 const skip = configured ? false : "needs supabase/tests/run_phase7a1_old_app_compat.sh";
-const migrated = SCHEMA === "7a1";
+const migrated = SCHEMA === "7a1" || SCHEMA === "7a2";
 
 const id = (suffix: string) => `7a1b0000-0000-4000-8000-000000000${suffix}`;
 const ORG = id("101");

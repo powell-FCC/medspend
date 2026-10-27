@@ -29,11 +29,14 @@ import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedVendorsRouteImport } from './routes/_authenticated/vendors'
 import { Route as AuthConfirmRouteImport } from './routes/auth_.confirm'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
+import { Route as AuthenticatedCountIndexRouteImport } from './routes/_authenticated/count.index'
+import { Route as AuthenticatedCountTokenRouteImport } from './routes/_authenticated/count.$token'
 import { Route as AuthenticatedInvoicesIndexRouteImport } from './routes/_authenticated/invoices.index'
 import { Route as AuthenticatedInvoicesInvoiceIdRouteImport } from './routes/_authenticated/invoices.$invoiceId'
 import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authenticated/staff/index'
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
 import { Route as AuthenticatedStaffRequestsRouteImport } from './routes/_authenticated/staff/requests'
+import { Route as AuthenticatedCountLocationLocationIdRouteImport } from './routes/_authenticated/count.location.$locationId'
 import { Route as AuthenticatedStaffRequestsIdRouteImport } from './routes/_authenticated/staff/requests.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -139,6 +142,16 @@ const JoinTokenRoute = JoinTokenRouteImport.update({
   path: '/join/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedCountIndexRoute = AuthenticatedCountIndexRouteImport.update({
+  id: '/count/',
+  path: '/count/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCountTokenRoute = AuthenticatedCountTokenRouteImport.update({
+  id: '/count/$token',
+  path: '/count/$token',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedInvoicesIndexRoute =
   AuthenticatedInvoicesIndexRouteImport.update({
     id: '/',
@@ -168,6 +181,12 @@ const AuthenticatedStaffRequestsRoute =
     path: '/staff/requests',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedCountLocationLocationIdRoute =
+  AuthenticatedCountLocationLocationIdRouteImport.update({
+    id: '/count/location/$locationId',
+    path: '/count/location/$locationId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedStaffRequestsIdRoute =
   AuthenticatedStaffRequestsIdRouteImport.update({
     id: '/$id',
@@ -195,11 +214,14 @@ export interface FileRoutesByFullPath {
   '/vendors': typeof AuthenticatedVendorsRoute
   '/auth/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
+  '/count/$token': typeof AuthenticatedCountTokenRoute
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
+  '/count/': typeof AuthenticatedCountIndexRoute
   '/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/staff/': typeof AuthenticatedStaffIndexRoute
+  '/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
   '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRoutesByTo {
@@ -221,11 +243,14 @@ export interface FileRoutesByTo {
   '/vendors': typeof AuthenticatedVendorsRoute
   '/auth/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
+  '/count/$token': typeof AuthenticatedCountTokenRoute
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
+  '/count': typeof AuthenticatedCountIndexRoute
   '/invoices': typeof AuthenticatedInvoicesIndexRoute
   '/staff': typeof AuthenticatedStaffIndexRoute
+  '/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
   '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRoutesById {
@@ -250,11 +275,14 @@ export interface FileRoutesById {
   '/_authenticated/vendors': typeof AuthenticatedVendorsRoute
   '/auth_/confirm': typeof AuthConfirmRoute
   '/join/$token': typeof JoinTokenRoute
+  '/_authenticated/count/$token': typeof AuthenticatedCountTokenRoute
   '/_authenticated/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/_authenticated/staff/request': typeof AuthenticatedStaffRequestRoute
   '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
+  '/_authenticated/count/': typeof AuthenticatedCountIndexRoute
   '/_authenticated/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/_authenticated/staff/': typeof AuthenticatedStaffIndexRoute
+  '/_authenticated/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
   '/_authenticated/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRouteTypes {
@@ -279,11 +307,14 @@ export interface FileRouteTypes {
     | '/vendors'
     | '/auth/confirm'
     | '/join/$token'
+    | '/count/$token'
     | '/invoices/$invoiceId'
     | '/staff/request'
     | '/staff/requests'
+    | '/count/'
     | '/invoices/'
     | '/staff/'
+    | '/count/location/$locationId'
     | '/staff/requests/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -305,11 +336,14 @@ export interface FileRouteTypes {
     | '/vendors'
     | '/auth/confirm'
     | '/join/$token'
+    | '/count/$token'
     | '/invoices/$invoiceId'
     | '/staff/request'
     | '/staff/requests'
+    | '/count'
     | '/invoices'
     | '/staff'
+    | '/count/location/$locationId'
     | '/staff/requests/$id'
   id:
     | '__root__'
@@ -333,11 +367,14 @@ export interface FileRouteTypes {
     | '/_authenticated/vendors'
     | '/auth_/confirm'
     | '/join/$token'
+    | '/_authenticated/count/$token'
     | '/_authenticated/invoices/$invoiceId'
     | '/_authenticated/staff/request'
     | '/_authenticated/staff/requests'
+    | '/_authenticated/count/'
     | '/_authenticated/invoices/'
     | '/_authenticated/staff/'
+    | '/_authenticated/count/location/$locationId'
     | '/_authenticated/staff/requests/$id'
   fileRoutesById: FileRoutesById
 }
@@ -491,6 +528,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JoinTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/count/': {
+      id: '/_authenticated/count/'
+      path: '/count'
+      fullPath: '/count/'
+      preLoaderRoute: typeof AuthenticatedCountIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/count/$token': {
+      id: '/_authenticated/count/$token'
+      path: '/count/$token'
+      fullPath: '/count/$token'
+      preLoaderRoute: typeof AuthenticatedCountTokenRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/invoices/': {
       id: '/_authenticated/invoices/'
       path: '/'
@@ -524,6 +575,13 @@ declare module '@tanstack/react-router' {
       path: '/staff/requests'
       fullPath: '/staff/requests'
       preLoaderRoute: typeof AuthenticatedStaffRequestsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/count/location/$locationId': {
+      id: '/_authenticated/count/location/$locationId'
+      path: '/count/location/$locationId'
+      fullPath: '/count/location/$locationId'
+      preLoaderRoute: typeof AuthenticatedCountLocationLocationIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/staff/requests/$id': {
@@ -581,9 +639,12 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedSupplyRequestsRoute: typeof AuthenticatedSupplyRequestsRoute
   AuthenticatedUploadRoute: typeof AuthenticatedUploadRoute
   AuthenticatedVendorsRoute: typeof AuthenticatedVendorsRoute
+  AuthenticatedCountTokenRoute: typeof AuthenticatedCountTokenRoute
   AuthenticatedStaffRequestRoute: typeof AuthenticatedStaffRequestRoute
   AuthenticatedStaffRequestsRoute: typeof AuthenticatedStaffRequestsRouteWithChildren
+  AuthenticatedCountIndexRoute: typeof AuthenticatedCountIndexRoute
   AuthenticatedStaffIndexRoute: typeof AuthenticatedStaffIndexRoute
+  AuthenticatedCountLocationLocationIdRoute: typeof AuthenticatedCountLocationLocationIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -602,9 +663,13 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSupplyRequestsRoute: AuthenticatedSupplyRequestsRoute,
   AuthenticatedUploadRoute: AuthenticatedUploadRoute,
   AuthenticatedVendorsRoute: AuthenticatedVendorsRoute,
+  AuthenticatedCountTokenRoute: AuthenticatedCountTokenRoute,
   AuthenticatedStaffRequestRoute: AuthenticatedStaffRequestRoute,
   AuthenticatedStaffRequestsRoute: AuthenticatedStaffRequestsRouteWithChildren,
+  AuthenticatedCountIndexRoute: AuthenticatedCountIndexRoute,
   AuthenticatedStaffIndexRoute: AuthenticatedStaffIndexRoute,
+  AuthenticatedCountLocationLocationIdRoute:
+    AuthenticatedCountLocationLocationIdRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

@@ -14,6 +14,193 @@ export type Database = {
   }
   public: {
     Tables: {
+      inventory_count_lines: {
+        Row: {
+          count_session_id: string
+          counted_quantity: number
+          created_at: string
+          delta: number
+          id: string
+          inventory_item_id: string
+          inventory_location_id: string
+          item_name: string
+          item_sku: string | null
+          item_unit: string
+          observed_version: number
+          organization_id: string
+          previous_quantity: number
+        }
+        Insert: {
+          count_session_id: string
+          counted_quantity: number
+          created_at: string
+          delta: number
+          id?: string
+          inventory_item_id: string
+          inventory_location_id: string
+          item_name: string
+          item_sku?: string | null
+          item_unit: string
+          observed_version: number
+          organization_id: string
+          previous_quantity: number
+        }
+        Update: {
+          count_session_id?: string
+          counted_quantity?: number
+          created_at?: string
+          delta?: number
+          id?: string
+          inventory_item_id?: string
+          inventory_location_id?: string
+          item_name?: string
+          item_sku?: string | null
+          item_unit?: string
+          observed_version?: number
+          organization_id?: string
+          previous_quantity?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_count_lines_count_session_id_organization_id_inv_fkey"
+            columns: [
+              "count_session_id",
+              "organization_id",
+              "inventory_location_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "inventory_count_sessions"
+            referencedColumns: [
+              "id",
+              "organization_id",
+              "inventory_location_id",
+            ]
+          },
+          {
+            foreignKeyName: "inventory_count_lines_inventory_item_id_organization_id_fkey"
+            columns: ["inventory_item_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_count_lines_inventory_location_id_organization_i_fkey"
+            columns: ["inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_count_lines_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_count_sessions: {
+        Row: {
+          changed_count: number
+          counted_by: string
+          created_at: string
+          id: string
+          idempotency_key: string
+          inventory_location_id: string
+          line_count: number
+          organization_id: string
+          request_hash: string
+          submitted_at: string
+        }
+        Insert: {
+          changed_count: number
+          counted_by: string
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          inventory_location_id: string
+          line_count: number
+          organization_id: string
+          request_hash: string
+          submitted_at: string
+        }
+        Update: {
+          changed_count?: number
+          counted_by?: string
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          inventory_location_id?: string
+          line_count?: number
+          organization_id?: string
+          request_hash?: string
+          submitted_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_count_sessions_inventory_location_id_organizatio_fkey"
+            columns: ["inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_count_sessions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_location_labels: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          inventory_location_id: string
+          organization_id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          token_hash: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          inventory_location_id: string
+          organization_id: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          token_hash: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          inventory_location_id?: string
+          organization_id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_location_labels_inventory_location_id_organizati_fkey"
+            columns: ["inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_location_labels_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_budgets: {
         Row: { id: string; organization_id: string; name: string; period_start: string; period_end: string; amount: number; active: boolean; created_at: string; updated_at: string }
         Insert: { id?: string; organization_id: string; name: string; period_start: string; period_end: string; amount: number; active?: boolean; created_at?: string; updated_at?: string }
@@ -495,6 +682,7 @@ export type Database = {
           created_by: string
           id: string
           idempotency_key: string | null
+          inventory_count_line_id: string | null
           inventory_item_id: string
           inventory_location_id: string | null
           new_quantity: number
@@ -511,6 +699,7 @@ export type Database = {
           created_by: string
           id?: string
           idempotency_key?: string | null
+          inventory_count_line_id?: string | null
           inventory_item_id: string
           inventory_location_id?: string | null
           new_quantity: number
@@ -527,6 +716,7 @@ export type Database = {
           created_by?: string
           id?: string
           idempotency_key?: string | null
+          inventory_count_line_id?: string | null
           inventory_item_id?: string
           inventory_location_id?: string | null
           new_quantity?: number
@@ -538,6 +728,21 @@ export type Database = {
           source_type?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "inventory_adjustments_count_line_fk"
+            columns: [
+              "inventory_count_line_id",
+              "inventory_item_id",
+              "inventory_location_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "inventory_count_lines"
+            referencedColumns: [
+              "id",
+              "inventory_item_id",
+              "inventory_location_id",
+            ]
+          },
           {
             foreignKeyName: "inventory_adjustments_inventory_item_id_fkey"
             columns: ["inventory_item_id"]
@@ -2376,6 +2581,10 @@ export type Database = {
         Args: { _organization_id: string }
         Returns: string
       }
+      get_inventory_count_location: {
+        Args: { _inventory_location_id: string; _organization_id: string }
+        Returns: Json
+      }
       get_product_price_intelligence: {
         Args: { _organization_id: string; _product_id: string }
         Returns: Json
@@ -2401,6 +2610,18 @@ export type Database = {
         Args: { _organization_id: string; _request_id: string }
         Returns: { request_id: string; request_status: Database["public"]["Enums"]["supply_request_status"]; estimated_amount: number; pricing_status: string; total_item_count: number; priced_item_count: number; commitment_status: string | null; commitment_release_reason: string | null; budget_id: string | null; budget_name: string | null; budget_amount: number | null; actual_spend: number | null; committed_spend: number | null; available_amount: number | null; projected_available_after_approval: number | null }[]
       }
+      get_supply_request_inventory_identities: {
+        Args: { _inventory_item_ids: string[]; _organization_id: string }
+        Returns: {
+          active: boolean
+          id: string
+          manufacturer: string
+          name: string
+          sku: string
+          unit: string
+          vendor_name: string
+        }[]
+      }
       inventory_apply_balance_delta: {
         Args: {
           _delta: number
@@ -2409,6 +2630,27 @@ export type Database = {
           _organization_id: string
         }
         Returns: Json
+      }
+      issue_inventory_location_label: {
+        Args: { _inventory_location_id: string; _organization_id: string }
+        Returns: Json
+      }
+      list_countable_inventory_locations: {
+        Args: { _organization_id: string }
+        Returns: {
+          inventory_location_id: string
+          last_counted_at: string
+          name: string
+        }[]
+      }
+      list_inventory_location_count_status: {
+        Args: { _organization_id: string }
+        Returns: {
+          active_label_count: number
+          inventory_location_id: string
+          last_counted_at: string
+          last_label_issued_at: string
+        }[]
       }
       release_supply_request_commitment: {
         Args: { _organization_id: string; _request_id: string; _release_kind: string; _release_reason: string }
@@ -2559,6 +2801,11 @@ export type Database = {
           user_id: string
         }[]
       }
+      resolve_inventory_count_label: { Args: { _token: string }; Returns: Json }
+      revoke_inventory_location_labels: {
+        Args: { _inventory_location_id: string; _organization_id: string }
+        Returns: number
+      }
       set_inventory_location_active: {
         Args: {
           _active: boolean
@@ -2566,6 +2813,15 @@ export type Database = {
           _organization_id: string
         }
         Returns: undefined
+      }
+      submit_inventory_count: {
+        Args: {
+          _idempotency_key: string
+          _inventory_location_id: string
+          _lines: Json
+          _organization_id: string
+        }
+        Returns: Json
       }
       update_inventory_location: {
         Args: {

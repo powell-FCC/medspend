@@ -599,10 +599,14 @@ test("availability lookups stay inside the caller's organization and row-level s
     "export const getStaffQuickPicksFn",
   );
   assert.match(lookup, /from\("products"\)[\s\S]*?\.eq\("organization_id", organizationId\)/);
+  // Phase 7A.2-0: staff no longer read inventory_items directly; inventory identities come
+  // from a membership-checked function, and only active items can be requested again.
+  assert.doesNotMatch(lookup, /from\("inventory_items"\)/);
   assert.match(
     lookup,
-    /from\("inventory_items"\)[\s\S]*?\.eq\("organization_id", organizationId\)\s+\.eq\("active", true\)/,
+    /rpc\("get_supply_request_inventory_identities", \{\s+_organization_id: organizationId,/,
   );
+  assert.match(lookup, /\.filter\(\(row\) => row\.active\)/);
   assert.match(lookup, /rpc\("get_supply_request_product_specifications"/);
 });
 
@@ -654,7 +658,13 @@ test("staff routes reach no admin mutation, budget, purchasing or QR feature", (
       /decideSupplyRequestFn|updateRequestStatusFn|releaseSupplyRequestCommitmentFn|getSupplyRequestBudgetImpactFn|listOrgRequestsFn|getAdminSupplyRequestDashboardFn/,
       path,
     );
-    assert.doesNotMatch(source, /\bQR\b|camera|getUserMedia|inventory adjustment/i, path);
+    // Phase 7A.2: the Workspace links to Scan Inventory QR (/count); no camera, scanner or
+    // inventory adjustment code lives in the staff routes themselves.
+    assert.doesNotMatch(
+      source.replace(/Scan Inventory QR/g, ""),
+      /\bQR\b|camera|getUserMedia|inventory adjustment/i,
+      path,
+    );
     assert.doesNotMatch(source, /Needs attention/i, path);
   }
 });
@@ -707,7 +717,8 @@ test("the authenticated layout still sends owners and admins away from staff rou
     layout,
     /if \(isAdmin && pathname\.startsWith\("\/staff"\)\) \{\s+navigate\(\{ to: "\/dashboard", replace: true \}\);/,
   );
-  assert.match(layout, /const STAFF_ROUTES = \["\/staff", "\/profile"\];/);
+  // Phase 7A.2 adds /count, which every role may open; nothing else joins the staff routes.
+  assert.match(layout, /const STAFF_ROUTES = \["\/staff", "\/profile", "\/count"\];/);
 });
 
 // ---------------------------------------------------------------------------
@@ -819,7 +830,11 @@ test("staff workspace renders the request action, my requests and usual items", 
   assert.match(html, /Requested 4 times/);
   assert.match(html, /Recent/);
   assert.match(html, /aria-label="Add Quick 1"/);
-  assert.doesNotMatch(html, /Needs attention|Scan Inventory/i);
+  assert.doesNotMatch(html, /Needs attention/i);
+  // Phase 7A.2: the Scan Inventory QR action sits right after Request Supplies.
+  assert.match(html, /Scan Inventory QR/);
+  assert.ok(html.indexOf("Request Supplies") < html.indexOf("Scan Inventory QR"));
+  assert.ok(html.indexOf("Scan Inventory QR") < html.indexOf("My Requests"));
 });
 
 test("workspace loading, error and first-time empty states are visible", () => {

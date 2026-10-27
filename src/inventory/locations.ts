@@ -65,6 +65,35 @@ export function physicalLocationCount(
   ).length;
 }
 
+// Where an item's stock is, in one short label for the inventory table. Unassigned is named
+// whenever it holds some, so a split like 9 in Unassigned + 1 in a cabinet never reads as
+// "1 location".
+export function stockLocationLabel(
+  itemId: string,
+  locations: InventoryLocation[],
+  balances: InventoryLocationBalance[],
+): string {
+  const held = itemLocationBreakdown(itemId, locations, balances).filter(
+    (entry) => entry.quantity > 0,
+  );
+  if (held.length === 0) return "No stock";
+  const physical = held.filter((entry) => entry.location.kind !== "unassigned");
+  if (physical.length === 0) return "Unassigned";
+  const base = physical.length === 1 ? physical[0].location.name : `${physical.length} locations`;
+  return held.some((entry) => entry.location.kind === "unassigned") ? `${base} + Unassigned` : base;
+}
+
+// The move form after balances refresh: if the chosen source no longer holds stock (for
+// example the last unit just moved out), fall back to the first location that does and
+// clear the destination, so the shown and submitted source never disagree.
+export function reconcileMoveSource(
+  current: { fromId: string; toId: string },
+  sourceIds: string[],
+): { fromId: string; toId: string } {
+  if (current.fromId && sourceIds.includes(current.fromId)) return current;
+  return { fromId: sourceIds[0] ?? "", toId: "" };
+}
+
 export function canArchiveInventoryLocation(
   location: InventoryLocation,
   balances: InventoryLocationBalance[],

@@ -1,25 +1,38 @@
 import { useState } from "react";
-import { Archive, ArchiveRestore, Lock, MapPin, Pencil, Plus } from "lucide-react";
+import { Archive, ArchiveRestore, Lock, MapPin, Pencil, Plus, QrCode } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { canArchiveInventoryLocation, summarizeInventoryLocations } from "@/inventory/locations";
 import type { InventoryLocation, InventoryLocationBalance } from "@/types/inventory";
 
+export interface LocationCountStatus {
+  activeLabelCount: number;
+  lastCountedAt: string | null;
+}
+
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
 // Minimal owner administration of physical inventory locations (Phase 7A.1). Cabinets,
 // carts and rooms live here, never in Settings > Locations (sites and request destinations).
+// Phase 7A.2 adds each storage location's QR label and when it was last counted.
 export function InventoryLocationsPanel({
   locations,
   balances,
   onCreate,
   onRename,
   onSetActive,
+  countStatus,
+  onQrLabel,
 }: {
   locations: InventoryLocation[];
   balances: InventoryLocationBalance[];
   onCreate: (name: string) => Promise<void>;
   onRename: (location: InventoryLocation, name: string) => Promise<void>;
   onSetActive: (location: InventoryLocation, active: boolean) => Promise<void>;
+  countStatus?: ReadonlyMap<string, LocationCountStatus>;
+  onQrLabel?: (location: InventoryLocation) => void;
 }) {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -160,10 +173,30 @@ export function InventoryLocationsPanel({
                       {location.kind === "unassigned" &&
                         location.itemCount > 0 &&
                         ` · ${location.itemCount} item${location.itemCount === 1 ? "" : "s"}`}
+                      {location.kind === "storage" &&
+                        countStatus &&
+                        ` · ${(() => {
+                          const status = countStatus.get(location.id);
+                          return status?.lastCountedAt
+                            ? `Counted ${shortDate(status.lastCountedAt)}`
+                            : "Not counted yet";
+                        })()}`}
                     </p>
                   </div>
                   {location.kind !== "unassigned" && (
                     <div className="flex shrink-0 flex-wrap gap-1">
+                      {onQrLabel && location.active && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-9"
+                          onClick={() => onQrLabel(location)}
+                          aria-label={`QR label for ${location.name}`}
+                        >
+                          <QrCode className="mr-1 h-3.5 w-3.5" />
+                          QR label
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"

@@ -9,7 +9,9 @@ import {
   SIGNUP_CONFIRMATION_MESSAGE,
   authErrorMessage,
   confirmationRedirectUrl,
+  rememberPendingAuthRedirect,
   safeAuthRedirect,
+  takePendingAuthRedirect,
   validateCredentials,
 } from "@/lib/auth-ux";
 
@@ -96,13 +98,27 @@ function AuthPage() {
 
   async function google() {
     setErr(null);
+    // The provider returns to the site root; the root route resumes this path from here.
+    try {
+      rememberPendingAuthRedirect(window.sessionStorage, redirect);
+    } catch {
+      // Storage unavailable (private mode): sign-in still works, it just lands on the default page.
+    }
     const result = await lovable.auth.signInWithOAuth("google", {
       redirect_uri: window.location.origin,
     });
     if (result.error) setErr(String(result.error.message ?? "Google sign-in failed"));
     if (result.redirected) return;
     const { data } = await supabase.auth.getSession();
-    if (data.session) navigate({ to: safeAuthRedirect(redirect) ?? "/dashboard", replace: true });
+    if (data.session) {
+      let pending: string | undefined;
+      try {
+        pending = takePendingAuthRedirect(window.sessionStorage);
+      } catch {
+        pending = undefined;
+      }
+      navigate({ to: safeAuthRedirect(redirect) ?? pending ?? "/dashboard", replace: true });
+    }
   }
 
   return (

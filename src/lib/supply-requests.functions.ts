@@ -140,11 +140,13 @@ export async function loadRequestItems(
           .select("id,vendor_sku,package_status,package_quantity,package_unit,package_description,product:catalog_products!catalog_vendor_products_catalog_product_id_fkey(name,manufacturer),vendor:catalog_vendors!catalog_vendor_products_catalog_vendor_id_fkey(name)")
           .in("id", catalogVendorProductIds)
         : Promise.resolve({ data: [], error: null }),
+      // Staff cannot read inventory_items directly; this returns display fields only
+      // (active items, plus archived ones for owners), as the table policies did before.
       inventoryItemIds.length
-        ? db.from("inventory_items")
-          .select("id,name,unit,manufacturer,vendor_name,sku")
-          .eq("organization_id", organizationId)
-          .in("id", inventoryItemIds)
+        ? db.rpc("get_supply_request_inventory_identities", {
+            _organization_id: organizationId,
+            _inventory_item_ids: inventoryItemIds,
+          })
         : Promise.resolve({ data: [], error: null }),
       vendorProductIds.length
         ? db.from("vendor_products")
