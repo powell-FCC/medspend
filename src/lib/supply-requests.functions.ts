@@ -144,9 +144,9 @@ export async function loadRequestItems(
       // (active items, plus archived ones for owners), as the table policies did before.
       inventoryItemIds.length
         ? db.rpc("get_supply_request_inventory_identities", {
-          _organization_id: organizationId,
-          _inventory_item_ids: inventoryItemIds,
-        })
+            _organization_id: organizationId,
+            _inventory_item_ids: inventoryItemIds,
+          })
         : Promise.resolve({ data: [], error: null }),
       vendorProductIds.length
         ? db.from("vendor_products")
