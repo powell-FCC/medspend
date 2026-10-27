@@ -62,7 +62,8 @@ function ShellSwitcher() {
     const isAdmin = active.role === "owner" || active.role === "admin";
     if (isAdmin && pathname.startsWith("/staff")) {
       navigate({ to: "/dashboard", replace: true });
-    } else if (!isAdmin && isAdminPath(pathname)) {
+    } else if (!isAdmin && isAdminPath(pathname) && !isStaffPath(pathname)) {
+      // Paths in both lists (/count) belong to staff too: never bounce them to /staff.
       navigate({ to: "/staff", replace: true });
     } else if (pathname === "/onboarding" && memberships.length > 0) {
       navigate({ to: isAdmin ? "/dashboard" : "/staff", replace: true });
