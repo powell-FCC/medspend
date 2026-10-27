@@ -163,6 +163,35 @@ test("staff on any admin navigation route are redirected to /staff", () => {
   }
 });
 
+// /count is in both allowlists. Phase 7A.2 production acceptance found staff bounced from
+// every /count page (the Scan Inventory QR card and scanned labels) to /staff: the
+// admin-path redirect ran without consulting the staff allowlist.
+const countPaths = [
+  "/count",
+  `/count/${"A".repeat(21)}_-${"z".repeat(20)}`,
+  "/count/location/00000000-0000-4000-8000-000000000201",
+];
+
+test("staff reach every /count page in the staff shell without a redirect", () => {
+  for (const path of countPaths) {
+    const { html, navigations } = asRole("staff", path);
+    assert.deepEqual(navigations, [], `staff on ${path} was redirected`);
+    assert.match(html, /data-shell="staff"/, `staff on ${path}`);
+    assert.match(html, new RegExp(`data-outlet="${path}"`), `staff on ${path} rendered no page`);
+  }
+});
+
+test("owners and admins still reach every /count page in the admin shell", () => {
+  for (const path of countPaths) {
+    for (const role of ["owner", "admin"] as const) {
+      const { html, navigations } = asRole(role, path);
+      assert.deepEqual(navigations, [], `${role} on ${path} was redirected`);
+      assert.match(html, /data-shell="admin"/, `${role} on ${path}`);
+      assert.match(html, new RegExp(`data-outlet="${path}"`), `${role} on ${path}`);
+    }
+  }
+});
+
 test("existing layout states are unchanged", () => {
   assert.match(
     renderLayout("/catalog-vendors", { memberships: [], active: null, loading: true }).html,
