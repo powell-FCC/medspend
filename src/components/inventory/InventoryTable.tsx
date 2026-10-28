@@ -87,7 +87,9 @@ export function InventoryTable({
                     <div className="text-xs text-muted-foreground">{item.manufacturer}</div>
                   )}
                 </TableCell>
-                <TableCell className="font-mono text-xs">{item.sku || "—"}</TableCell>
+                <TableCell className="whitespace-nowrap font-mono text-xs">
+                  {item.sku || "—"}
+                </TableCell>
                 <TableCell>{item.category || "—"}</TableCell>
                 <TableCell>{item.vendorName || "—"}</TableCell>
                 <TableCell>

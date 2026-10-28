@@ -3,7 +3,12 @@ import { Ban, Loader2, Printer, QrCode, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { countLabelUrl } from "@/inventory/count";
 import { printableLabelHtml, qrLabelSvg } from "@/inventory/labels";
-import { formatWorkspaceDate, replaceLabelsCopy, revokeLabelsCopy } from "@/inventory/workspace";
+import {
+  formatWorkspaceDate,
+  replaceFailureMessage,
+  replaceLabelsCopy,
+  revokeLabelsCopy,
+} from "@/inventory/workspace";
 import type { WorkspaceLocation } from "@/types/inventory-workspace";
 
 type Busy = "issue" | "replace" | "revoke";
@@ -64,9 +69,8 @@ export function LocationLabelsPanel({
         setNotice("Every earlier label was revoked. Print the new label now.");
     } catch (cause) {
       // Replace is atomic: when it fails, the earlier labels are still active.
-      setError(
-        `${cause instanceof Error ? cause.message : "Could not issue the label."}${kind === "replace" ? " No label was revoked." : ""}`,
-      );
+      const message = cause instanceof Error ? cause.message : "Could not issue the label.";
+      setError(kind === "replace" ? replaceFailureMessage(message) : message);
     } finally {
       setBusy(undefined);
     }

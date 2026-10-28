@@ -17,6 +17,7 @@ import {
   canArchiveWorkspaceLocation,
   countAgeLabel,
   inventoryWorkspaceAccess,
+  replaceFailureMessage,
   replaceLabelsCopy,
   revokeLabelsCopy,
   stockPlacementLabel,
@@ -769,7 +770,7 @@ test("labels panel: owner controls on active locations, revoke-only on archived 
   const source = read("src/components/inventory/workspace/LocationLabelsPanel.tsx");
   assert.match(source, /revokeLabelsCopy\(location, count\)/);
   assert.match(source, /replaceLabelsCopy\(location, count\)/);
-  assert.match(source, /No label was revoked\./, "a failed Replace says nothing was revoked");
+  assert.match(source, /replaceFailureMessage/, "a failed Replace says nothing was revoked");
   assert.doesNotMatch(source, /Print another copy/, "another copy is always a newly issued label");
 });
 
@@ -798,5 +799,75 @@ test("archive dialog offers label revocation, unchecked by default", () => {
     source,
     /was archived, but its \$\{labels\} active label/,
     "a failed revoke reports the real state",
+  );
+});
+
+// ---------------------------------------------------------------------------------------
+// Preview review fixes: Locations containment at 768–1100px, SKUs, Replace failure copy.
+// ---------------------------------------------------------------------------------------
+test("locations grid scrolls inside its panel, never the page, and fits a 1024px viewport", () => {
+  const source = read("src/components/inventory/workspace/LocationsTable.tsx");
+  const template = source.match(/md:grid-cols-\[([^\]]+)\]/)![1].split("_");
+  const rem = (track: string) => Number((track.match(/([\d.]+)rem/) ?? [])[1]);
+  const columns = template.reduce((sum, track) => sum + rem(track), 0);
+  const gaps = (template.length - 1) * 0.75; // md:gap-3
+  const minWidth = Number(source.match(/md:min-w-\[([\d.]+)rem\]/)![1]);
+  assert.equal(columns + gaps + 2, minWidth, "min width is the grid's real width (px-4 padding)");
+  // At 1024px the workspace panel is 1024 - 2 * 32 (page padding) - 15 (scrollbar) = 945px wide.
+  assert.ok(minWidth * 16 <= 945, `${minWidth * 16}px fits the panel at 1024px`);
+  for (const canManage of [true, false]) {
+    const html = render(ui.LocationsTable, {
+      locations: [unassigned, storage, emptyLocation, archivedLocation],
+      canManage,
+      onRename: () => {},
+      onArchive: () => {},
+      onRestore: () => {},
+    });
+    assert.match(
+      html,
+      /<div class="overflow-x-auto rounded-xl border bg-card" data-testid="locations-table" role="region" aria-label="Locations" tabindex="0"><div class="md:min-w-\[57\.75rem\]">/,
+      "the grid sits in a scroll container like the Items and Stock tables",
+    );
+    const actions = (html.match(/aria-label="Actions for /g) ?? []).length;
+    assert.equal(
+      actions,
+      canManage ? 3 : 0,
+      canManage ? "every storage row keeps its actions" : "admins get none",
+    );
+    assert.doesNotMatch(
+      html,
+      canManage ? /aria-label="Actions for Unassigned"/ : /Rename|Restore|Archive \(/,
+    );
+  }
+});
+
+test("SKUs never break at the hyphen", () => {
+  const items = render(ui.InventoryTable, { items: [item], canManage: false });
+  assert.match(items, /<td class="[^"]*whitespace-nowrap font-mono text-xs[^"]*">T-1<\/td>/);
+  const stock = render(ui.LocationStockTable, {
+    location: storage,
+    rows: stockRows,
+    canManage: false,
+  });
+  assert.match(stock, /<td class="[^"]*whitespace-nowrap font-mono text-xs[^"]*">G-1<\/td>/);
+});
+
+test("a failed Replace reads as sentences and still says no label was revoked", () => {
+  assert.equal(replaceFailureMessage("Forced failure"), "Forced failure. No label was revoked.");
+  assert.equal(replaceFailureMessage("Forced failure."), "Forced failure. No label was revoked.");
+  assert.notEqual(
+    replaceFailureMessage("Forced failure."),
+    "Forced failure.. No label was revoked.",
+  );
+  assert.equal(replaceFailureMessage("Try again!"), "Try again! No label was revoked.");
+  assert.equal(
+    replaceFailureMessage("Restore Old Bin first?  "),
+    "Restore Old Bin first? No label was revoked.",
+  );
+  assert.equal(replaceFailureMessage(""), "Could not replace the labels. No label was revoked.");
+  const source = read("src/components/inventory/workspace/LocationLabelsPanel.tsx");
+  assert.match(
+    source,
+    /setError\(kind === "replace" \? replaceFailureMessage\(message\) : message\);/,
   );
 });

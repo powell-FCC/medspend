@@ -85,6 +85,13 @@ export function replaceLabelsCopy(location: Pick<WorkspaceLocation, "name">, cou
   return `${count} active label${count === 1 ? "" : "s"} for ${location.name} will stop working, and one new label is issued. Use this if a label was lost or photographed.`;
 }
 
+// Replace is atomic, so when it fails no earlier label was revoked. The error becomes a
+// sentence first, without doubling punctuation it already has.
+export function replaceFailureMessage(error: string) {
+  const message = error.trim() || "Could not replace the labels";
+  return `${/[.!?]$/.test(message) ? message : `${message}.`} No label was revoked.`;
+}
+
 // Client-side pre-check for archiving. The database is the authority (it re-checks stock
 // under a row lock); this only explains why the action is unavailable.
 export function canArchiveWorkspaceLocation(

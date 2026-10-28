@@ -15,8 +15,12 @@ import {
 } from "@/inventory/workspace";
 import type { WorkspaceLocation } from "@/types/inventory-workspace";
 
+// From md up the rows are a grid: 50.5rem of columns, 5.25rem of gaps and 2rem of padding,
+// so 57.75rem in all. That fits a 1024px viewport. Below it the grid scrolls inside the panel
+// (like the Items and Stock tables), never the page. Phones keep the card layout.
 const columns =
-  "md:grid md:grid-cols-[minmax(12rem,2fr)_6rem_6rem_6rem_minmax(10rem,1.5fr)_6rem_8rem_3rem] md:items-center md:gap-3";
+  "md:grid md:grid-cols-[minmax(10rem,2fr)_5.5rem_5.5rem_5.5rem_minmax(9rem,1.5fr)_5.5rem_7rem_2.5rem] md:items-center md:gap-3";
+const gridMinWidth = "md:min-w-[57.75rem]";
 
 // Unassigned first and visibly a system location; physical locations after it. Every value
 // is factual: there is no count cadence, so no fresh, due or overdue.
@@ -42,59 +46,67 @@ export function LocationsTable({
       </div>
     );
   return (
-    <div className="rounded-xl border bg-card" data-testid="locations-table">
-      <div
-        className={`hidden border-b px-4 py-2 text-xs font-medium text-muted-foreground ${columns}`}
-        aria-hidden="true"
-      >
-        <span>Location</span>
-        <span>Status</span>
-        <span>Items stocked</span>
-        <span>Countable</span>
-        <span>Last counted</span>
-        <span>Active labels</span>
-        <span>Last label issued</span>
-        <span />
+    <div
+      className="overflow-x-auto rounded-xl border bg-card"
+      data-testid="locations-table"
+      role="region"
+      aria-label="Locations"
+      tabIndex={0}
+    >
+      <div className={gridMinWidth}>
+        <div
+          className={`hidden border-b px-4 py-2 text-xs font-medium text-muted-foreground ${columns}`}
+          aria-hidden="true"
+        >
+          <span>Location</span>
+          <span>Status</span>
+          <span>Items stocked</span>
+          <span>Countable</span>
+          <span>Last counted</span>
+          <span>Active labels</span>
+          <span>Last label issued</span>
+          <span />
+        </div>
+        <ul className="divide-y">
+          {locations.map((location) =>
+            location.kind === "unassigned" ? (
+              <li
+                key={location.id}
+                data-location-kind="unassigned"
+                className={`bg-muted/40 px-4 py-3 ${columns}`}
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Link
+                    to="/inventory/locations/$locationId"
+                    params={{ locationId: location.id }}
+                    className="break-words font-medium hover:underline"
+                  >
+                    {location.name}
+                  </Link>
+                  <Badge variant="secondary" className="gap-1">
+                    <Lock className="h-3 w-3" />
+                    System
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground md:col-span-7 md:mt-0">
+                  Received stock not yet placed in a physical location · {location.stockedItemCount}{" "}
+                  item{location.stockedItemCount === 1 ? "" : "s"} · Not counted or labeled
+                </p>
+              </li>
+            ) : (
+              <StorageRow
+                key={location.id}
+                location={location}
+                canManage={canManage}
+                now={now}
+                onRename={onRename}
+                onArchive={onArchive}
+                onRestore={onRestore}
+              />
+            ),
+          )}
+        </ul>
       </div>
-      <ul className="divide-y">
-        {locations.map((location) =>
-          location.kind === "unassigned" ? (
-            <li
-              key={location.id}
-              data-location-kind="unassigned"
-              className={`bg-muted/40 px-4 py-3 ${columns}`}
-            >
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <Link
-                  to="/inventory/locations/$locationId"
-                  params={{ locationId: location.id }}
-                  className="break-words font-medium hover:underline"
-                >
-                  {location.name}
-                </Link>
-                <Badge variant="secondary" className="gap-1">
-                  <Lock className="h-3 w-3" />
-                  System
-                </Badge>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground md:col-span-7 md:mt-0">
-                Received stock not yet placed in a physical location · {location.stockedItemCount}{" "}
-                item{location.stockedItemCount === 1 ? "" : "s"} · Not counted or labeled
-              </p>
-            </li>
-          ) : (
-            <StorageRow
-              key={location.id}
-              location={location}
-              canManage={canManage}
-              now={now}
-              onRename={onRename}
-              onArchive={onArchive}
-              onRestore={onRestore}
-            />
-          ),
-        )}
-      </ul>
     </div>
   );
 }

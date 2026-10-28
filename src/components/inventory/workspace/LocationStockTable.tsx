@@ -70,7 +70,9 @@ export function LocationStockTable({
                     {!row.itemActive && <Badge variant="outline">Archived item</Badge>}
                   </div>
                 </TableCell>
-                <TableCell className="font-mono text-xs">{row.sku || "—"}</TableCell>
+                <TableCell className="whitespace-nowrap font-mono text-xs">
+                  {row.sku || "—"}
+                </TableCell>
                 <TableCell className="text-right font-semibold tabular-nums">
                   {formatQuantity(row.quantity)}
                 </TableCell>
