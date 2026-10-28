@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import {
   canStockCatalogResult,
@@ -17,7 +17,8 @@ const pagePath = new URL("src/components/catalog/CatalogAdminPage.tsx", root);
 const serverPath = new URL("src/lib/catalog.functions.ts", root);
 const shellPath = new URL("src/components/app/AdminAppShell.tsx", root);
 const stockDialogPath = new URL("src/components/catalog/CatalogStockDialog.tsx", root);
-const inventoryPagePath = new URL("src/components/inventory/InventoryPage.tsx", root);
+const inventoryWorkspacePath = new URL("src/inventory/workspace.ts", root);
+const inventoryWorkspaceDir = new URL("src/components/inventory/workspace/", root);
 
 function result(overrides: Partial<CatalogAdminResult> = {}): CatalogAdminResult {
   return {
@@ -271,7 +272,10 @@ test("products route preserves search, filters, and page state and has no catego
 test("admin navigation exposes Catalog on desktop and mobile while staff navigation is untouched", async () => {
   const shell = await readFile(shellPath, "utf8");
   assert.match(shell, /to: "\/products", label: "Catalog"/);
-  assert.match(shell, /to: "\/inventory", label: "Inventory", icon: Package, ownerOnly: true/);
+  // Phase 7B.1: Inventory is readable by admins; Upload and Invoices stay owner-only.
+  assert.match(shell, /to: "\/inventory", label: "Inventory", icon: Package \}/);
+  assert.match(shell, /to: "\/upload", label: "Upload Invoice", icon: Upload, ownerOnly: true/);
+  assert.match(shell, /to: "\/invoices", label: "Invoices", icon: FileText, ownerOnly: true/);
   assert.match(shell, /aria-label="Admin navigation"/);
   assert.match(
     shell,
@@ -282,11 +286,14 @@ test("admin navigation exposes Catalog on desktop and mobile while staff navigat
 });
 
 test("catalog stocking does not broaden owner-only inventory management", async () => {
-  const inventoryPage = await readFile(inventoryPagePath, "utf8");
-  assert.match(inventoryPage, /const owner = active\?\.role === ['"]owner['"]/);
-  assert.match(inventoryPage, /enabled: Boolean\(active\?\.organizationId && owner\)/);
-  assert.match(inventoryPage, /Only organization owners can manage inventory/);
-  assert.doesNotMatch(inventoryPage, /role === ['"]admin['"]|isCatalogAdminRole/);
+  // Phase 7B.1 lets admins read the Inventory workspace; managing it stays owner-only.
+  const access = await readFile(inventoryWorkspacePath, "utf8");
+  assert.match(access, /canManage: role === "owner"/);
+  assert.match(access, /canRead: role === "owner" \|\| role === "admin"/);
+  for (const file of await readdir(inventoryWorkspaceDir)) {
+    const source = await readFile(new URL(file, inventoryWorkspaceDir), "utf8");
+    assert.doesNotMatch(source, /isCatalogAdminRole|role === ['"]admin['"]/, file);
+  }
 });
 
 test("catalog UI renders provenance and lifecycle actions without optimistic table writes", async () => {

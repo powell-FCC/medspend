@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import { assertInventoryOwner } from "@/inventory/owner-access";
 import { getInventoryStatus } from "@/inventory/status";
 import { locationAdjustmentReasons } from "@/types/inventory";
 import type {
@@ -30,17 +31,8 @@ const itemInput = z.object({
   parLevel: z.number().nonnegative().optional().nullable(),
 });
 
-async function assertOwner(db: SupabaseClient<Database>, userId: string, organizationId: string) {
-  const { data, error } = await db
-    .from("organization_memberships")
-    .select("role")
-    .eq("organization_id", organizationId)
-    .eq("user_id", userId)
-    .eq("active", true)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (data?.role !== "owner") throw new Error("Forbidden: owner access required");
-}
+// Every inventory mutation is owner-only here and again inside its database function.
+const assertOwner = assertInventoryOwner;
 
 const toLocation = (
   row: Database["public"]["Tables"]["inventory_locations"]["Row"],

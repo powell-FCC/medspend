@@ -21,7 +21,8 @@ import { supabase } from "@/integrations/supabase/client";
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/budget-purchasing", label: "Budget & Purchasing", icon: Wallet },
-  { to: "/inventory", label: "Inventory", icon: Package, ownerOnly: true },
+  // Owners manage inventory; admins read it (Phase 7B.1). Upload and Invoices stay owner-only.
+  { to: "/inventory", label: "Inventory", icon: Package },
   { to: "/purchases", label: "Orders", icon: ShoppingCart },
   { to: "/vendors", label: "Vendors", icon: Building2 },
   { to: "/products", label: "Catalog", icon: LibraryBig },

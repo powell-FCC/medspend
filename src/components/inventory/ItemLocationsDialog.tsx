@@ -18,7 +18,11 @@ import {
   sortInventoryLocations,
   validateMove,
 } from "@/inventory/locations";
-import type { InventoryItem, InventoryLocation, InventoryLocationBalance } from "@/types/inventory";
+import type {
+  InventoryItemRef,
+  InventoryLocationBalance,
+  InventoryLocationRef,
+} from "@/types/inventory";
 
 export interface MoveStockInput {
   fromId: string;
@@ -40,8 +44,8 @@ export function ItemLocationsDialog({
   onOpenChange,
   onMove,
 }: {
-  item?: InventoryItem;
-  locations: InventoryLocation[];
+  item?: InventoryItemRef;
+  locations: InventoryLocationRef[];
   balances: InventoryLocationBalance[];
   onOpenChange: (open: boolean) => void;
   onMove: (input: MoveStockInput) => Promise<void>;

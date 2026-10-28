@@ -15,44 +15,40 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getInventoryStatus, inventoryStatusLabel } from "@/inventory/status";
-import { formatQuantity, stockLocationLabel } from "@/inventory/locations";
-import type { InventoryItem, InventoryLocation, InventoryLocationBalance } from "@/types/inventory";
+import { inventoryStatusLabel } from "@/inventory/status";
+import { formatQuantity } from "@/inventory/locations";
+import { stockPlacementLabel } from "@/inventory/workspace";
+import type { WorkspaceItem } from "@/types/inventory-workspace";
+import { inventoryStatusTones } from "./status-tones";
 
-const tones = {
-  healthy: "bg-emerald-100 text-emerald-800",
-  low: "bg-amber-100 text-amber-800",
-  critical: "bg-red-100 text-red-800",
-  inactive: "bg-slate-100 text-slate-700",
-};
-
+// Items with their organization quantity and where it is. Owners get the row actions;
+// admins (canManage false) get the same rows with none.
 export function InventoryTable({
   items,
-  locations,
-  balances,
+  canManage,
   onEdit,
   onArchive,
   onAdjust,
   onLocations,
 }: {
-  items: InventoryItem[];
-  locations: InventoryLocation[];
-  balances: InventoryLocationBalance[];
-  onEdit: (item: InventoryItem) => void;
-  onArchive: (item: InventoryItem) => void;
-  onAdjust: (item: InventoryItem) => void;
-  onLocations: (item: InventoryItem) => void;
+  items: WorkspaceItem[];
+  canManage: boolean;
+  onEdit?: (item: WorkspaceItem) => void;
+  onArchive?: (item: WorkspaceItem) => void;
+  onAdjust?: (item: WorkspaceItem) => void;
+  onLocations?: (item: WorkspaceItem) => void;
 }) {
-  const placement = (item: InventoryItem) => stockLocationLabel(item.id, locations, balances);
   if (!items.length)
     return (
       <div className="rounded-xl border border-dashed bg-card px-6 py-16 text-center">
         <p className="font-medium">No inventory items found</p>
-        <p className="mt-1 text-sm text-muted-foreground">Add an item or adjust the filters.</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {canManage ? "Add an item or adjust the filters." : "Adjust the filters."}
+        </p>
       </div>
     );
   return (
-    <div className="overflow-hidden rounded-xl border bg-card">
+    <div className="overflow-x-auto rounded-xl border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
@@ -64,14 +60,25 @@ export function InventoryTable({
             <TableHead>Unit</TableHead>
             <TableHead>Par Level</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead className="w-12">
-              <span className="sr-only">Actions</span>
-            </TableHead>
+            {canManage && (
+              <TableHead className="w-12">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.map((item) => {
-            const status = getInventoryStatus(item.quantity, item.parLevel, item.active);
+            const placement = (
+              <>
+                <span className="block font-semibold tabular-nums">
+                  {formatQuantity(item.quantity)}
+                </span>
+                <span className="block text-xs text-muted-foreground underline-offset-2 hover:underline">
+                  {stockPlacementLabel(item)}
+                </span>
+              </>
+            );
             return (
               <TableRow key={item.id}>
                 <TableCell>
@@ -80,52 +87,57 @@ export function InventoryTable({
                     <div className="text-xs text-muted-foreground">{item.manufacturer}</div>
                   )}
                 </TableCell>
-                <TableCell className="font-mono text-xs">{item.sku || "—"}</TableCell>
+                <TableCell className="whitespace-nowrap font-mono text-xs">
+                  {item.sku || "—"}
+                </TableCell>
                 <TableCell>{item.category || "—"}</TableCell>
                 <TableCell>{item.vendorName || "—"}</TableCell>
                 <TableCell>
-                  <button
-                    type="button"
-                    className="text-left"
-                    onClick={() => onLocations(item)}
-                    aria-label={`Stock locations for ${item.name}`}
-                  >
-                    <span className="block font-semibold tabular-nums">
-                      {formatQuantity(item.quantity)}
-                    </span>
-                    <span className="block text-xs text-muted-foreground underline-offset-2 hover:underline">
-                      {placement(item)}
-                    </span>
-                  </button>
+                  {canManage && onLocations ? (
+                    <button
+                      type="button"
+                      className="text-left"
+                      onClick={() => onLocations(item)}
+                      aria-label={`Stock locations for ${item.name}`}
+                    >
+                      {placement}
+                    </button>
+                  ) : (
+                    <div>{placement}</div>
+                  )}
                 </TableCell>
                 <TableCell>{item.unit}</TableCell>
                 <TableCell>
                   {item.parLevel === null ? "—" : formatQuantity(item.parLevel)}
                 </TableCell>
                 <TableCell>
-                  <Badge className={tones[status]}>{inventoryStatusLabel[status]}</Badge>
+                  <Badge className={inventoryStatusTones[item.stockStatus]}>
+                    {inventoryStatusLabel[item.stockStatus]}
+                  </Badge>
                 </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button size="icon" variant="ghost" aria-label={`Actions for ${item.name}`}>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onEdit(item)}>Edit</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onLocations(item)}>
-                        Locations &amp; move stock
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onAdjust(item)}>
-                        Adjust quantity
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onArchive(item)}>
-                        {item.active ? "Archive" : "Restore"}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
+                {canManage && (
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="icon" variant="ghost" aria-label={`Actions for ${item.name}`}>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => onEdit?.(item)}>Edit</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onLocations?.(item)}>
+                          Locations &amp; move stock
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onAdjust?.(item)}>
+                          Adjust quantity
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onArchive?.(item)}>
+                          {item.active ? "Archive" : "Restore"}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                )}
               </TableRow>
             );
           })}

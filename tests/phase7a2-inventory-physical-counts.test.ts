@@ -117,6 +117,15 @@ const stubs: Record<string, string> = {
     export const Dialog = ({ open, children }) => (open ? createElement("div", { role: "dialog" }, children) : null);
     export const DialogContent = pass("div"), DialogHeader = pass("div"), DialogFooter = pass("div"),
       DialogTitle = pass("h2"), DialogDescription = pass("p");`,
+  "@/components/ui/dropdown-menu": `
+    import { createElement } from "react";
+    const pass = ({ children }) => createElement("div", null, children);
+    export const DropdownMenu = pass, DropdownMenuContent = pass, DropdownMenuTrigger = pass;
+    export const DropdownMenuItem = ({ children, onClick }) => createElement("button", { onClick }, children);`,
+  "@tanstack/react-router": `
+    import { createElement } from "react";
+    export const Link = ({ to, params, children, className }) =>
+      createElement("a", { href: String(to).replace("$locationId", params?.locationId ?? ""), className }, children);`,
 };
 function resolveSource(base: string) {
   for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), base]) {
@@ -134,8 +143,8 @@ writeFileSync(
   export { QrScannerView, PhoneCameraHelp } from "@/components/count/QrScanner";
   export { CountLocationPicker } from "@/components/count/CountLocationPicker";
   export { CountUnavailable } from "@/components/count/CountUnavailable";
-  export { QrLabelDialog } from "@/components/inventory/QrLabelDialog";
-  export { InventoryLocationsPanel } from "@/components/inventory/InventoryLocationsPanel";
+  export { LocationLabelsPanel } from "@/components/inventory/workspace/LocationLabelsPanel";
+  export { LocationsTable } from "@/components/inventory/workspace/LocationsTable";
 `,
 );
 const bundlePath = join(cacheDir, "bundle.cjs");
@@ -852,67 +861,75 @@ test("location fallback lists names only; unavailable labels name nothing", () =
   assert.doesNotMatch(unavailable, /Cabinet|organization [A-Z]/);
 });
 
-test("owner QR label dialog: issue, print, replace; locations panel shows labels and last count", () => {
+// Phase 7B.1 moved the owner label controls from a dialog into the location's Labels tab;
+// tests/phase7b1-inventory-admin-workspace.test.ts covers revoke-only and admin read-only.
+test("owner QR labels: issue, print, replace; the locations table shows labels and last count", () => {
   const owner = {
     id: "a",
-    organizationId: "org",
     name: "Cabinet A",
     description: null,
     kind: "storage",
     active: true,
-    createdAt: "",
-    updatedAt: "",
-  };
-  const fresh = render(ui.QrLabelDialog, {
-    location: owner,
+    stockedItemCount: 1,
+    countableItemCount: 1,
+    lastCountedAt: null,
+    lastCountedByName: null,
     activeLabelCount: 0,
-    origin: "https://app.sport-spend.com",
-    onOpenChange: () => {},
-    onIssue: noop,
-    onReplace: noop,
-  });
-  assert.match(fresh, /QR label · Cabinet A/);
+    lastLabelIssuedAt: null,
+  };
+  const panel = (location: typeof owner, extra: Record<string, unknown> = {}) =>
+    render(ui.LocationLabelsPanel, {
+      location,
+      canManage: true,
+      origin: "https://app.sport-spend.com",
+      onIssue: noop,
+      onReplace: noop,
+      onRevoke: noop,
+      ...extra,
+    });
+  const fresh = panel(owner);
+  assert.match(fresh, /QR labels/);
   assert.match(fresh, /Issue QR label/);
   assert.match(fresh, /works only for signed-in members of your organization/);
   assert.doesNotMatch(fresh, /Replace labels/);
-  const issued = render(ui.QrLabelDialog, {
-    location: owner,
-    activeLabelCount: 2,
-    origin: "https://app.sport-spend.com",
-    onOpenChange: () => {},
-    onIssue: noop,
-    onReplace: noop,
-    initialIssued: {
-      url: `https://app.sport-spend.com/count/${token}`,
-      svg: '<svg data-qr="1"></svg>',
+  const issued = panel(
+    { ...owner, activeLabelCount: 2, lastLabelIssuedAt: "2026-10-20T12:00:00Z" },
+    {
+      initialIssued: {
+        url: `https://app.sport-spend.com/count/${token}`,
+        svg: '<svg data-qr="1"></svg>',
+      },
     },
-  });
+  );
   assert.match(issued, /<svg data-qr="1"><\/svg>/);
   assert.match(issued, new RegExp(`/count/${token}`));
   assert.match(issued, /Print label/);
-  assert.match(issued, /2 active labels for this location/);
+  assert.match(issued, /Active labels<\/dt><dd[^>]*>2</);
+  assert.match(issued, /Issue another label/);
   assert.match(issued, /Replace labels…/);
-  const panel = render(ui.InventoryLocationsPanel, {
-    locations: [
-      loc("u", "Unassigned", "unassigned"),
-      owner,
-      { ...loc("z", "Old Bin"), active: false },
-    ],
-    balances: [],
-    onCreate: noop,
-    onRename: noop,
-    onSetActive: noop,
-    countStatus: new Map([["a", { activeLabelCount: 1, lastCountedAt: "2026-10-20T12:00:00Z" }]]),
-    onQrLabel: () => {},
+  assert.match(issued, /to print another copy later, issue another label/i);
+  const row = (id: string, name: string, kind: string, active = true) => ({
+    ...owner,
+    id,
+    name,
+    kind,
+    active,
+    countableItemCount: kind === "unassigned" ? null : 1,
+    activeLabelCount: kind === "unassigned" ? null : 1,
   });
-  assert.match(panel, /aria-label="QR label for Cabinet A"/);
-  assert.doesNotMatch(
-    panel,
-    /QR label for Unassigned|QR label for Old Bin/,
-    "no labels for Unassigned or archived locations",
-  );
-  assert.match(panel, /Counted Oct 20/);
-  assert.match(panel, /Not counted yet/);
+  const table = render(ui.LocationsTable, {
+    locations: [
+      row("u", "Unassigned", "unassigned"),
+      { ...row("a", "Cabinet A", "storage"), lastCountedAt: "2026-10-20T12:00:00Z" },
+      row("z", "Old Bin", "storage", false),
+    ],
+    canManage: true,
+    now: new Date("2026-10-23T12:00:00Z"),
+  });
+  assert.match(table, /Counted 3 days ago/);
+  assert.match(table, /Oct 20, 2026/);
+  assert.match(table, /Not counted yet/);
+  assert.match(table, /Not counted or labeled/, "Unassigned is never counted or labeled");
 });
 
 test("Staff Workspace offers Scan Inventory QR beside Request Supplies, with no inventory data", () => {

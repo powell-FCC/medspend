@@ -171,9 +171,13 @@ test('owners and admins see Budget & Purchasing in desktop and mobile navigation
   const owner = renderAdminNavigation('owner');
   const admin = renderAdminNavigation('admin');
   for (const html of [owner, admin]) assert.equal((html.match(/href="\/budget-purchasing"/g) ?? []).length, 2);
-  for (const route of ['/inventory', '/upload', '/invoices']) {
+  for (const route of ['/upload', '/invoices']) {
     assert.equal((owner.match(new RegExp(`href="${route}"`, 'g')) ?? []).length, 2, route);
     assert.equal(admin.includes(`href="${route}"`), false, route);
+  }
+  // Phase 7B.1: admins read the Inventory workspace; only owners change inventory.
+  for (const html of [owner, admin]) {
+    assert.equal((html.match(/href="\/inventory"/g) ?? []).length, 2);
   }
   const staffNav = readFileSync(new URL('../src/components/staff/StaffBottomNav.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(staffNav, /\/budget/);

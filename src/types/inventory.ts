@@ -73,6 +73,24 @@ export interface InventoryLocationBalance {
   updatedAt: string;
 }
 
+// The fields the move and adjust dialogs need from a location or an item. Full rows and
+// Phase 7B.1 workspace rows both satisfy them.
+export type InventoryLocationRef = Pick<InventoryLocation, "id" | "name" | "kind" | "active">;
+export type InventoryItemRef = Pick<InventoryItem, "id" | "name" | "unit" | "quantity">;
+export type EditableInventoryItem = Pick<
+  InventoryItem,
+  | "id"
+  | "name"
+  | "description"
+  | "sku"
+  | "vendorName"
+  | "category"
+  | "manufacturer"
+  | "quantity"
+  | "unit"
+  | "parLevel"
+>;
+
 export interface InventoryLocationSummary extends InventoryLocation {
   itemCount: number;
   hasStock: boolean;
