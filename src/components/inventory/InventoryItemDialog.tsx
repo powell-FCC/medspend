@@ -11,7 +11,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatQuantity } from "@/inventory/locations";
-import type { InventoryCategory, InventoryItem, InventoryItemInput } from "@/types/inventory";
+import type {
+  EditableInventoryItem,
+  InventoryCategory,
+  InventoryItemInput,
+} from "@/types/inventory";
 
 const empty = {
   name: "",
@@ -36,7 +40,7 @@ export function InventoryItemDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   organizationId: string;
-  item?: InventoryItem;
+  item?: EditableInventoryItem;
   categories: InventoryCategory[];
   onSave: (input: InventoryItemInput) => Promise<void>;
 }) {

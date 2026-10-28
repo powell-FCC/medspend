@@ -31,12 +31,14 @@ import { Route as AuthConfirmRouteImport } from './routes/auth_.confirm'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as AuthenticatedCountIndexRouteImport } from './routes/_authenticated/count.index'
 import { Route as AuthenticatedCountTokenRouteImport } from './routes/_authenticated/count.$token'
+import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory.index'
 import { Route as AuthenticatedInvoicesIndexRouteImport } from './routes/_authenticated/invoices.index'
 import { Route as AuthenticatedInvoicesInvoiceIdRouteImport } from './routes/_authenticated/invoices.$invoiceId'
 import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authenticated/staff/index'
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
 import { Route as AuthenticatedStaffRequestsRouteImport } from './routes/_authenticated/staff/requests'
 import { Route as AuthenticatedCountLocationLocationIdRouteImport } from './routes/_authenticated/count.location.$locationId'
+import { Route as AuthenticatedInventoryLocationsLocationIdRouteImport } from './routes/_authenticated/inventory.locations.$locationId'
 import { Route as AuthenticatedStaffRequestsIdRouteImport } from './routes/_authenticated/staff/requests.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -152,6 +154,12 @@ const AuthenticatedCountTokenRoute = AuthenticatedCountTokenRouteImport.update({
   path: '/count/$token',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedInventoryIndexRoute =
+  AuthenticatedInventoryIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedInventoryRoute,
+  } as any)
 const AuthenticatedInvoicesIndexRoute =
   AuthenticatedInvoicesIndexRouteImport.update({
     id: '/',
@@ -187,6 +195,12 @@ const AuthenticatedCountLocationLocationIdRoute =
     path: '/count/location/$locationId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedInventoryLocationsLocationIdRoute =
+  AuthenticatedInventoryLocationsLocationIdRouteImport.update({
+    id: '/locations/$locationId',
+    path: '/locations/$locationId',
+    getParentRoute: () => AuthenticatedInventoryRoute,
+  } as any)
 const AuthenticatedStaffRequestsIdRoute =
   AuthenticatedStaffRequestsIdRouteImport.update({
     id: '/$id',
@@ -201,7 +215,7 @@ export interface FileRoutesByFullPath {
   '/budget-purchasing': typeof AuthenticatedBudgetPurchasingRoute
   '/catalog-vendors': typeof AuthenticatedCatalogVendorsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/inventory': typeof AuthenticatedInventoryRoute
+  '/inventory': typeof AuthenticatedInventoryRouteWithChildren
   '/invoices': typeof AuthenticatedInvoicesRouteWithChildren
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/products': typeof AuthenticatedProductsRoute
@@ -219,9 +233,11 @@ export interface FileRoutesByFullPath {
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/count/': typeof AuthenticatedCountIndexRoute
+  '/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/staff/': typeof AuthenticatedStaffIndexRoute
   '/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
+  '/inventory/locations/$locationId': typeof AuthenticatedInventoryLocationsLocationIdRoute
   '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRoutesByTo {
@@ -231,7 +247,6 @@ export interface FileRoutesByTo {
   '/budget-purchasing': typeof AuthenticatedBudgetPurchasingRoute
   '/catalog-vendors': typeof AuthenticatedCatalogVendorsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/inventory': typeof AuthenticatedInventoryRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/products': typeof AuthenticatedProductsRoute
   '/profile': typeof AuthenticatedProfileRoute
@@ -248,9 +263,11 @@ export interface FileRoutesByTo {
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/count': typeof AuthenticatedCountIndexRoute
+  '/inventory': typeof AuthenticatedInventoryIndexRoute
   '/invoices': typeof AuthenticatedInvoicesIndexRoute
   '/staff': typeof AuthenticatedStaffIndexRoute
   '/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
+  '/inventory/locations/$locationId': typeof AuthenticatedInventoryLocationsLocationIdRoute
   '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRoutesById {
@@ -262,7 +279,7 @@ export interface FileRoutesById {
   '/_authenticated/budget-purchasing': typeof AuthenticatedBudgetPurchasingRoute
   '/_authenticated/catalog-vendors': typeof AuthenticatedCatalogVendorsRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
-  '/_authenticated/inventory': typeof AuthenticatedInventoryRoute
+  '/_authenticated/inventory': typeof AuthenticatedInventoryRouteWithChildren
   '/_authenticated/invoices': typeof AuthenticatedInvoicesRouteWithChildren
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
   '/_authenticated/products': typeof AuthenticatedProductsRoute
@@ -280,9 +297,11 @@ export interface FileRoutesById {
   '/_authenticated/staff/request': typeof AuthenticatedStaffRequestRoute
   '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/_authenticated/count/': typeof AuthenticatedCountIndexRoute
+  '/_authenticated/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/_authenticated/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/_authenticated/staff/': typeof AuthenticatedStaffIndexRoute
   '/_authenticated/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
+  '/_authenticated/inventory/locations/$locationId': typeof AuthenticatedInventoryLocationsLocationIdRoute
   '/_authenticated/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
 export interface FileRouteTypes {
@@ -312,9 +331,11 @@ export interface FileRouteTypes {
     | '/staff/request'
     | '/staff/requests'
     | '/count/'
+    | '/inventory/'
     | '/invoices/'
     | '/staff/'
     | '/count/location/$locationId'
+    | '/inventory/locations/$locationId'
     | '/staff/requests/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -324,7 +345,6 @@ export interface FileRouteTypes {
     | '/budget-purchasing'
     | '/catalog-vendors'
     | '/dashboard'
-    | '/inventory'
     | '/onboarding'
     | '/products'
     | '/profile'
@@ -341,9 +361,11 @@ export interface FileRouteTypes {
     | '/staff/request'
     | '/staff/requests'
     | '/count'
+    | '/inventory'
     | '/invoices'
     | '/staff'
     | '/count/location/$locationId'
+    | '/inventory/locations/$locationId'
     | '/staff/requests/$id'
   id:
     | '__root__'
@@ -372,9 +394,11 @@ export interface FileRouteTypes {
     | '/_authenticated/staff/request'
     | '/_authenticated/staff/requests'
     | '/_authenticated/count/'
+    | '/_authenticated/inventory/'
     | '/_authenticated/invoices/'
     | '/_authenticated/staff/'
     | '/_authenticated/count/location/$locationId'
+    | '/_authenticated/inventory/locations/$locationId'
     | '/_authenticated/staff/requests/$id'
   fileRoutesById: FileRoutesById
 }
@@ -542,6 +566,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCountTokenRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/inventory/': {
+      id: '/_authenticated/inventory/'
+      path: '/'
+      fullPath: '/inventory/'
+      preLoaderRoute: typeof AuthenticatedInventoryIndexRouteImport
+      parentRoute: typeof AuthenticatedInventoryRoute
+    }
     '/_authenticated/invoices/': {
       id: '/_authenticated/invoices/'
       path: '/'
@@ -584,6 +615,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCountLocationLocationIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/inventory/locations/$locationId': {
+      id: '/_authenticated/inventory/locations/$locationId'
+      path: '/locations/$locationId'
+      fullPath: '/inventory/locations/$locationId'
+      preLoaderRoute: typeof AuthenticatedInventoryLocationsLocationIdRouteImport
+      parentRoute: typeof AuthenticatedInventoryRoute
+    }
     '/_authenticated/staff/requests/$id': {
       id: '/_authenticated/staff/requests/$id'
       path: '/$id'
@@ -593,6 +631,23 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+
+interface AuthenticatedInventoryRouteChildren {
+  AuthenticatedInventoryIndexRoute: typeof AuthenticatedInventoryIndexRoute
+  AuthenticatedInventoryLocationsLocationIdRoute: typeof AuthenticatedInventoryLocationsLocationIdRoute
+}
+
+const AuthenticatedInventoryRouteChildren: AuthenticatedInventoryRouteChildren =
+  {
+    AuthenticatedInventoryIndexRoute: AuthenticatedInventoryIndexRoute,
+    AuthenticatedInventoryLocationsLocationIdRoute:
+      AuthenticatedInventoryLocationsLocationIdRoute,
+  }
+
+const AuthenticatedInventoryRouteWithChildren =
+  AuthenticatedInventoryRoute._addFileChildren(
+    AuthenticatedInventoryRouteChildren,
+  )
 
 interface AuthenticatedInvoicesRouteChildren {
   AuthenticatedInvoicesInvoiceIdRoute: typeof AuthenticatedInvoicesInvoiceIdRoute
@@ -628,7 +683,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedBudgetPurchasingRoute: typeof AuthenticatedBudgetPurchasingRoute
   AuthenticatedCatalogVendorsRoute: typeof AuthenticatedCatalogVendorsRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
-  AuthenticatedInventoryRoute: typeof AuthenticatedInventoryRoute
+  AuthenticatedInventoryRoute: typeof AuthenticatedInventoryRouteWithChildren
   AuthenticatedInvoicesRoute: typeof AuthenticatedInvoicesRouteWithChildren
   AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
   AuthenticatedProductsRoute: typeof AuthenticatedProductsRoute
@@ -652,7 +707,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedBudgetPurchasingRoute: AuthenticatedBudgetPurchasingRoute,
   AuthenticatedCatalogVendorsRoute: AuthenticatedCatalogVendorsRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
-  AuthenticatedInventoryRoute: AuthenticatedInventoryRoute,
+  AuthenticatedInventoryRoute: AuthenticatedInventoryRouteWithChildren,
   AuthenticatedInvoicesRoute: AuthenticatedInvoicesRouteWithChildren,
   AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
   AuthenticatedProductsRoute: AuthenticatedProductsRoute,

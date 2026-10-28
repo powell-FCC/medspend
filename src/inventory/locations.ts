@@ -1,6 +1,7 @@
 import type {
   InventoryLocation,
   InventoryLocationBalance,
+  InventoryLocationRef,
   InventoryLocationSummary,
 } from "@/types/inventory";
 
@@ -34,17 +35,17 @@ export function summarizeInventoryLocations(
   });
 }
 
-export interface ItemLocationQuantity {
-  location: InventoryLocation;
+export interface ItemLocationQuantity<L extends InventoryLocationRef = InventoryLocation> {
+  location: L;
   quantity: number;
 }
 
 // Every location holding this item, plus Unassigned even when it is empty.
-export function itemLocationBreakdown(
+export function itemLocationBreakdown<L extends InventoryLocationRef>(
   itemId: string,
-  locations: InventoryLocation[],
+  locations: L[],
   balances: InventoryLocationBalance[],
-): ItemLocationQuantity[] {
+): ItemLocationQuantity<L>[] {
   const byLocation = new Map(
     balances
       .filter((balance) => balance.inventoryItemId === itemId)
@@ -57,7 +58,7 @@ export function itemLocationBreakdown(
 
 export function physicalLocationCount(
   itemId: string,
-  locations: InventoryLocation[],
+  locations: InventoryLocationRef[],
   balances: InventoryLocationBalance[],
 ): number {
   return itemLocationBreakdown(itemId, locations, balances).filter(
@@ -70,7 +71,7 @@ export function physicalLocationCount(
 // "1 location".
 export function stockLocationLabel(
   itemId: string,
-  locations: InventoryLocation[],
+  locations: InventoryLocationRef[],
   balances: InventoryLocationBalance[],
 ): string {
   const held = itemLocationBreakdown(itemId, locations, balances).filter(

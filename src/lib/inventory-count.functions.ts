@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { assertInventoryOwner as assertOwner } from "@/inventory/owner-access";
+import { replaceLocationLabels } from "@/inventory/workspace-reads";
 import type { CountPage, CountSummary, LabelResolution } from "@/inventory/count";
 
 // Phase 7A.2 physical counts. Every call goes through a SECURITY DEFINER function that
@@ -112,6 +114,7 @@ export const issueLocationLabelFn = createServerFn({ method: "POST" })
     z.object({ organizationId: uuid, locationId: uuid }).parse(value),
   )
   .handler(async ({ data, context }) => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
     const { data: result, error } = await context.supabase.rpc("issue_inventory_location_label", {
       _organization_id: data.organizationId,
       _inventory_location_id: data.locationId,
@@ -132,10 +135,23 @@ export const revokeLocationLabelsFn = createServerFn({ method: "POST" })
     z.object({ organizationId: uuid, locationId: uuid }).parse(value),
   )
   .handler(async ({ data, context }) => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
     const { data: revoked, error } = await context.supabase.rpc(
       "revoke_inventory_location_labels",
       { _organization_id: data.organizationId, _inventory_location_id: data.locationId },
     );
     if (error) throw new Error(error.message);
     return { revoked: revoked ?? 0 };
+  });
+
+// Replace labels: every active label is revoked and exactly one new one issued, in one
+// database transaction. If issuing fails, nothing was revoked.
+export const replaceLocationLabelsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    z.object({ organizationId: uuid, locationId: uuid }).parse(value),
+  )
+  .handler(async ({ data, context }) => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
+    return replaceLocationLabels(context.supabase, data.organizationId, data.locationId);
   });

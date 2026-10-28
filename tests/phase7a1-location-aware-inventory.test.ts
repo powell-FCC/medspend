@@ -39,7 +39,8 @@ const postingMain = read(
 );
 const deletionMain = read("supabase/migrations/20260817120000_phase3a6_safe_invoice_deletion.sql");
 const server = read("src/lib/inventory.functions.ts");
-const page = read("src/components/inventory/InventoryPage.tsx");
+const workspaceDialogs = read("src/components/inventory/workspace/ItemStockDialogs.tsx");
+const locationsTab = read("src/components/inventory/workspace/LocationsTab.tsx");
 const itemDialog = read("src/components/inventory/InventoryItemDialog.tsx");
 const settings = read("src/routes/_authenticated/settings.tsx");
 const types = read("src/integrations/supabase/types.ts");
@@ -98,7 +99,12 @@ const stubs: Record<string, string> = {
     import { createElement } from "react";
     const pass = ({ children }) => createElement("div", null, children);
     export const DropdownMenu = pass, DropdownMenuContent = pass, DropdownMenuTrigger = pass;
-    export const DropdownMenuItem = ({ children, onClick }) => createElement("button", { onClick }, children);`,
+    export const DropdownMenuItem = ({ children, onClick, disabled, title }) =>
+      createElement("button", { onClick, disabled, title }, children);`,
+  "@tanstack/react-router": `
+    import { createElement } from "react";
+    export const Link = ({ to, params, children, className }) =>
+      createElement("a", { href: String(to).replace("$locationId", params?.locationId ?? ""), className }, children);`,
 };
 
 function resolveSource(base: string) {
@@ -114,7 +120,7 @@ writeFileSync(
   `
   export { renderToStaticMarkup } from "react-dom/server";
   export { createElement } from "react";
-  export { InventoryLocationsPanel } from "@/components/inventory/InventoryLocationsPanel";
+  export { LocationsTable } from "@/components/inventory/workspace/LocationsTable";
   export { ItemLocationsDialog } from "@/components/inventory/ItemLocationsDialog";
   export { QuantityAdjustmentDialog } from "@/components/inventory/QuantityAdjustmentDialog";
   export { InventoryTable } from "@/components/inventory/InventoryTable";
@@ -634,8 +640,11 @@ test("the 7A.1 app calls only location-aware RPCs, and item edits never change q
   assert.match(itemDialog, /readOnly/);
   assert.match(types, /inventory_location_balances: \{/);
   assert.match(types, /move_inventory_stock: \{/);
-  assert.match(page, /InventoryLocationsPanel/);
-  assert.match(page, /ItemLocationsDialog/);
+  // Phase 7B.1: locations live in the workspace's Locations tab; the move dialog reads one
+  // item's balances instead of the whole organization's.
+  assert.match(locationsTab, /LocationsTable/);
+  assert.match(workspaceDialogs, /ItemLocationsDialog/);
+  assert.match(workspaceDialogs, /getWorkspaceItemBalancesFn/);
   // Phase 7A.2 adds QR labels to the page; the 7A.1 inventory server module stays count-free
   // (counts live in inventory-count.functions.ts).
   assert.doesNotMatch(server, /qr|scanner|physical count/i);
@@ -644,28 +653,44 @@ test("the 7A.1 app calls only location-aware RPCs, and item edits never change q
 // ---------------------------------------------------------------------------------------
 // Rendered owner UI.
 // ---------------------------------------------------------------------------------------
-test("locations panel shows Unassigned as protected and blocks archiving stocked locations", () => {
-  const html = render(ui.InventoryLocationsPanel, {
-    locations,
-    balances,
-    onCreate: noop,
-    onRename: noop,
-    onSetActive: noop,
+test("locations table shows Unassigned as protected and blocks archiving stocked locations", () => {
+  const row = (base: InventoryLocation, stockedItemCount: number) => ({
+    ...base,
+    stockedItemCount,
+    countableItemCount: base.kind === "unassigned" ? null : stockedItemCount,
+    lastCountedAt: null,
+    lastCountedByName: null,
+    activeLabelCount: base.kind === "unassigned" ? null : 0,
+    lastLabelIssuedAt: null,
+  });
+  const html = render(ui.LocationsTable, {
+    locations: [
+      row(unassigned, 2),
+      row(cart, 1),
+      row(cabinet, 1),
+      row(archived, 0),
+      row(location("e", "Empty Shelf"), 0),
+    ],
+    canManage: true,
+    onRename: () => {},
+    onArchive: () => {},
+    onRestore: () => {},
   });
   assert.ok(
     html.indexOf("Unassigned") < html.indexOf("Away Medical Cart"),
     "Unassigned listed first",
   );
   assert.match(html, /System/);
-  assert.match(html, /Protected/);
-  assert.doesNotMatch(html, /aria-label="Rename Unassigned"|aria-label="Archive Unassigned"/);
+  assert.match(html, /Not counted or labeled/);
+  assert.doesNotMatch(html, /aria-label="Actions for Unassigned"/);
   assert.match(
     html,
-    /<button[^>]*disabled=""[^>]*aria-label="Archive Training Room Cabinet A"|<button[^>]*aria-label="Archive Training Room Cabinet A"[^>]*disabled=""/,
+    /<button disabled="" title="Move all stock out of Training Room Cabinet A before archiving it\.">/,
   );
-  assert.match(html, /aria-label="Restore Old Bin"/);
+  assert.match(html, /Archive \(move stock out first\)/);
+  assert.match(html, /Restore/);
   assert.match(html, /Archived/);
-  assert.match(html, /Empty/);
+  assert.match(html, /Nothing to count/);
 });
 
 test("item locations dialog lists every location holding the item and the move form", () => {
@@ -707,16 +732,27 @@ test("adjustment dialog asks for a location and offers no receipt reason", () =>
 });
 
 test("inventory table shows totals with placement", () => {
+  const summary = (base: typeof tape, extra: Record<string, unknown>) => ({
+    ...base,
+    stockStatus: "healthy",
+    unassignedQuantity: 0,
+    physicalQuantity: 0,
+    physicalLocationCount: 0,
+    singlePhysicalLocationName: null,
+    ...extra,
+  });
   const html = render(ui.InventoryTable, {
-    items: [tape, gauze],
-    locations,
-    balances,
+    items: [
+      summary(tape, { unassignedQuantity: 20, physicalQuantity: 80, physicalLocationCount: 2 }),
+      summary(gauze, { unassignedQuantity: 2.75 }),
+    ],
+    canManage: true,
     onEdit: () => {},
     onArchive: () => {},
     onAdjust: () => {},
     onLocations: () => {},
   });
-  assert.match(html, /2 locations/);
+  assert.match(html, /2 locations \+ Unassigned/);
   assert.match(html, />2\.75</);
   assert.match(html, />Unassigned</);
   assert.match(html, /Locations &amp; move stock/);

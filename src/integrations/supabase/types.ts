@@ -2652,6 +2652,96 @@ export type Database = {
           last_label_issued_at: string
         }[]
       }
+      get_inventory_workspace_location: {
+        Args: { _inventory_location_id: string; _organization_id: string }
+        Returns: Json
+      }
+      list_inventory_workspace_item_balances: {
+        Args: { _inventory_item_id: string; _organization_id: string }
+        Returns: Json
+      }
+      list_inventory_workspace_items: {
+        Args: {
+          _after_id?: string
+          _after_name?: string
+          _category?: string
+          _limit?: number
+          _organization_id: string
+          _search?: string
+          _status?: string
+          _stock_status?: string
+        }
+        Returns: {
+          active: boolean
+          category: string
+          description: string
+          inventory_item_id: string
+          manufacturer: string
+          name: string
+          par_level: number
+          physical_location_count: number
+          physical_quantity: number
+          quantity: number
+          single_physical_location_name: string
+          sku: string
+          sort_name: string
+          stock_status: string
+          unassigned_quantity: number
+          unit: string
+          vendor_name: string
+        }[]
+      }
+      list_inventory_workspace_location_stock: {
+        Args: {
+          _after_id?: string
+          _after_name?: string
+          _inventory_location_id: string
+          _limit?: number
+          _organization_id: string
+        }
+        Returns: {
+          inventory_item_id: string
+          item_active: boolean
+          last_counted_at: string
+          name: string
+          organization_par_level: number
+          organization_quantity: number
+          organization_stock_status: string
+          quantity: number
+          sku: string
+          sort_name: string
+          unit: string
+        }[]
+      }
+      list_inventory_workspace_locations: {
+        Args: {
+          _after_id?: string
+          _after_name?: string
+          _after_sort_group?: number
+          _limit?: number
+          _organization_id: string
+          _status?: string
+        }
+        Returns: {
+          active: boolean
+          active_label_count: number
+          countable_item_count: number
+          description: string
+          inventory_location_id: string
+          kind: string
+          last_counted_at: string
+          last_counted_by_name: string
+          last_label_issued_at: string
+          name: string
+          sort_group: number
+          sort_name: string
+          stocked_item_count: number
+        }[]
+      }
+      replace_inventory_location_labels: {
+        Args: { _inventory_location_id: string; _organization_id: string }
+        Returns: Json
+      }
       release_supply_request_commitment: {
         Args: { _organization_id: string; _request_id: string; _release_kind: string; _release_reason: string }
         Returns: Json

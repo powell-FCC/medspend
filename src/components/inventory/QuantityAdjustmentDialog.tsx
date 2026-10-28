@@ -17,9 +17,9 @@ import {
 } from "@/inventory/locations";
 import { locationAdjustmentReasons } from "@/types/inventory";
 import type {
-  InventoryItem,
-  InventoryLocation,
+  InventoryItemRef,
   InventoryLocationBalance,
+  InventoryLocationRef,
   LocationAdjustmentReason,
 } from "@/types/inventory";
 
@@ -32,8 +32,8 @@ export function QuantityAdjustmentDialog({
   onOpenChange,
   onAdjust,
 }: {
-  item?: InventoryItem;
-  locations: InventoryLocation[];
+  item?: InventoryItemRef;
+  locations: InventoryLocationRef[];
   balances: InventoryLocationBalance[];
   onOpenChange: (open: boolean) => void;
   onAdjust: (locationId: string, amount: number, reason: LocationAdjustmentReason) => Promise<void>;
