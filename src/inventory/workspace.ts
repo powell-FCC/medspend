@@ -3,9 +3,9 @@ import type { WorkspaceItem, WorkspaceLocation } from "@/types/inventory-workspa
 // Phase 7B.1 Inventory workspace rules shared by the UI and tests. The database functions
 // are the authority; these only decide what the screen offers.
 
-export type WorkspaceTab = "items" | "locations" | "counts";
-export const workspaceTabs: WorkspaceTab[] = ["items", "locations", "counts"];
-export type LocationDetailTab = "stock" | "labels" | "counts";
+export type WorkspaceTab = "items" | "locations" | "counts" | "activity";
+export const workspaceTabs: WorkspaceTab[] = ["items", "locations", "counts", "activity"];
+export type LocationDetailTab = "stock" | "labels" | "counts" | "activity";
 
 // Every workspace query sits under this key, so one invalidation refreshes them all.
 export const workspaceQueryKey = (organizationId: string) => [

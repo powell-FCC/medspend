@@ -3,14 +3,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { inventoryWorkspaceAccess, type WorkspaceTab } from "@/inventory/workspace";
+import { ActivityPanel } from "./ActivityPanel";
 import { CountHistoryPanel } from "./CountHistoryPanel";
 import { ItemsTab } from "./ItemsTab";
 import { LocationsTab } from "./LocationsTab";
 import { ReadOnlyBadge } from "./ReadOnlyBadge";
 
 // Phase 7B.1 Inventory workspace. Owners manage inventory; admins see the same information
-// read-only. Counts (7B.2) is read-only history for both. Later packages add Overview and
-// Activity tabs here.
+// read-only. Counts (7B.2) and Activity (7B.3: transfers and manual adjustments) are
+// read-only history for both. A later package adds Overview here.
 export function InventoryWorkspacePage({
   tab,
   onTabChange,
@@ -61,6 +62,7 @@ export function InventoryWorkspacePage({
           <TabsTrigger value="items">Items</TabsTrigger>
           <TabsTrigger value="locations">Locations</TabsTrigger>
           <TabsTrigger value="counts">Counts</TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="items" className="mt-4">
           <ItemsTab organizationId={active.organizationId} canManage={access.canManage} />
@@ -70,6 +72,9 @@ export function InventoryWorkspacePage({
         </TabsContent>
         <TabsContent value="counts" className="mt-4">
           <CountHistoryPanel organizationId={active.organizationId} />
+        </TabsContent>
+        <TabsContent value="activity" className="mt-4">
+          <ActivityPanel organizationId={active.organizationId} />
         </TabsContent>
       </Tabs>
     </div>

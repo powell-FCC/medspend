@@ -3,7 +3,7 @@ import { z } from "zod";
 import { LocationDetailPage } from "@/components/inventory/workspace/LocationDetailPage";
 
 const locationSearchSchema = z.object({
-  tab: z.enum(["stock", "labels", "counts"]).catch("stock").default("stock"),
+  tab: z.enum(["stock", "labels", "counts", "activity"]).catch("stock").default("stock"),
 });
 
 export const Route = createFileRoute("/_authenticated/inventory/locations/$locationId")({

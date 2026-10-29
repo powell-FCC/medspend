@@ -6,10 +6,13 @@ import {
   getWorkspaceItemBalances,
   getWorkspaceLocation,
   listAllWorkspaceLocations,
+  listAdjustmentHistoryPage,
   listCountHistoryPage,
+  listTransferHistoryPage,
   listWorkspaceItemsPage,
   listWorkspaceLocationStockPage,
 } from "@/inventory/workspace-reads";
+import { adjustmentHistoryReasons } from "@/inventory/activity";
 
 // Phase 7B.1 Inventory workspace reads for owners and admins. The work lives in
 // src/inventory/workspace-reads.ts: owner+admin database functions only, keyset paged.
@@ -109,6 +112,34 @@ export const getCountSessionFn = createServerFn({ method: "POST" })
   .handler(({ data, context }) =>
     getCountSession(context.supabase, data.organizationId, data.sessionId),
   );
+
+// Phase 7B.3 inventory activity: read-only, owner+admin, filtered and keyset paged in the
+// database.
+const isoDateTime = z.string().datetime({ offset: true });
+const activityInput = z.object({
+  organizationId: uuid,
+  locationId: uuid.nullable().default(null),
+  itemId: uuid.nullable().default(null),
+  createdBy: uuid.nullable().default(null),
+  createdFrom: isoDateTime.nullable().default(null),
+  createdBefore: isoDateTime.nullable().default(null),
+  cursor: z.object({ createdAt: isoDateTime, id: uuid }).nullable().default(null),
+  limit: z.number().int().min(1).max(200).default(50),
+});
+
+export const listTransferHistoryFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => activityInput.parse(value))
+  .handler(({ data, context }) => listTransferHistoryPage(context.supabase, data));
+
+export const listAdjustmentHistoryFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    activityInput
+      .extend({ reason: z.enum(adjustmentHistoryReasons).nullable().default(null) })
+      .parse(value),
+  )
+  .handler(({ data, context }) => listAdjustmentHistoryPage(context.supabase, data));
 
 // Categories are readable by every member through RLS today; the workspace only lists names.
 export const listWorkspaceCategoriesFn = createServerFn({ method: "POST" })
