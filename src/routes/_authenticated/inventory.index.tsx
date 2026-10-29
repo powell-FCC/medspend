@@ -4,7 +4,7 @@ import { InventoryWorkspacePage } from "@/components/inventory/workspace/Invento
 
 // Tabs live in the query string so they can be linked. Overview and Activity join later.
 const inventorySearchSchema = z.object({
-  tab: z.enum(["items", "locations"]).catch("items").default("items"),
+  tab: z.enum(["items", "locations", "counts"]).catch("items").default("items"),
 });
 
 export const Route = createFileRoute("/_authenticated/inventory/")({

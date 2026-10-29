@@ -2652,6 +2652,10 @@ export type Database = {
           last_label_issued_at: string
         }[]
       }
+      get_inventory_count_session: {
+        Args: { _count_session_id: string; _organization_id: string }
+        Returns: Json
+      }
       get_inventory_workspace_location: {
         Args: { _inventory_location_id: string; _organization_id: string }
         Returns: Json
@@ -2711,6 +2715,31 @@ export type Database = {
           sku: string
           sort_name: string
           unit: string
+        }[]
+      }
+      list_inventory_count_history: {
+        Args: {
+          _after_id?: string
+          _after_submitted_at?: string
+          _changed_only?: boolean
+          _counted_by?: string
+          _inventory_location_id?: string
+          _limit?: number
+          _organization_id: string
+          _submitted_before?: string
+          _submitted_from?: string
+        }
+        Returns: {
+          changed_count: number
+          correction_summary: Json
+          count_session_id: string
+          counted_by: string
+          counted_by_name: string
+          inventory_location_id: string
+          line_count: number
+          location_active: boolean
+          location_name: string
+          submitted_at: string
         }[]
       }
       list_inventory_workspace_locations: {

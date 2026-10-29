@@ -13,6 +13,7 @@ import {
   workspaceQueryKey,
 } from "@/inventory/workspace";
 import type { WorkspaceLocationDetail } from "@/types/inventory-workspace";
+import { CountHistoryPanel } from "./CountHistoryPanel";
 import { ItemStockDialogs, type ItemStockAction } from "./ItemStockDialogs";
 import { LocationHeader } from "./LocationHeader";
 import { LocationLabelsPanel } from "./LocationLabelsPanel";
@@ -132,6 +133,7 @@ function LocationDetail({
         <TabsList>
           <TabsTrigger value="stock">Stock</TabsTrigger>
           {storage && <TabsTrigger value="labels">Labels</TabsTrigger>}
+          {storage && <TabsTrigger value="counts">Counts</TabsTrigger>}
         </TabsList>
         <TabsContent value="stock" className="mt-4">
           <LocationStockTab
@@ -151,6 +153,11 @@ function LocationDetail({
               onReplace={canManage ? () => actions.replace(location) : undefined}
               onRevoke={canManage ? () => actions.revoke(location) : undefined}
             />
+          </TabsContent>
+        )}
+        {storage && (
+          <TabsContent value="counts" className="mt-4">
+            <CountHistoryPanel organizationId={organizationId} locationId={location.id} />
           </TabsContent>
         )}
       </Tabs>

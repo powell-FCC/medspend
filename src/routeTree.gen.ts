@@ -38,6 +38,7 @@ import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
 import { Route as AuthenticatedStaffRequestsRouteImport } from './routes/_authenticated/staff/requests'
 import { Route as AuthenticatedCountLocationLocationIdRouteImport } from './routes/_authenticated/count.location.$locationId'
+import { Route as AuthenticatedInventoryCountsSessionIdRouteImport } from './routes/_authenticated/inventory.counts.$sessionId'
 import { Route as AuthenticatedInventoryLocationsLocationIdRouteImport } from './routes/_authenticated/inventory.locations.$locationId'
 import { Route as AuthenticatedStaffRequestsIdRouteImport } from './routes/_authenticated/staff/requests.$id'
 
@@ -195,6 +196,12 @@ const AuthenticatedCountLocationLocationIdRoute =
     path: '/count/location/$locationId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedInventoryCountsSessionIdRoute =
+  AuthenticatedInventoryCountsSessionIdRouteImport.update({
+    id: '/counts/$sessionId',
+    path: '/counts/$sessionId',
+    getParentRoute: () => AuthenticatedInventoryRoute,
+  } as any)
 const AuthenticatedInventoryLocationsLocationIdRoute =
   AuthenticatedInventoryLocationsLocationIdRouteImport.update({
     id: '/locations/$locationId',
@@ -237,6 +244,7 @@ export interface FileRoutesByFullPath {
   '/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/staff/': typeof AuthenticatedStaffIndexRoute
   '/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
+  '/inventory/counts/$sessionId': typeof AuthenticatedInventoryCountsSessionIdRoute
   '/inventory/locations/$locationId': typeof AuthenticatedInventoryLocationsLocationIdRoute
   '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
@@ -267,6 +275,7 @@ export interface FileRoutesByTo {
   '/invoices': typeof AuthenticatedInvoicesIndexRoute
   '/staff': typeof AuthenticatedStaffIndexRoute
   '/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
+  '/inventory/counts/$sessionId': typeof AuthenticatedInventoryCountsSessionIdRoute
   '/inventory/locations/$locationId': typeof AuthenticatedInventoryLocationsLocationIdRoute
   '/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
@@ -301,6 +310,7 @@ export interface FileRoutesById {
   '/_authenticated/invoices/': typeof AuthenticatedInvoicesIndexRoute
   '/_authenticated/staff/': typeof AuthenticatedStaffIndexRoute
   '/_authenticated/count/location/$locationId': typeof AuthenticatedCountLocationLocationIdRoute
+  '/_authenticated/inventory/counts/$sessionId': typeof AuthenticatedInventoryCountsSessionIdRoute
   '/_authenticated/inventory/locations/$locationId': typeof AuthenticatedInventoryLocationsLocationIdRoute
   '/_authenticated/staff/requests/$id': typeof AuthenticatedStaffRequestsIdRoute
 }
@@ -335,6 +345,7 @@ export interface FileRouteTypes {
     | '/invoices/'
     | '/staff/'
     | '/count/location/$locationId'
+    | '/inventory/counts/$sessionId'
     | '/inventory/locations/$locationId'
     | '/staff/requests/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -365,6 +376,7 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/staff'
     | '/count/location/$locationId'
+    | '/inventory/counts/$sessionId'
     | '/inventory/locations/$locationId'
     | '/staff/requests/$id'
   id:
@@ -398,6 +410,7 @@ export interface FileRouteTypes {
     | '/_authenticated/invoices/'
     | '/_authenticated/staff/'
     | '/_authenticated/count/location/$locationId'
+    | '/_authenticated/inventory/counts/$sessionId'
     | '/_authenticated/inventory/locations/$locationId'
     | '/_authenticated/staff/requests/$id'
   fileRoutesById: FileRoutesById
@@ -615,6 +628,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCountLocationLocationIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/inventory/counts/$sessionId': {
+      id: '/_authenticated/inventory/counts/$sessionId'
+      path: '/counts/$sessionId'
+      fullPath: '/inventory/counts/$sessionId'
+      preLoaderRoute: typeof AuthenticatedInventoryCountsSessionIdRouteImport
+      parentRoute: typeof AuthenticatedInventoryRoute
+    }
     '/_authenticated/inventory/locations/$locationId': {
       id: '/_authenticated/inventory/locations/$locationId'
       path: '/locations/$locationId'
@@ -634,12 +654,15 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedInventoryRouteChildren {
   AuthenticatedInventoryIndexRoute: typeof AuthenticatedInventoryIndexRoute
+  AuthenticatedInventoryCountsSessionIdRoute: typeof AuthenticatedInventoryCountsSessionIdRoute
   AuthenticatedInventoryLocationsLocationIdRoute: typeof AuthenticatedInventoryLocationsLocationIdRoute
 }
 
 const AuthenticatedInventoryRouteChildren: AuthenticatedInventoryRouteChildren =
   {
     AuthenticatedInventoryIndexRoute: AuthenticatedInventoryIndexRoute,
+    AuthenticatedInventoryCountsSessionIdRoute:
+      AuthenticatedInventoryCountsSessionIdRoute,
     AuthenticatedInventoryLocationsLocationIdRoute:
       AuthenticatedInventoryLocationsLocationIdRoute,
   }
