@@ -2,6 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import type { InventoryLocationBalance, InventoryStatus } from "@/types/inventory";
 import type {
+  CountCorrectionUnit,
+  CountHistoryFilters,
+  CountHistoryPage,
+  CountSessionDetail,
   InventoryWorkspaceStatusFilter,
   WorkspaceItem,
   WorkspaceLocation,
@@ -208,6 +212,95 @@ export async function getWorkspaceItemBalances(
       quantity: Number(balance.quantity),
       version: balance.version,
       updatedAt: balance.updatedAt,
+    })),
+  };
+}
+
+// Phase 7B.2 count history. Owner+admin read functions over the immutable count sessions
+// and lines; quantities arrive as exact JSON numbers (at most six decimals).
+const toCorrectionUnits = (value: unknown): CountCorrectionUnit[] =>
+  ((value as Array<Record<string, unknown>> | null) ?? []).map((unit) => ({
+    unit: String(unit.unit ?? ""),
+    changedLines: Number(unit.changedLines),
+    netDelta: Number(unit.netDelta),
+    increase: Number(unit.increase),
+    decrease: Number(unit.decrease),
+  }));
+
+export async function listCountHistoryPage(
+  db: Db,
+  input: CountHistoryFilters & {
+    organizationId: string;
+    cursor: { submittedAt: string; id: string } | null;
+    limit: number;
+  },
+): Promise<CountHistoryPage> {
+  const { data, error } = await db.rpc("list_inventory_count_history", {
+    _organization_id: input.organizationId,
+    _changed_only: input.changedOnly,
+    _limit: input.limit,
+    ...(input.locationId ? { _inventory_location_id: input.locationId } : {}),
+    ...(input.countedBy ? { _counted_by: input.countedBy } : {}),
+    ...(input.submittedFrom ? { _submitted_from: input.submittedFrom } : {}),
+    ...(input.submittedBefore ? { _submitted_before: input.submittedBefore } : {}),
+    ...(input.cursor
+      ? { _after_submitted_at: input.cursor.submittedAt, _after_id: input.cursor.id }
+      : {}),
+  });
+  if (error) throw new Error(error.message);
+  const page = data ?? [];
+  const last = page[page.length - 1];
+  return {
+    rows: page.map((row) => ({
+      sessionId: row.count_session_id,
+      submittedAt: row.submitted_at,
+      locationId: row.inventory_location_id,
+      locationName: row.location_name,
+      locationActive: row.location_active,
+      countedBy: row.counted_by,
+      countedByName: row.counted_by_name,
+      lineCount: row.line_count,
+      changedCount: row.changed_count,
+      correctionSummary: toCorrectionUnits(row.correction_summary),
+    })),
+    nextCursor:
+      page.length === input.limit && last
+        ? { submittedAt: last.submitted_at, id: last.count_session_id }
+        : null,
+  };
+}
+
+export async function getCountSession(
+  db: Db,
+  organizationId: string,
+  sessionId: string,
+): Promise<CountSessionDetail> {
+  const { data, error } = await db.rpc("get_inventory_count_session", {
+    _organization_id: organizationId,
+    _count_session_id: sessionId,
+  });
+  if (error) throw new Error(error.message);
+  const row = data as Record<string, unknown>;
+  return {
+    sessionId: row.sessionId as string,
+    submittedAt: row.submittedAt as string,
+    locationId: row.locationId as string,
+    locationName: row.locationName as string,
+    locationActive: row.locationActive as boolean,
+    countedBy: row.countedBy as string,
+    countedByName: row.countedByName as string,
+    lineCount: Number(row.lineCount),
+    changedCount: Number(row.changedCount),
+    correctionSummary: toCorrectionUnits(row.correctionSummary),
+    lines: (row.lines as Array<Record<string, unknown>>).map((line) => ({
+      inventoryItemId: line.inventoryItemId as string,
+      name: line.name as string,
+      sku: (line.sku as string | null) ?? null,
+      unit: line.unit as string,
+      previousQuantity: Number(line.previousQuantity),
+      countedQuantity: Number(line.countedQuantity),
+      delta: Number(line.delta),
+      itemArchivedNow: line.itemArchivedNow as boolean,
     })),
   };
 }

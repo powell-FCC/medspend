@@ -62,3 +62,61 @@ export interface WorkspacePage<T> {
   // The last row's keyset position; null when this was the final page.
   nextCursor: { name: string; id: string } | null;
 }
+
+// Phase 7B.2 count history. The count session and its lines are the immutable record; the
+// names, SKUs and units below are count-time snapshots.
+
+// One unit's corrections in a count. Units are never added together.
+export interface CountCorrectionUnit {
+  unit: string;
+  changedLines: number;
+  netDelta: number;
+  // Sum of positive corrections, and of negative ones (zero or less).
+  increase: number;
+  decrease: number;
+}
+
+export interface CountHistoryRow {
+  sessionId: string;
+  submittedAt: string;
+  locationId: string;
+  // Current location name and state; the schema keeps no location-name snapshot.
+  locationName: string;
+  locationActive: boolean;
+  countedBy: string;
+  // "Former member" once the person no longer has a membership.
+  countedByName: string;
+  lineCount: number;
+  changedCount: number;
+  correctionSummary: CountCorrectionUnit[];
+}
+
+export interface CountHistoryFilters {
+  locationId: string | null;
+  countedBy: string | null;
+  changedOnly: boolean;
+  submittedFrom: string | null;
+  submittedBefore: string | null;
+}
+
+export interface CountHistoryPage {
+  rows: CountHistoryRow[];
+  // The last row's keyset position; null when this was the final page.
+  nextCursor: { submittedAt: string; id: string } | null;
+}
+
+export interface CountSessionLine {
+  inventoryItemId: string;
+  name: string;
+  sku: string | null;
+  unit: string;
+  previousQuantity: number;
+  countedQuantity: number;
+  delta: number;
+  // The item's state today; whether it was archived when counted is not recorded.
+  itemArchivedNow: boolean;
+}
+
+export interface CountSessionDetail extends CountHistoryRow {
+  lines: CountSessionLine[];
+}

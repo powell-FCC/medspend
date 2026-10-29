@@ -2,9 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
+  getCountSession,
   getWorkspaceItemBalances,
   getWorkspaceLocation,
   listAllWorkspaceLocations,
+  listCountHistoryPage,
   listWorkspaceItemsPage,
   listWorkspaceLocationStockPage,
 } from "@/inventory/workspace-reads";
@@ -75,6 +77,37 @@ export const getWorkspaceItemBalancesFn = createServerFn({ method: "POST" })
   )
   .handler(({ data, context }) =>
     getWorkspaceItemBalances(context.supabase, data.organizationId, data.inventoryItemId),
+  );
+
+// Phase 7B.2 count history: read-only, owner+admin, filtered and keyset paged in the database.
+export const listCountHistoryFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    z
+      .object({
+        organizationId: uuid,
+        locationId: uuid.nullable().default(null),
+        countedBy: uuid.nullable().default(null),
+        changedOnly: z.boolean().default(false),
+        submittedFrom: z.string().datetime({ offset: true }).nullable().default(null),
+        submittedBefore: z.string().datetime({ offset: true }).nullable().default(null),
+        cursor: z
+          .object({ submittedAt: z.string().datetime({ offset: true }), id: uuid })
+          .nullable()
+          .default(null),
+        limit: z.number().int().min(1).max(200).default(50),
+      })
+      .parse(value),
+  )
+  .handler(({ data, context }) => listCountHistoryPage(context.supabase, data));
+
+export const getCountSessionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    z.object({ organizationId: uuid, sessionId: uuid }).parse(value),
+  )
+  .handler(({ data, context }) =>
+    getCountSession(context.supabase, data.organizationId, data.sessionId),
   );
 
 // Categories are readable by every member through RLS today; the workspace only lists names.
