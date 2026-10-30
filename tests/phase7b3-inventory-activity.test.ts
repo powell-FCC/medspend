@@ -327,7 +327,8 @@ test("both reads: owner or admin only, organization-scoped, stable, keyset paged
 // Routes, navigation and server functions.
 // ---------------------------------------------------------------------------------------
 test("Activity joins the workspace and every location page, Unassigned included", () => {
-  assert.deepEqual(workspaceTabs, ["items", "locations", "counts", "activity"]);
+  // Phase 7B.4 puts Overview first.
+  assert.deepEqual(workspaceTabs, ["overview", "items", "locations", "counts", "activity"]);
   const workspace = read("src/components/inventory/workspace/InventoryWorkspacePage.tsx");
   assert.match(workspace, /<TabsTrigger value="activity">Activity<\/TabsTrigger>/);
   assert.match(workspace, /<ActivityPanel organizationId=\{active\.organizationId\} \/>/);

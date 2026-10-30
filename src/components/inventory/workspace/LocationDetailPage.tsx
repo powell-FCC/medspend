@@ -20,6 +20,7 @@ import { LocationHeader } from "./LocationHeader";
 import { LocationLabelsPanel } from "./LocationLabelsPanel";
 import { LocationManageDialogs, type LocationManageAction } from "./LocationManageDialogs";
 import { LocationStockTab } from "./LocationStockTab";
+import { UnassignedRecentTransfers } from "./UnassignedRecentTransfers";
 import { useLocationOwnerActions } from "./useLocationOwnerActions";
 
 export function LocationDetailPage({
@@ -137,13 +138,22 @@ function LocationDetail({
           {storage && <TabsTrigger value="counts">Counts</TabsTrigger>}
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
-        <TabsContent value="stock" className="mt-4">
+        <TabsContent value="stock" className="mt-4 space-y-6">
+          {!storage && (
+            <h2 className="text-lg font-semibold" data-testid="unassigned-stock-heading">
+              Stock in Unassigned
+            </h2>
+          )}
           <LocationStockTab
             organizationId={organizationId}
             location={location}
             canManage={canManage}
             onAction={setStockAction}
           />
+          {/* Phase 7B.4: Unassigned is a workspace of its own, with its recent moves here. */}
+          {!storage && (
+            <UnassignedRecentTransfers organizationId={organizationId} locationId={location.id} />
+          )}
         </TabsContent>
         {storage && (
           <TabsContent value="labels" className="mt-4 max-w-xl">

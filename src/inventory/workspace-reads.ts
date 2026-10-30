@@ -11,6 +11,7 @@ import type {
   CountHistoryFilters,
   CountHistoryPage,
   CountSessionDetail,
+  InventoryOverview,
   InventoryWorkspaceStatusFilter,
   TransferHistoryRow,
   WorkspaceItem,
@@ -325,6 +326,74 @@ export async function replaceLocationLabels(db: Db, organizationId: string, loca
     locationId: string;
     locationName: string;
     revokedCount: number;
+  };
+}
+
+// Phase 7B.4 Inventory Overview: one owner+admin read with the snapshot and the
+// needs-attention lists. Recent activity reuses the count and activity reads above.
+export const OVERVIEW_ATTENTION_LIMIT = 10;
+
+type JsonRow = Record<string, unknown>;
+const toItemRow = (row: JsonRow) => ({
+  inventoryItemId: String(row.inventoryItemId),
+  name: String(row.name),
+  sku: (row.sku as string | null) ?? null,
+  unit: String(row.unit ?? ""),
+  itemActive: Boolean(row.itemActive),
+});
+function toList<T>(value: unknown, map: (row: JsonRow) => T) {
+  const list = (value ?? {}) as { total?: unknown; rows?: JsonRow[] };
+  return { total: Number(list.total ?? 0), rows: (list.rows ?? []).map(map) };
+}
+
+export async function getInventoryOverview(
+  db: Db,
+  organizationId: string,
+): Promise<InventoryOverview> {
+  const { data, error } = await db.rpc("get_inventory_overview", {
+    _organization_id: organizationId,
+    _attention_limit: OVERVIEW_ATTENTION_LIMIT,
+  });
+  if (error) throw new Error(error.message);
+  const value = data as { snapshot: JsonRow; attention: JsonRow };
+  const s = value.snapshot;
+  const a = value.attention;
+  return {
+    snapshot: {
+      activeItemCount: Number(s.activeItemCount),
+      itemsInStockCount: Number(s.itemsInStockCount),
+      recordedQuantity: Number(s.recordedQuantity),
+      stockedUnitCount: Number(s.stockedUnitCount),
+      activeStorageLocationCount: Number(s.activeStorageLocationCount),
+      archivedStorageLocationCount: Number(s.archivedStorageLocationCount),
+      unassignedLocationId: (s.unassignedLocationId as string | null) ?? null,
+      unassignedItemCount: Number(s.unassignedItemCount),
+      unassignedQuantity: Number(s.unassignedQuantity),
+    },
+    attention: {
+      unassignedStock: toList(a.unassignedStock, (row) => ({
+        ...toItemRow(row),
+        quantity: Number(row.quantity),
+      })),
+      neverCountedLocations: toList(a.neverCountedLocations, (row) => ({
+        locationId: String(row.locationId),
+        name: String(row.name),
+        countableItemCount: Number(row.countableItemCount),
+      })),
+      neverCountedItems: toList(a.neverCountedItems, (row) => ({
+        ...toItemRow(row),
+        locationCount: Number(row.locationCount),
+      })),
+      noActiveLabel: toList(a.noActiveLabel, (row) => ({
+        locationId: String(row.locationId),
+        name: String(row.name),
+      })),
+      archivedWithActiveLabel: toList(a.archivedWithActiveLabel, (row) => ({
+        locationId: String(row.locationId),
+        name: String(row.name),
+        activeLabelCount: Number(row.activeLabelCount),
+      })),
+    },
   };
 }
 

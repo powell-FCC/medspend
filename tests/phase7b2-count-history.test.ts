@@ -339,11 +339,11 @@ test("history pages by (submitted_at DESC, id DESC); detail uses count-time snap
 // Routes, navigation and server functions.
 // ---------------------------------------------------------------------------------------
 test("Counts joins the Inventory workspace and storage locations; Unassigned has none", () => {
-  // Phase 7B.3 adds Activity after Counts.
-  assert.deepEqual(workspaceTabs, ["items", "locations", "counts", "activity"]);
+  // Phase 7B.3 adds Activity after Counts; Phase 7B.4 puts Overview first.
+  assert.deepEqual(workspaceTabs, ["overview", "items", "locations", "counts", "activity"]);
   assert.match(
     read("src/routes/_authenticated/inventory.index.tsx"),
-    /z\.enum\(\["items", "locations", "counts", "activity"\]\)/,
+    /z\s*\.enum\(\["overview", "items", "locations", "counts", "activity"\]\)/,
   );
   assert.match(
     read("src/routes/_authenticated/inventory.locations.$locationId.tsx"),

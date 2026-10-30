@@ -180,3 +180,51 @@ export interface ActivityPage<T> {
   // The last row's keyset position; null when this was the final page.
   nextCursor: ActivityCursor | null;
 }
+
+// Phase 7B.4 Inventory Overview. Current state only; nothing here is time-based.
+
+export interface OverviewSnapshot {
+  activeItemCount: number;
+  itemsInStockCount: number;
+  // Raw recorded quantities summed across every unit; never comparable or a value.
+  recordedQuantity: number;
+  stockedUnitCount: number;
+  activeStorageLocationCount: number;
+  archivedStorageLocationCount: number;
+  unassignedLocationId: string | null;
+  unassignedItemCount: number;
+  unassignedQuantity: number;
+}
+
+export interface OverviewList<T> {
+  // Every matching row; rows holds at most the requested number, by name.
+  total: number;
+  rows: T[];
+}
+
+export interface OverviewItemRow {
+  inventoryItemId: string;
+  name: string;
+  sku: string | null;
+  unit: string;
+  itemActive: boolean;
+}
+
+export interface InventoryOverview {
+  snapshot: OverviewSnapshot;
+  attention: {
+    unassignedStock: OverviewList<OverviewItemRow & { quantity: number }>;
+    neverCountedLocations: OverviewList<{
+      locationId: string;
+      name: string;
+      countableItemCount: number;
+    }>;
+    neverCountedItems: OverviewList<OverviewItemRow & { locationCount: number }>;
+    noActiveLabel: OverviewList<{ locationId: string; name: string }>;
+    archivedWithActiveLabel: OverviewList<{
+      locationId: string;
+      name: string;
+      activeLabelCount: number;
+    }>;
+  };
+}

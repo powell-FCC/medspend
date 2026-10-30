@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   getCountSession,
+  getInventoryOverview,
   getWorkspaceItemBalances,
   getWorkspaceLocation,
   listAllWorkspaceLocations,
@@ -159,3 +160,9 @@ export const listWorkspaceCategoriesFn = createServerFn({ method: "POST" })
       createdAt: row.created_at,
     }));
   });
+
+// Phase 7B.4 Inventory Overview: read-only, owner+admin, computed in the database.
+export const getInventoryOverviewFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => z.object({ organizationId: uuid }).parse(value))
+  .handler(({ data, context }) => getInventoryOverview(context.supabase, data.organizationId));

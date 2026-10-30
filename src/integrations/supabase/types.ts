@@ -2656,6 +2656,10 @@ export type Database = {
         Args: { _count_session_id: string; _organization_id: string }
         Returns: Json
       }
+      get_inventory_overview: {
+        Args: { _attention_limit?: number; _organization_id: string }
+        Returns: Json
+      }
       get_inventory_workspace_location: {
         Args: { _inventory_location_id: string; _organization_id: string }
         Returns: Json
