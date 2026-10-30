@@ -7,6 +7,7 @@ import {
   formatWorkspaceDate,
 } from "@/inventory/workspace";
 import type { WorkspaceLocationDetail } from "@/types/inventory-workspace";
+import { UNASSIGNED_EXPLAINER } from "@/inventory/overview";
 import { ReadOnlyBadge } from "./ReadOnlyBadge";
 
 export function LocationHeader({
@@ -48,7 +49,7 @@ export function LocationHeader({
           <p className="mt-2 text-sm text-muted-foreground">
             {storage
               ? location.description || "A physical place stock is kept."
-              : "Received stock not yet placed in a physical location. It is never counted and has no QR labels."}
+              : `${UNASSIGNED_EXPLAINER} It is never counted and has no QR labels.`}
           </p>
         </div>
         {canManage && storage && (

@@ -89,8 +89,8 @@ export function LocationsTable({
                   </Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground md:col-span-7 md:mt-0">
-                  Received stock not yet placed in a physical location · {location.stockedItemCount}{" "}
-                  item{location.stockedItemCount === 1 ? "" : "s"} · Not counted or labeled
+                  Not assigned to a physical storage location · {location.stockedItemCount} item
+                  {location.stockedItemCount === 1 ? "" : "s"} · Not counted or labeled
                 </p>
               </li>
             ) : (

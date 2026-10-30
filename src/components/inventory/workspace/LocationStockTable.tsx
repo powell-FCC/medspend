@@ -43,7 +43,41 @@ export function LocationStockTable({
         Par and status are organization-wide: the item's total across every location against its
         organization par. They are not a threshold for this location.
       </p>
-      <div className="overflow-x-auto rounded-xl border bg-card">
+      {/* Phones get cards (Phase 7B.4); from md up the dense table, scrolling inside its panel. */}
+      <ul className="divide-y rounded-xl border bg-card md:hidden" aria-label="Stock">
+        {rows.map((row) => (
+          <li key={row.inventoryItemId} className="space-y-1.5 px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 break-words font-medium">
+                {row.name}
+                {!row.itemActive && (
+                  <Badge variant="outline" className="ml-2">
+                    Archived item
+                  </Badge>
+                )}
+              </p>
+              <span className="whitespace-nowrap font-semibold tabular-nums">
+                {formatQuantity(row.quantity)} {row.unit}
+              </span>
+            </div>
+            <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="whitespace-nowrap font-mono">{row.sku || "No SKU"}</span>
+              <Badge className={inventoryStatusTones[row.organizationStockStatus]}>
+                {inventoryStatusLabel[row.organizationStockStatus]}
+              </Badge>
+              {storage && (
+                <span>
+                  {row.lastCountedAt
+                    ? `Counted here ${formatWorkspaceDate(row.lastCountedAt)}`
+                    : "Not counted yet"}
+                </span>
+              )}
+            </p>
+            {canManage && <StockActions row={row} onAction={onAction} />}
+          </li>
+        ))}
+      </ul>
+      <div className="hidden overflow-x-auto rounded-xl border bg-card md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -94,36 +128,7 @@ export function LocationStockTable({
                 )}
                 {canManage && (
                   <TableCell>
-                    <div className="flex justify-end gap-1">
-                      {(() => {
-                        const item = {
-                          id: row.inventoryItemId,
-                          name: row.name,
-                          unit: row.unit,
-                          quantity: row.organizationQuantity,
-                        };
-                        return (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              aria-label={`Move ${row.name}`}
-                              onClick={() => onAction?.({ kind: "move", item })}
-                            >
-                              Move
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              aria-label={`Adjust ${row.name}`}
-                              onClick={() => onAction?.({ kind: "adjust", item })}
-                            >
-                              Adjust
-                            </Button>
-                          </>
-                        );
-                      })()}
-                    </div>
+                    <StockActions row={row} onAction={onAction} />
                   </TableCell>
                 )}
               </TableRow>
@@ -131,6 +136,42 @@ export function LocationStockTable({
           </TableBody>
         </Table>
       </div>
+    </div>
+  );
+}
+
+// Owner actions for one row: move it elsewhere or adjust it here.
+function StockActions({
+  row,
+  onAction,
+}: {
+  row: WorkspaceStockRow;
+  onAction?: (action: StockRowAction) => void;
+}) {
+  const item = {
+    id: row.inventoryItemId,
+    name: row.name,
+    unit: row.unit,
+    quantity: row.organizationQuantity,
+  };
+  return (
+    <div className="flex justify-end gap-1">
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label={`Move ${row.name}`}
+        onClick={() => onAction?.({ kind: "move", item })}
+      >
+        Move
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label={`Adjust ${row.name}`}
+        onClick={() => onAction?.({ kind: "adjust", item })}
+      >
+        Adjust
+      </Button>
     </div>
   );
 }
