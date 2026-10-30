@@ -339,19 +339,19 @@ test("history pages by (submitted_at DESC, id DESC); detail uses count-time snap
 // Routes, navigation and server functions.
 // ---------------------------------------------------------------------------------------
 test("Counts joins the Inventory workspace and storage locations; Unassigned has none", () => {
-  assert.deepEqual(workspaceTabs, ["items", "locations", "counts"]);
+  // Phase 7B.3 adds Activity after Counts.
+  assert.deepEqual(workspaceTabs, ["items", "locations", "counts", "activity"]);
   assert.match(
     read("src/routes/_authenticated/inventory.index.tsx"),
-    /z\.enum\(\["items", "locations", "counts"\]\)/,
+    /z\.enum\(\["items", "locations", "counts", "activity"\]\)/,
   );
   assert.match(
     read("src/routes/_authenticated/inventory.locations.$locationId.tsx"),
-    /z\.enum\(\["stock", "labels", "counts"\]\)/,
+    /z\.enum\(\["stock", "labels", "counts", "activity"\]\)/,
   );
   const workspace = read("src/components/inventory/workspace/InventoryWorkspacePage.tsx");
   assert.match(workspace, /<TabsTrigger value="counts">Counts<\/TabsTrigger>/);
   assert.match(workspace, /<CountHistoryPanel organizationId=\{active\.organizationId\} \/>/);
-  assert.doesNotMatch(workspace, /Activity<\/TabsTrigger>/, "no Activity tab yet");
   const detail = read("src/components/inventory/workspace/LocationDetailPage.tsx");
   assert.match(detail, /\{storage && <TabsTrigger value="counts">Counts<\/TabsTrigger>\}/);
   assert.match(
@@ -359,7 +359,11 @@ test("Counts joins the Inventory workspace and storage locations; Unassigned has
     /<CountHistoryPanel organizationId=\{organizationId\} locationId=\{location\.id\} \/>/,
     "the location tab reuses the same history panel and read contract",
   );
-  assert.match(detail, /tab=\{location\.data\.kind === "unassigned" \? "stock" : tab\}/);
+  // Unassigned shows Stock and (7B.3) Activity, never Labels or Counts.
+  assert.match(
+    detail,
+    /tab=\{location\.data\.kind === "unassigned" && tab !== "activity" \? "stock" : tab\}/,
+  );
   const route = read("src/routes/_authenticated/inventory.counts.$sessionId.tsx");
   assert.match(route, /createFileRoute\("\/_authenticated\/inventory\/counts\/\$sessionId"\)/);
   assert.match(read("src/routeTree.gen.ts"), /\/inventory\/counts\/\$sessionId/);

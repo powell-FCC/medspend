@@ -120,3 +120,63 @@ export interface CountSessionLine {
 export interface CountSessionDetail extends CountHistoryRow {
   lines: CountSessionLine[];
 }
+
+// Phase 7B.3 inventory activity. Transfers move stock between locations; manual adjustments
+// change a total. Item and location names are current names: neither table keeps a snapshot.
+
+export interface TransferHistoryRow {
+  transferId: string;
+  createdAt: string;
+  inventoryItemId: string;
+  itemName: string;
+  itemSku: string | null;
+  itemUnit: string;
+  quantity: number;
+  fromLocationId: string;
+  fromLocationName: string;
+  toLocationId: string;
+  toLocationName: string;
+  createdBy: string;
+  // "Former member" once the person no longer has a membership.
+  createdByName: string;
+}
+
+export interface AdjustmentHistoryRow {
+  adjustmentId: string;
+  createdAt: string;
+  inventoryItemId: string;
+  itemName: string;
+  itemSku: string | null;
+  itemUnit: string;
+  // Null only for adjustments recorded before inventory locations existed.
+  locationId: string | null;
+  locationName: string | null;
+  // The item's organization total (all locations) before and after, as stored.
+  previousQuantity: number;
+  adjustmentAmount: number;
+  newQuantity: number;
+  reason: string;
+  sourceType: string | null;
+  createdBy: string;
+  createdByName: string;
+}
+
+export interface ActivityFilters {
+  locationId: string | null;
+  itemId: string | null;
+  createdBy: string | null;
+  createdFrom: string | null;
+  createdBefore: string | null;
+}
+
+export interface AdjustmentFilters extends ActivityFilters {
+  reason: string | null;
+}
+
+export type ActivityCursor = { createdAt: string; id: string };
+
+export interface ActivityPage<T> {
+  rows: T[];
+  // The last row's keyset position; null when this was the final page.
+  nextCursor: ActivityCursor | null;
+}

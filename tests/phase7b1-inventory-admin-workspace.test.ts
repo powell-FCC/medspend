@@ -418,12 +418,12 @@ test("routes: /inventory tabs in the query string and a location detail route", 
   const index = read("src/routes/_authenticated/inventory.index.tsx");
   assert.match(
     index,
-    // Phase 7B.2 added Counts after Items and Locations.
-    /tab: z\.enum\(\["items", "locations", "counts"\]\)\.catch\("items"\)\.default\("items"\)/,
+    // Phase 7B.2 added Counts after Items and Locations; Phase 7B.3 added Activity.
+    /tab: z\.enum\(\["items", "locations", "counts", "activity"\]\)\.catch\("items"\)\.default\("items"\)/,
   );
   const detail = read("src/routes/_authenticated/inventory.locations.$locationId.tsx");
   assert.match(detail, /createFileRoute\("\/_authenticated\/inventory\/locations\/\$locationId"\)/);
-  assert.match(detail, /tab: z\.enum\(\["stock", "labels", "counts"\]\)/);
+  assert.match(detail, /tab: z\.enum\(\["stock", "labels", "counts", "activity"\]\)/);
   const tree = read("src/routeTree.gen.ts");
   for (const path of ["/inventory/", "/inventory/locations/$locationId"])
     assert.ok(tree.includes(`'${path}'`) || tree.includes(`"${path}"`), path);

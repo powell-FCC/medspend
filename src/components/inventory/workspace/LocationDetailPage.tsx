@@ -13,6 +13,7 @@ import {
   workspaceQueryKey,
 } from "@/inventory/workspace";
 import type { WorkspaceLocationDetail } from "@/types/inventory-workspace";
+import { ActivityPanel } from "./ActivityPanel";
 import { CountHistoryPanel } from "./CountHistoryPanel";
 import { ItemStockDialogs, type ItemStockAction } from "./ItemStockDialogs";
 import { LocationHeader } from "./LocationHeader";
@@ -77,7 +78,7 @@ export function LocationDetailPage({
           organizationId={organizationId}
           location={location.data}
           canManage={access.canManage}
-          tab={location.data.kind === "unassigned" ? "stock" : tab}
+          tab={location.data.kind === "unassigned" && tab !== "activity" ? "stock" : tab}
           onTabChange={onTabChange}
         />
       )}
@@ -134,6 +135,7 @@ function LocationDetail({
           <TabsTrigger value="stock">Stock</TabsTrigger>
           {storage && <TabsTrigger value="labels">Labels</TabsTrigger>}
           {storage && <TabsTrigger value="counts">Counts</TabsTrigger>}
+          <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="stock" className="mt-4">
           <LocationStockTab
@@ -160,6 +162,11 @@ function LocationDetail({
             <CountHistoryPanel organizationId={organizationId} locationId={location.id} />
           </TabsContent>
         )}
+        {/* Unassigned takes part in moves and adjustments, so it has Activity too; it is never
+            counted or labeled. */}
+        <TabsContent value="activity" className="mt-4">
+          <ActivityPanel organizationId={organizationId} locationId={location.id} />
+        </TabsContent>
       </Tabs>
       {canManage && (
         <>

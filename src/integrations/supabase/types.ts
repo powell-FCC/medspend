@@ -2717,6 +2717,37 @@ export type Database = {
           unit: string
         }[]
       }
+      list_inventory_adjustment_history: {
+        Args: {
+          _after_created_at?: string
+          _after_id?: string
+          _created_before?: string
+          _created_by?: string
+          _created_from?: string
+          _inventory_item_id?: string
+          _inventory_location_id?: string
+          _limit?: number
+          _organization_id: string
+          _reason?: string
+        }
+        Returns: {
+          adjustment_amount: number
+          adjustment_id: string
+          created_at: string
+          created_by: string
+          created_by_name: string
+          inventory_item_id: string
+          inventory_location_id: string | null
+          item_name: string
+          item_sku: string | null
+          item_unit: string
+          location_name: string | null
+          new_quantity: number
+          previous_quantity: number
+          reason: string
+          source_type: string | null
+        }[]
+      }
       list_inventory_count_history: {
         Args: {
           _after_id?: string
@@ -2740,6 +2771,34 @@ export type Database = {
           location_active: boolean
           location_name: string
           submitted_at: string
+        }[]
+      }
+      list_inventory_transfer_history: {
+        Args: {
+          _after_created_at?: string
+          _after_id?: string
+          _created_before?: string
+          _created_by?: string
+          _created_from?: string
+          _inventory_item_id?: string
+          _inventory_location_id?: string
+          _limit?: number
+          _organization_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          created_by_name: string
+          from_location_id: string
+          from_location_name: string
+          inventory_item_id: string
+          item_name: string
+          item_sku: string | null
+          item_unit: string
+          quantity: number
+          to_location_id: string
+          to_location_name: string
+          transfer_id: string
         }[]
       }
       list_inventory_workspace_locations: {

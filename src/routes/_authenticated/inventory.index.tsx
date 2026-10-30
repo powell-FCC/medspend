@@ -2,9 +2,9 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 import { InventoryWorkspacePage } from "@/components/inventory/workspace/InventoryWorkspacePage";
 
-// Tabs live in the query string so they can be linked. Overview and Activity join later.
+// Tabs live in the query string so they can be linked. Overview joins later.
 const inventorySearchSchema = z.object({
-  tab: z.enum(["items", "locations", "counts"]).catch("items").default("items"),
+  tab: z.enum(["items", "locations", "counts", "activity"]).catch("items").default("items"),
 });
 
 export const Route = createFileRoute("/_authenticated/inventory/")({

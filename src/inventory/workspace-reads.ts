@@ -2,11 +2,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import type { InventoryLocationBalance, InventoryStatus } from "@/types/inventory";
 import type {
+  ActivityCursor,
+  ActivityFilters,
+  ActivityPage,
+  AdjustmentFilters,
+  AdjustmentHistoryRow,
   CountCorrectionUnit,
   CountHistoryFilters,
   CountHistoryPage,
   CountSessionDetail,
   InventoryWorkspaceStatusFilter,
+  TransferHistoryRow,
   WorkspaceItem,
   WorkspaceLocation,
   WorkspaceLocationDetail,
@@ -320,4 +326,90 @@ export async function replaceLocationLabels(db: Db, organizationId: string, loca
     locationName: string;
     revokedCount: number;
   };
+}
+
+// Phase 7B.3 inventory activity. Owner+admin read functions over transfers and manual
+// adjustments (never physical-count corrections or invoice receipts), keyset paged.
+type ActivityInput<F> = F & {
+  organizationId: string;
+  cursor: ActivityCursor | null;
+  limit: number;
+};
+
+const activityArgs = (input: ActivityInput<ActivityFilters>) => ({
+  _organization_id: input.organizationId,
+  _limit: input.limit,
+  ...(input.locationId ? { _inventory_location_id: input.locationId } : {}),
+  ...(input.itemId ? { _inventory_item_id: input.itemId } : {}),
+  ...(input.createdBy ? { _created_by: input.createdBy } : {}),
+  ...(input.createdFrom ? { _created_from: input.createdFrom } : {}),
+  ...(input.createdBefore ? { _created_before: input.createdBefore } : {}),
+  ...(input.cursor
+    ? { _after_created_at: input.cursor.createdAt, _after_id: input.cursor.id }
+    : {}),
+});
+
+function activityPage<T extends { createdAt: string }>(
+  rows: T[],
+  id: (row: T) => string,
+  limit: number,
+): ActivityPage<T> {
+  const last = rows[rows.length - 1];
+  return {
+    rows,
+    nextCursor: rows.length === limit && last ? { createdAt: last.createdAt, id: id(last) } : null,
+  };
+}
+
+export async function listTransferHistoryPage(
+  db: Db,
+  input: ActivityInput<ActivityFilters>,
+): Promise<ActivityPage<TransferHistoryRow>> {
+  const { data, error } = await db.rpc("list_inventory_transfer_history", activityArgs(input));
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []).map((row): TransferHistoryRow => ({
+    transferId: row.transfer_id,
+    createdAt: row.created_at,
+    inventoryItemId: row.inventory_item_id,
+    itemName: row.item_name,
+    itemSku: row.item_sku ?? null,
+    itemUnit: row.item_unit,
+    quantity: Number(row.quantity),
+    fromLocationId: row.from_location_id,
+    fromLocationName: row.from_location_name,
+    toLocationId: row.to_location_id,
+    toLocationName: row.to_location_name,
+    createdBy: row.created_by,
+    createdByName: row.created_by_name,
+  }));
+  return activityPage(rows, (row) => row.transferId, input.limit);
+}
+
+export async function listAdjustmentHistoryPage(
+  db: Db,
+  input: ActivityInput<AdjustmentFilters>,
+): Promise<ActivityPage<AdjustmentHistoryRow>> {
+  const { data, error } = await db.rpc("list_inventory_adjustment_history", {
+    ...activityArgs(input),
+    ...(input.reason ? { _reason: input.reason } : {}),
+  });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []).map((row): AdjustmentHistoryRow => ({
+    adjustmentId: row.adjustment_id,
+    createdAt: row.created_at,
+    inventoryItemId: row.inventory_item_id,
+    itemName: row.item_name,
+    itemSku: row.item_sku ?? null,
+    itemUnit: row.item_unit,
+    locationId: row.inventory_location_id ?? null,
+    locationName: row.location_name ?? null,
+    previousQuantity: Number(row.previous_quantity),
+    adjustmentAmount: Number(row.adjustment_amount),
+    newQuantity: Number(row.new_quantity),
+    reason: row.reason,
+    sourceType: row.source_type ?? null,
+    createdBy: row.created_by,
+    createdByName: row.created_by_name,
+  }));
+  return activityPage(rows, (row) => row.adjustmentId, input.limit);
 }
