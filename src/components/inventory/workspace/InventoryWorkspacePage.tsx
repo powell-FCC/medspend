@@ -59,13 +59,17 @@ export function InventoryWorkspacePage({
         onValueChange={(value) => onTabChange(value as WorkspaceTab)}
         className="mt-6"
       >
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="items">Items</TabsTrigger>
-          <TabsTrigger value="locations">Locations</TabsTrigger>
-          <TabsTrigger value="counts">Counts</TabsTrigger>
-          <TabsTrigger value="activity">Activity</TabsTrigger>
-        </TabsList>
+        {/* Five tabs are wider than a phone. The strip scrolls inside its own box so the page
+            never does; where it fits, nothing changes. */}
+        <div className="max-w-full overflow-x-auto" data-testid="inventory-tabs-scroller">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="items">Items</TabsTrigger>
+            <TabsTrigger value="locations">Locations</TabsTrigger>
+            <TabsTrigger value="counts">Counts</TabsTrigger>
+            <TabsTrigger value="activity">Activity</TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="overview" className="mt-4">
           <InventoryOverviewTab organizationId={active.organizationId} />
         </TabsContent>

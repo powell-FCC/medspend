@@ -97,8 +97,13 @@ export function ItemsTab({
           </Button>
         </div>
       )}
-      <div className="mb-4 grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(240px,1fr)_200px_160px_auto]">
-        <div className="relative">
+      {/* The four-column row needs ~784px; beside the sidebar it only fits from xl. Below that,
+          search takes a full row and the other filters share two columns. */}
+      <div
+        className="mb-4 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_200px_160px_auto]"
+        data-testid="items-filter-bar"
+      >
+        <div className="relative sm:col-span-2 xl:col-span-1">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             aria-label="Search inventory"
