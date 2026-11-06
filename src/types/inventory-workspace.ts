@@ -228,3 +228,58 @@ export interface InventoryOverview {
     }>;
   };
 }
+
+// Phase 7B.5 count cadence. Optional, one per organization; no policy means cadence is off.
+
+export interface CountPolicy {
+  configured: boolean;
+  enabled: boolean;
+  // Kept while cadence is off, so turning it back on restores it.
+  intervalDays: number | null;
+  updatedAt: string | null;
+  updatedByName: string | null;
+}
+
+// Decided by the database (inventory_location_count_freshness); the app only labels it.
+// current, due and overdue exist only while cadence is on; counted only while it is off.
+export type CountFreshnessState =
+  | "not_applicable"
+  | "nothing_to_count"
+  | "never_counted"
+  | "counted"
+  | "current"
+  | "due"
+  | "overdue";
+
+export interface CountFreshnessRow {
+  locationId: string;
+  name: string;
+  state: CountFreshnessState;
+  lastCountedAt: string | null;
+  nextDueAt: string | null;
+}
+
+export interface LocationCountFreshness {
+  locationId: string;
+  state: CountFreshnessState;
+  lastCountedAt: string | null;
+  nextDueAt: string | null;
+  countableItemCount: number | null;
+}
+
+export interface CountFreshness {
+  policy: { enabled: boolean; intervalDays: number | null };
+  evaluatedAt: string;
+  summary: {
+    current: number;
+    due: number;
+    overdue: number;
+    neverCounted: number;
+    counted: number;
+    nothingToCount: number;
+  };
+  // Due and overdue locations (cadence on only), most overdue first.
+  attention: { total: number; rows: CountFreshnessRow[] };
+  nextDue: { locationId: string; name: string; nextDueAt: string } | null;
+  location: LocationCountFreshness | null;
+}

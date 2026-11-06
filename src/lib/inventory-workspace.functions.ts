@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
+  getCountFreshness,
+  getCountPolicy,
   getCountSession,
   getInventoryOverview,
   getWorkspaceItemBalances,
@@ -166,3 +168,22 @@ export const getInventoryOverviewFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => z.object({ organizationId: uuid }).parse(value))
   .handler(({ data, context }) => getInventoryOverview(context.supabase, data.organizationId));
+
+// Phase 7B.5 count cadence reads: owner+admin, checked in the database.
+export const getCountPolicyFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => z.object({ organizationId: uuid }).parse(value))
+  .handler(({ data, context }) => getCountPolicy(context.supabase, data.organizationId));
+
+export const getCountFreshnessFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    z
+      .object({
+        organizationId: uuid,
+        locationId: uuid.nullable().default(null),
+        limit: z.number().int().min(1).max(50).default(10),
+      })
+      .parse(value),
+  )
+  .handler(({ data, context }) => getCountFreshness(context.supabase, data));

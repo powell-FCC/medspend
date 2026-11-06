@@ -3,6 +3,10 @@ import type { Database } from "@/integrations/supabase/types";
 import type { InventoryLocationBalance, InventoryStatus } from "@/types/inventory";
 import type {
   ActivityCursor,
+  CountFreshness,
+  CountFreshnessRow,
+  CountFreshnessState,
+  CountPolicy,
   ActivityFilters,
   ActivityPage,
   AdjustmentFilters,
@@ -326,6 +330,96 @@ export async function replaceLocationLabels(db: Db, organizationId: string, loca
     locationId: string;
     locationName: string;
     revokedCount: number;
+  };
+}
+
+// Phase 7B.5 count cadence. Owner+admin reads; the owner's write is checked again in the
+// database. Freshness states come from the database as decided there.
+const toCountPolicy = (row: JsonRow): CountPolicy => ({
+  configured: Boolean(row.configured),
+  enabled: Boolean(row.enabled),
+  intervalDays: nullableNumber(row.intervalDays),
+  updatedAt: (row.updatedAt as string | null) ?? null,
+  updatedByName: (row.updatedByName as string | null) ?? null,
+});
+
+export async function getCountPolicy(db: Db, organizationId: string): Promise<CountPolicy> {
+  const { data, error } = await db.rpc("get_inventory_count_policy", {
+    _organization_id: organizationId,
+  });
+  if (error) throw new Error(error.message);
+  return toCountPolicy(data as JsonRow);
+}
+
+export async function setCountPolicy(
+  db: Db,
+  input: { organizationId: string; enabled: boolean; intervalDays: number | null },
+): Promise<CountPolicy> {
+  const { data, error } = await db.rpc("set_inventory_count_policy", {
+    _organization_id: input.organizationId,
+    _enabled: input.enabled,
+    // Null while turning cadence off keeps the stored interval.
+    _interval_days: input.intervalDays as number,
+  });
+  if (error) throw new Error(error.message);
+  return toCountPolicy(data as JsonRow);
+}
+
+export const COUNT_FRESHNESS_ATTENTION_LIMIT = 10;
+
+export async function getCountFreshness(
+  db: Db,
+  input: { organizationId: string; locationId?: string | null; limit?: number },
+): Promise<CountFreshness> {
+  const { data, error } = await db.rpc("get_inventory_count_freshness", {
+    _organization_id: input.organizationId,
+    _limit: input.limit ?? COUNT_FRESHNESS_ATTENTION_LIMIT,
+    ...(input.locationId ? { _inventory_location_id: input.locationId } : {}),
+  });
+  if (error) throw new Error(error.message);
+  const value = data as JsonRow;
+  const policy = value.policy as JsonRow;
+  const summary = value.summary as JsonRow;
+  const attention = value.attention as JsonRow;
+  const nextDue = value.nextDue as JsonRow | null;
+  const location = value.location as JsonRow | null;
+  return {
+    policy: { enabled: Boolean(policy.enabled), intervalDays: nullableNumber(policy.intervalDays) },
+    evaluatedAt: value.evaluatedAt as string,
+    summary: {
+      current: Number(summary.current),
+      due: Number(summary.due),
+      overdue: Number(summary.overdue),
+      neverCounted: Number(summary.neverCounted),
+      counted: Number(summary.counted),
+      nothingToCount: Number(summary.nothingToCount),
+    },
+    attention: {
+      total: Number(attention.total),
+      rows: (attention.rows as JsonRow[]).map((row): CountFreshnessRow => ({
+        locationId: row.locationId as string,
+        name: row.name as string,
+        state: row.state as CountFreshnessState,
+        lastCountedAt: (row.lastCountedAt as string | null) ?? null,
+        nextDueAt: (row.nextDueAt as string | null) ?? null,
+      })),
+    },
+    nextDue: nextDue
+      ? {
+          locationId: nextDue.locationId as string,
+          name: nextDue.name as string,
+          nextDueAt: nextDue.nextDueAt as string,
+        }
+      : null,
+    location: location
+      ? {
+          locationId: location.locationId as string,
+          state: location.state as CountFreshnessState,
+          lastCountedAt: (location.lastCountedAt as string | null) ?? null,
+          nextDueAt: (location.nextDueAt as string | null) ?? null,
+          countableItemCount: nullableNumber(location.countableItemCount),
+        }
+      : null,
   };
 }
 

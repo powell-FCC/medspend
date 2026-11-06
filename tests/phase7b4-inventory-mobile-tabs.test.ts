@@ -41,7 +41,8 @@ const stubs: Record<string, string> = {
       listTransferHistoryFn = pending, listAdjustmentHistoryFn = pending,
       listWorkspaceLocationsFn = pending, listWorkspaceItemsFn = pending,
       listWorkspaceCategoriesFn = pending, getWorkspaceItemBalancesFn = pending,
-      listWorkspaceLocationStockFn = pending, getWorkspaceLocationFn = pending;`,
+      listWorkspaceLocationStockFn = pending, getWorkspaceLocationFn = pending,
+      getCountFreshnessFn = pending;`,
   "@/lib/orgs.functions": `export const listOrgMembersFn = () => new Promise(() => {});`,
 };
 function resolveSource(base: string) {

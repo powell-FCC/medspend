@@ -6,6 +6,7 @@ import { useActiveOrg } from "@/hooks/use-active-org";
 import { createInvitationFn, listOrgInvitesFn, listOrgMembersFn, revokeInvitationFn } from "@/lib/orgs.functions";
 import { listOrgStructureFn } from "@/lib/org-structure.functions";
 import { ConfirmOrganizationAction, MembersSection, StructureSection } from "@/components/settings/OrganizationManagement";
+import { CountPolicySettings } from "@/components/settings/CountPolicySettings";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({ meta: [{ title: "Settings — MedSpend" }, { name: "robots", content: "noindex" }] }),
@@ -180,6 +181,10 @@ function SettingsContent() {
 
       <StructureSection kind="teams" title="Teams" organizationId={active.organizationId} />
       <StructureSection kind="locations" title="Locations" organizationId={active.organizationId} />
+      <CountPolicySettings
+        organizationId={active.organizationId}
+        canManage={active.role === "owner"}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
 import { assertInventoryOwner } from "@/inventory/owner-access";
+import { setCountPolicy } from "@/inventory/workspace-reads";
 import { getInventoryStatus } from "@/inventory/status";
 import { locationAdjustmentReasons } from "@/types/inventory";
 import type {
@@ -415,4 +416,25 @@ export const moveInventoryStockFn = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     const values = result as { transferId: string; replayed: boolean };
     return { transferId: values.transferId, replayed: values.replayed };
+  });
+
+// Phase 7B.5: the organization count cadence. Owner only, here and in the database; the
+// interval is validated again there (1..365, required when cadence is on).
+export const setCountPolicyFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    z
+      .object({
+        organizationId: uuid,
+        enabled: z.boolean(),
+        intervalDays: z.number().int().min(1).max(365).nullable(),
+      })
+      .refine((input) => !input.enabled || input.intervalDays !== null, {
+        message: "Choose how many days between counts",
+      })
+      .parse(value),
+  )
+  .handler(async ({ data, context }) => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
+    return setCountPolicy(context.supabase, data);
   });
