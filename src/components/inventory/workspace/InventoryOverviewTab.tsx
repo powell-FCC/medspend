@@ -8,6 +8,7 @@ import {
   listTransferHistoryFn,
 } from "@/lib/inventory-workspace.functions";
 import { workspaceQueryKey } from "@/inventory/workspace";
+import { CountScheduleAttention } from "./CountScheduleAttention";
 import { NeedsAttention, OverviewSnapshotCards, RecentActivityLists } from "./OverviewSections";
 
 const RECENT = 5;
@@ -55,6 +56,7 @@ export function InventoryOverviewTab({ organizationId }: { organizationId: strin
         <>
           <OverviewSnapshotCards snapshot={overview.data.snapshot} />
           <NeedsAttention overview={overview.data} />
+          <CountScheduleAttention organizationId={organizationId} />
         </>
       )}
       {recentError ? (

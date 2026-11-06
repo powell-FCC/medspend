@@ -16,6 +16,7 @@ import type { WorkspaceLocationDetail } from "@/types/inventory-workspace";
 import { ActivityPanel } from "./ActivityPanel";
 import { CountHistoryPanel } from "./CountHistoryPanel";
 import { ItemStockDialogs, type ItemStockAction } from "./ItemStockDialogs";
+import { LocationCountSchedule } from "./LocationCountSchedule";
 import { LocationHeader } from "./LocationHeader";
 import { LocationLabelsPanel } from "./LocationLabelsPanel";
 import { LocationManageDialogs, type LocationManageAction } from "./LocationManageDialogs";
@@ -122,6 +123,9 @@ function LocationDetail({
           }
         }}
       />
+      {storage && location.active && (
+        <LocationCountSchedule organizationId={organizationId} locationId={location.id} />
+      )}
       {error && (
         <p role="alert" className="mt-3 text-sm text-destructive">
           {error}

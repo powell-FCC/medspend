@@ -2656,6 +2656,18 @@ export type Database = {
         Args: { _count_session_id: string; _organization_id: string }
         Returns: Json
       }
+      get_inventory_count_freshness: {
+        Args: {
+          _inventory_location_id?: string
+          _limit?: number
+          _organization_id: string
+        }
+        Returns: Json
+      }
+      get_inventory_count_policy: {
+        Args: { _organization_id: string }
+        Returns: Json
+      }
       get_inventory_overview: {
         Args: { _attention_limit?: number; _organization_id: string }
         Returns: Json
@@ -3145,6 +3157,14 @@ export type Database = {
           _source_file_id: string
         }
         Returns: boolean
+      }
+      set_inventory_count_policy: {
+        Args: {
+          _enabled: boolean
+          _interval_days: number
+          _organization_id: string
+        }
+        Returns: Json
       }
       stock_catalog_vendor_product: {
         Args: {
