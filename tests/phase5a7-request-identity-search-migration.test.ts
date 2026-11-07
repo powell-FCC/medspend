@@ -286,7 +286,9 @@ test("backend plumbing preserves new IDs and powers the Phase 5A.8 search UI", (
   assert.match(server, /rpc\(\s*"search_supply_request_products"/);
   // Staff Workspace v2: the composer and workspace share one search hook.
   assert.match(staffRoute, /useStaffProductSearch\(/);
-  assert.match(staffSearchHook, /useServerFn\(searchSupplyRequestProductsFn\)/);
+  // Phase 5A.10: the shared hook uses the signals RPC, which returns the same ranked rows
+  // as search_supply_request_products plus Saved and organization-history columns.
+  assert.match(staffSearchHook, /useServerFn\(searchStaffProductsFn\)/);
   assert.doesNotMatch(staffRoute + staffSearchHook, /\bsearchProductsFn\b/);
 });
 

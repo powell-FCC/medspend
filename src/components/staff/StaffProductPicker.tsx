@@ -10,8 +10,11 @@ import {
 import type { StaffQuickPick } from "@/supply-requests/staff-workspace";
 import { QuantityStepper } from "@/components/staff/QuantityStepper";
 import { StaffErrorState, StaffListSkeleton } from "@/components/staff/StaffStates";
+import { StaffDiscoveryRow, StaffDiscoverySections } from "@/components/staff/StaffDiscoveryList";
 import type {
+  StaffDiscoveryState,
   StaffQuickPicksState,
+  StaffSavedControls,
   StaffSearchState,
 } from "@/components/staff/useStaffProductSearch";
 
@@ -181,8 +184,10 @@ export function StaffQuickPicks({
   );
 }
 
-// Search (canonical staff search), quick picks and the custom-item fallback. Adding is
-// one tap; quantities are adjusted in place. Nothing here submits.
+// Search (canonical staff search), the start sections (Phase 5A.10 discovery on Request
+// Supplies, quick picks on the workspace) and the custom-item fallback. Adding is one tap;
+// quantities are adjusted in place. Saving only changes the person's own Saved Items.
+// Nothing here submits.
 export function StaffProductPicker({
   inputId,
   label,
@@ -190,6 +195,8 @@ export function StaffProductPicker({
   onQueryChange,
   search,
   quickPicks,
+  discovery,
+  saved,
   onAddCustom,
   autoFocus,
   ...controls
@@ -200,6 +207,8 @@ export function StaffProductPicker({
   onQueryChange: (query: string) => void;
   search: StaffSearchState;
   quickPicks?: StaffQuickPicksState;
+  discovery?: StaffDiscoveryState;
+  saved?: StaffSavedControls;
   onAddCustom: (name: string) => void;
   autoFocus?: boolean;
 }) {
@@ -256,7 +265,11 @@ export function StaffProductPicker({
             <p className="px-1 pb-3 text-sm text-[#697687]">
               Search by product name, size, manufacturer, vendor, or SKU.
             </p>
-            {quickPicks && <StaffQuickPicks state={quickPicks} controls={controls} />}
+            {discovery ? (
+              <StaffDiscoverySections state={discovery} saved={saved} controls={controls} />
+            ) : (
+              quickPicks && <StaffQuickPicks state={quickPicks} controls={controls} />
+            )}
           </>
         )}
         {(search.status === "short" || search.status === "typing") && (
@@ -296,11 +309,23 @@ export function StaffProductPicker({
         {search.status === "results" && (
           <ProductList label="Search results">
             {search.results.map((product) => (
-              <StaffProductRow key={product.resultId} product={product} {...controls} />
+              <StaffDiscoveryRow
+                key={product.resultId}
+                product={product}
+                listed={search.results}
+                saved={saved}
+                {...controls}
+              />
             ))}
           </ProductList>
         )}
       </div>
+
+      {saved?.error && (
+        <p role="alert" className="mt-3 rounded-xl bg-[#fff0f1] p-3 text-sm text-[#a83340]">
+          {saved.error}
+        </p>
+      )}
 
       {controls.cartFull && (
         <p role="status" className="mt-3 rounded-xl bg-[#f4f6f8] p-3 text-sm text-[#526174]">
