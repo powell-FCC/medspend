@@ -24,6 +24,10 @@ const route = await readFile(
   "utf8",
 );
 const picker = await readFile(new URL("src/components/staff/StaffProductPicker.tsx", root), "utf8");
+const discoveryList = await readFile(
+  new URL("src/components/staff/StaffDiscoveryList.tsx", root),
+  "utf8",
+);
 const cart = await readFile(
   new URL("src/supply-requests/staff-request-cart.ts", root),
   "utf8",
@@ -115,11 +119,23 @@ test("the unified result gains display metadata without changing structured iden
 });
 
 test("the route renders name, then specification, then compact vendor metadata", () => {
-  // Staff Workspace v2: results render through the shared picker's product row.
+  // Phase 5A.10: search results render through the discovery row, which keeps the same
+  // order (name, then the specification / variant line, then compact vendor metadata).
   assert.match(
     picker,
-    /search\.results\.map\(\(product\) => \(\s*<StaffProductRow key=\{product\.resultId\} product=\{product\}/,
+    /search\.results\.map\(\(product\) => \(\s*<StaffDiscoveryRow\s+key=\{product\.resultId\}\s+product=\{product\}/,
   );
+  const discoveryRow = discoveryList.slice(
+    discoveryList.indexOf("export function StaffDiscoveryRow"),
+    discoveryList.indexOf("export function StaffDiscoveryRows"),
+  );
+  const nameAt = discoveryRow.indexOf("{product.productName}");
+  const primaryAt = discoveryRow.indexOf("{variant.primary}");
+  const secondaryAt = discoveryRow.indexOf("{variant.secondary}");
+  assert.ok(nameAt > 0 && nameAt < primaryAt && primaryAt < secondaryAt);
+  assert.match(discoveryRow.slice(nameAt, secondaryAt), /text-sm font-medium/);
+  assert.match(discoveryRow.slice(primaryAt), /text-xs/);
+  // Quick picks on the workspace keep the Phase 5A.8 product row.
   const resultBlock = picker.slice(
     picker.indexOf("export function StaffProductRow"),
     picker.indexOf("function ProductList"),
@@ -136,7 +152,7 @@ test("the route renders name, then specification, then compact vendor metadata",
   assert.match(detailsBlock, /line\.kind === "specification"/);
   assert.match(detailsBlock, /text-sm font-medium/);
   assert.match(detailsBlock, /text-xs/);
-  for (const source of [route, picker]) {
+  for (const source of [route, picker, discoveryList]) {
     assert.doesNotMatch(source, /source_record|sourceRecord|catalog implementation|package trust/i);
   }
 });

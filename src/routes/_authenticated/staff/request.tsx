@@ -50,8 +50,9 @@ import { useStaffCart } from "@/components/staff/StaffCartProvider";
 import { StaffProductPicker } from "@/components/staff/StaffProductPicker";
 import { StaffErrorState, StaffListSkeleton } from "@/components/staff/StaffStates";
 import {
+  useStaffProductDiscovery,
   useStaffProductSearch,
-  useStaffQuickPicks,
+  useStaffSavedProducts,
 } from "@/components/staff/useStaffProductSearch";
 
 const search = z.object({
@@ -107,7 +108,9 @@ function RequestPage() {
   const notes = isEditMode ? editNotes : cart.notes;
   const setNotes = isEditMode ? setEditNotes : cart.setNotes;
   const searchState = useStaffProductSearch(active?.organizationId, query);
-  const quickPicks = useStaffQuickPicks(active?.organizationId);
+  // Phase 5A.10: Saved items, Frequently requested and Purchased before open the composer.
+  const discovery = useStaffProductDiscovery(active?.organizationId);
+  const savedProducts = useStaffSavedProducts(active?.organizationId);
   const submitFn = useServerFn(submitSupplyRequestFn);
   const updateFn = useServerFn(updateSubmittedSupplyRequestFn);
   const fetchDetail = useServerFn(getStaffRequestDetailFn);
@@ -520,7 +523,8 @@ function RequestPage() {
             query={query}
             onQueryChange={setQuery}
             search={searchState}
-            quickPicks={quickPicks}
+            discovery={discovery}
+            saved={savedProducts}
             onAddCustom={addCustom}
             {...cartControls}
           />

@@ -2606,6 +2606,33 @@ export type Database = {
         Returns: { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; committed_spend: number; available_amount: number; remaining_amount: number; posted_invoice_count: number; active_commitment_count: number; incomplete_commitment_count: number }[]
       }
 
+      get_staff_product_discovery: {
+        Args: { _limit?: number; _organization_id: string }
+        Returns: {
+          section: string
+          section_rank: number
+          catalog_vendor_product_id: string
+          identity_source: string
+          inventory_item_id: string
+          manufacturer: string
+          package_display: string
+          package_status: string
+          product_id: string
+          product_name: string
+          result_key: string
+          vendor_name: string
+          vendor_product_id: string
+          vendor_sku: string
+          variant_detail: string
+          unit: string
+          pack_size: string
+          is_saved: boolean
+          approved_request_count: number
+          last_approved_at: string
+          purchase_count: number
+          last_purchased_at: string
+        }[]
+      }
       get_supply_request_budget_impact: {
         Args: { _organization_id: string; _request_id: string }
         Returns: { request_id: string; request_status: Database["public"]["Enums"]["supply_request_status"]; estimated_amount: number; pricing_status: string; total_item_count: number; priced_item_count: number; commitment_status: string | null; commitment_release_reason: string | null; budget_id: string | null; budget_name: string | null; budget_amount: number | null; actual_spend: number | null; committed_spend: number | null; available_amount: number | null; projected_available_after_approval: number | null }[]
@@ -2842,6 +2869,19 @@ export type Database = {
           stocked_item_count: number
         }[]
       }
+      remove_staff_saved_product: {
+        Args: {
+          _catalog_vendor_product_id?: string
+          _inventory_item_id?: string
+          _organization_id: string
+          _product_id?: string
+        }
+        Returns: {
+          identity_key: string
+          removed: boolean
+          saved: boolean
+        }[]
+      }
       replace_inventory_location_labels: {
         Args: { _inventory_location_id: string; _organization_id: string }
         Returns: Json
@@ -3000,6 +3040,19 @@ export type Database = {
         Args: { _inventory_location_id: string; _organization_id: string }
         Returns: number
       }
+      save_staff_product: {
+        Args: {
+          _catalog_vendor_product_id?: string
+          _inventory_item_id?: string
+          _organization_id: string
+          _product_id?: string
+        }
+        Returns: {
+          created_at: string
+          identity_key: string
+          saved: boolean
+        }[]
+      }
       set_inventory_location_active: {
         Args: {
           _active: boolean
@@ -3143,6 +3196,36 @@ export type Database = {
           vendor_name: string
           vendor_product_id: string
           vendor_sku: string
+        }[]
+      }
+      search_supply_request_products_with_signals: {
+        Args: {
+          _limit?: number
+          _organization_id: string
+          _query: string
+        }
+        Returns: {
+          catalog_vendor_product_id: string
+          identity_source: string
+          inventory_item_id: string
+          manufacturer: string
+          package_display: string
+          package_status: string
+          product_id: string
+          product_name: string
+          result_key: string
+          vendor_name: string
+          vendor_product_id: string
+          vendor_sku: string
+          variant_detail: string
+          unit: string
+          pack_size: string
+          is_saved: boolean
+          approved_request_count: number
+          last_approved_at: string
+          purchase_count: number
+          last_purchased_at: string
+          match_tier: number
         }[]
       }
       seed_product_categories: {

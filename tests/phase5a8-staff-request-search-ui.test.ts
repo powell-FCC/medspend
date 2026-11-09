@@ -188,7 +188,8 @@ test("staff route uses unified search and represents the mobile search states", 
   const picker = await read("../src/components/staff/StaffProductPicker.tsx");
 
   assert.match(route, /useStaffProductSearch\(active\?\.organizationId, query\)/);
-  assert.match(searchHook, /useServerFn\(searchSupplyRequestProductsFn\)/);
+  // Phase 5A.10: the same ranking through the signals RPC (Saved and history badges).
+  assert.match(searchHook, /useServerFn\(searchStaffProductsFn\)/);
   assert.doesNotMatch(route + searchHook + picker, /\bsearchProductsFn\b/);
   assert.match(searchHook, /useDebouncedValue\(normalizedQuery, 300\)/);
   assert.match(picker, /Search by product name, size, manufacturer, vendor, or SKU/);
