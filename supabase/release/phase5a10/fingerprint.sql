@@ -62,6 +62,8 @@ SELECT section, key, value FROM (
     ('submit_supply_request'),
     ('transition_supply_request'),
     ('update_submitted_supply_request'),
+    -- Invoice posting (the source of Purchased before), must not change.
+    ('post_reviewed_invoice'),
     ('get_budget_summary'),
     ('get_budget_purchasing_overview'),
     -- Catalog administration and invoice matching, must not change.
@@ -209,6 +211,23 @@ SELECT section, key, value FROM (
   SELECT 8, 'rows', 'invoice_items hash',
     coalesce(md5(string_agg(concat_ws(':', id, invoice_id, product_id, vendor_product_id, quantity, total_price), ',' ORDER BY id)), 'empty')
   FROM public.invoice_items
+  UNION ALL
+  -- Organizations, memberships, budgets and inventory: whole rows, must not change.
+  SELECT 8, 'rows', 'organizations hash',
+    coalesce(md5(string_agg(to_jsonb(o)::text, ',' ORDER BY o.id)), 'empty')
+  FROM public.organizations o
+  UNION ALL
+  SELECT 8, 'rows', 'organization_memberships hash',
+    coalesce(md5(string_agg(to_jsonb(m)::text, ',' ORDER BY m.id)), 'empty')
+  FROM public.organization_memberships m
+  UNION ALL
+  SELECT 8, 'rows', 'organization_budgets hash',
+    coalesce(md5(string_agg(to_jsonb(b)::text, ',' ORDER BY b.id)), 'empty')
+  FROM public.organization_budgets b
+  UNION ALL
+  SELECT 8, 'rows', 'inventory_items hash',
+    coalesce(md5(string_agg(to_jsonb(i)::text, ',' ORDER BY i.id)), 'empty')
+  FROM public.inventory_items i
   UNION ALL
   SELECT 8, 'rows', 'inventory_count_policies',
     coalesce((SELECT string_agg(organization_id || ' enabled=' || enabled || ' interval=' || coalesce(interval_days::text, 'null'), ';' ORDER BY organization_id)

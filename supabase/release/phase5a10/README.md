@@ -47,7 +47,7 @@ Run each file as its own query: paste the whole file, run it once, and read the 
 - **Counts**: public functions +16, tables +3, indexes +6, triggers +6; policies unchanged. On the current production baseline: functions 124 → 140, tables 43 → 46, indexes 165 → 171, triggers 69 → 75, policies 58.
 - **Rows**: `catalog_vendor_product_search_documents count` equals `catalog_vendor_products count`; `catalog_search_terms count` is the vocabulary size; `staff_saved_products count` is 0.
 
-Everything else must be identical: every pinned function hash, every other index, policy, trigger and grant line, and every catalog, product, alias, request, request-item, commitment, invoice, invoice-item and cadence line. Real use between the precheck and the postcheck (a new request, an invoice) changes the matching `rows` lines; run the two back to back.
+Everything else must be identical: every pinned function hash (including `post_reviewed_invoice`), every other index, policy, trigger and grant line, and every catalog, product, alias, request, request-item, commitment, invoice, invoice-item, organization, membership, budget, inventory-item and cadence line. Real use between the precheck and the postcheck (a new request, an invoice) changes the matching `rows` lines; run the two back to back.
 
 ## Search rules (for acceptance)
 

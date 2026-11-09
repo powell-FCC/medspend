@@ -59,6 +59,7 @@ BEGIN
       ('normalize_catalog_sku', '1d1a67bb250b533e5fd7b828c4b39f5a secdef=false authenticated=true anon=true public=true'),
       ('normalize_catalog_sku_match_key', '148ebc3452ed98c1a9f4fbc8a86cdc2d secdef=false authenticated=true anon=true public=true'),
       ('normalize_catalog_text', 'a8ec380073fed24830de4f4c2787af49 secdef=false authenticated=true anon=true public=true'),
+      ('post_reviewed_invoice', '4d0240ce910eb2f583a8b79706c7f8e8 secdef=true authenticated=true anon=false public=false'),
       ('refresh_catalog_vendor_product_search_documents', 'ee62f1b49263dfef20452e40f6992a4d secdef=true authenticated=false anon=false public=false'),
       ('release_supply_request_commitment', '7ad455f53c8915248dccfb942be8fd89 secdef=true authenticated=true anon=false public=false'),
       ('remove_staff_saved_product', 'eb416cf398248e3cdfdeb72b9b8de4b9 secdef=true authenticated=true anon=false public=false'),
@@ -247,6 +248,8 @@ SELECT section, key, value FROM (
     ('submit_supply_request'),
     ('transition_supply_request'),
     ('update_submitted_supply_request'),
+    -- Invoice posting (the source of Purchased before), must not change.
+    ('post_reviewed_invoice'),
     ('get_budget_summary'),
     ('get_budget_purchasing_overview'),
     -- Catalog administration and invoice matching, must not change.
@@ -394,6 +397,23 @@ SELECT section, key, value FROM (
   SELECT 8, 'rows', 'invoice_items hash',
     coalesce(md5(string_agg(concat_ws(':', id, invoice_id, product_id, vendor_product_id, quantity, total_price), ',' ORDER BY id)), 'empty')
   FROM public.invoice_items
+  UNION ALL
+  -- Organizations, memberships, budgets and inventory: whole rows, must not change.
+  SELECT 8, 'rows', 'organizations hash',
+    coalesce(md5(string_agg(to_jsonb(o)::text, ',' ORDER BY o.id)), 'empty')
+  FROM public.organizations o
+  UNION ALL
+  SELECT 8, 'rows', 'organization_memberships hash',
+    coalesce(md5(string_agg(to_jsonb(m)::text, ',' ORDER BY m.id)), 'empty')
+  FROM public.organization_memberships m
+  UNION ALL
+  SELECT 8, 'rows', 'organization_budgets hash',
+    coalesce(md5(string_agg(to_jsonb(b)::text, ',' ORDER BY b.id)), 'empty')
+  FROM public.organization_budgets b
+  UNION ALL
+  SELECT 8, 'rows', 'inventory_items hash',
+    coalesce(md5(string_agg(to_jsonb(i)::text, ',' ORDER BY i.id)), 'empty')
+  FROM public.inventory_items i
   UNION ALL
   SELECT 8, 'rows', 'inventory_count_policies',
     coalesce((SELECT string_agg(organization_id || ' enabled=' || enabled || ' interval=' || coalesce(interval_days::text, 'null'), ';' ORDER BY organization_id)

@@ -69,6 +69,13 @@ PY
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$work/seed.sql" >/dev/null 2>&1 || fail "seed failed"
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -c "INSERT INTO public.inventory_count_policies (organization_id, enabled, interval_days)
   VALUES ('5a10c000-0000-4000-8000-000000000101', false, 30)" >/dev/null
+# A budget and stocked inventory, so the organizations / memberships / budgets / inventory
+# fingerprints hash real rows (none of them may change).
+psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -c "
+  INSERT INTO public.organization_budgets (organization_id, name, period_start, period_end, amount)
+  VALUES ('5a10c000-0000-4000-8000-000000000101', 'FY Supplies', date '2026-07-01', date '2027-06-30', 50000);
+  INSERT INTO public.inventory_items (organization_id, sku, name, unit, quantity, active)
+  SELECT '5a10c000-0000-4000-8000-000000000101', 'REL-' || n, 'Release Item ' || n, 'each', n, true FROM generate_series(1, 25) n;" >/dev/null
 
 editor() { psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -At -F ' | ' -c "$(node "$rewrite" "$1")"; }
 readonly_editor() { PGOPTIONS="$PGOPTIONS -c default_transaction_read_only=on" editor "$@"; }
@@ -83,7 +90,8 @@ objects() { psql -X -U postgres -d postgres -Atc "SELECT (SELECT count(*) FROM p
 
 readonly_editor "$release/precheck.sql" > "$work/pre.txt"
 cmp -s "$work/pre.txt" <(fingerprint) || fail "precheck output is not exactly the fingerprint"
-for line in 'catalog_products hash' 'catalog_vendor_products hash' 'supply_requests hash' 'supply_request_items hash' 'invoice_items hash'; do
+for line in 'catalog_products hash' 'catalog_vendor_products hash' 'supply_requests hash' 'supply_request_items hash' 'invoice_items hash' \
+  'organizations hash' 'organization_memberships hash' 'organization_budgets hash' 'inventory_items hash'; do
   grep -q "^rows | $line | [0-9a-f]\{32\}\$" "$work/pre.txt" || fail "$line was not fingerprinted"
 done
 grep -q '^rows | inventory_count_policies | 5a10c000-0000-4000-8000-000000000101 enabled=false interval=30$' "$work/pre.txt" || fail "cadence policy not reported"
@@ -132,6 +140,11 @@ delta() { echo $(( $(grep -F "count | public $1 |" "$work/post.txt" | awk -F' [|
   && [ "$(delta policies)" = "0" ] && [ "$(delta triggers)" = "6" ] \
   || fail "unexpected object deltas: functions $(delta functions) tables $(delta tables) indexes $(delta indexes) policies $(delta policies) triggers $(delta triggers)"
 grep -q '^rows | catalog_vendor_product_search_documents count | 100004$' "$work/post.txt" || fail "search documents were not backfilled for every catalog product"
+grep -q '^function | post_reviewed_invoice | [0-9a-f]\{32\} ' "$work/pre.txt" || fail "post_reviewed_invoice was not fingerprinted"
+for line in 'function | post_reviewed_invoice' 'rows | organizations hash' 'rows | organization_memberships hash' 'rows | organization_budgets hash' 'rows | inventory_items hash'; do
+  [ "$(grep -F "$line |" "$work/pre.txt")" = "$(grep -F "$line |" "$work/post.txt")" ] || fail "$line changed"
+done
+echo "ok - post_reviewed_invoice, organizations, memberships, budgets and inventory items are identical before and after"
 grep -q '^rows | staff_saved_products count | 0$' "$work/post.txt" || fail "Saved Items are not empty"
 echo "ok - pre/post differ only in documented lines: +16 functions, 1 replaced, +3 tables (no client access), +6 indexes, +6 triggers, pg_trgm; no catalog, product, request, invoice or cadence line changed"
 echo "--- documented pre/post differences"
