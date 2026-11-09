@@ -2691,6 +2691,14 @@ export type Database = {
         }
         Returns: Json
       }
+      get_invoice_source_provenance: {
+        Args: { _organization_id: string; _source_file_id: string }
+        Returns: Json
+      }
+      get_invoice_upload_batch: {
+        Args: { _batch_id: string; _organization_id: string }
+        Returns: Json
+      }
       get_inventory_count_policy: {
         Args: { _organization_id: string }
         Returns: Json
@@ -2886,6 +2894,19 @@ export type Database = {
         Args: { _inventory_location_id: string; _organization_id: string }
         Returns: Json
       }
+      register_invoice_batch_segment: {
+        Args: {
+          _file_size: number
+          _organization_id: string
+          _segment_id: string
+          _storage_path: string
+        }
+        Returns: Json
+      }
+      release_invoice_batch_segment: {
+        Args: { _organization_id: string; _segment_id: string }
+        Returns: Json
+      }
       release_supply_request_commitment: {
         Args: { _organization_id: string; _request_id: string; _release_kind: string; _release_reason: string }
         Returns: Json
@@ -2995,6 +3016,21 @@ export type Database = {
         Returns: string
       }
       create_organization: { Args: { _name: string }; Returns: string }
+      create_invoice_upload_batch: {
+        Args: {
+          _content_sha256: string
+          _detector: string
+          _file_size: number
+          _organization_id: string
+          _original_filename: string
+          _page_count: number
+          _segments: Json
+          _storage_path: string
+          _vendor_key: string
+          _vendor_name: string
+        }
+        Returns: Json
+      }
       create_product_from_invoice_item: {
         Args: {
           _invoice_item_id: string
@@ -3006,6 +3042,10 @@ export type Database = {
       delete_invoice_permanently: {
         Args: { _organization_id: string; _source_file_id: string }
         Returns: Json
+      }
+      fail_invoice_batch_segment: {
+        Args: { _error: string; _organization_id: string; _segment_id: string }
+        Returns: undefined
       }
       forget_invoice_vendor_signatures: {
         Args: { _organization_id: string; _source_file_id: string }
@@ -3025,6 +3065,10 @@ export type Database = {
       }
       is_org_admin: { Args: { _org: string; _user: string }; Returns: boolean }
       is_org_member: { Args: { _org: string; _user: string }; Returns: boolean }
+      list_invoice_upload_batches: {
+        Args: { _limit?: number; _organization_id: string }
+        Returns: Json
+      }
       list_organization_member_identities: {
         Args: { _organization_id: string }
         Returns: {

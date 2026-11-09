@@ -41,7 +41,7 @@ export function InvoiceDropzone({ disabled = false, onSelect }: Props) {
       </div>
       <h2 className="text-lg font-semibold">Drop a vendor invoice here</h2>
       <p className="mt-2 max-w-md text-sm text-muted-foreground">
-        Upload one PDF at a time. Files are stored securely for your organization.
+        Upload one PDF at a time. A PDF with several invoices is split into separate invoices automatically. Files are stored securely for your organization.
       </p>
       <Button className="mt-6" type="button" disabled={disabled} onClick={() => inputRef.current?.click()}>
         Choose PDF
