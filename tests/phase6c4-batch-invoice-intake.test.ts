@@ -153,9 +153,9 @@ test("the same purchase order, order or account never joins different invoice nu
   const shared = { accountKey: "1000002", invoiceDate: "2026-01-15" };
   const result = groupPages(
     [
-      sig(1, "52103732", [1, 1], shared),
-      sig(2, "52103733", [1, 1], shared),
-      sig(3, "52093891", [1, 1], shared),
+      sig(1, "61000010", [1, 1], shared),
+      sig(2, "61000011", [1, 1], shared),
+      sig(3, "61000002", [1, 1], shared),
     ],
     META,
   );
@@ -651,33 +651,32 @@ test(
     assert.equal(pages.length, 26);
     assert.equal(result.detector, "henry-schein-invoice-v1");
     assertPageAllocation(result);
+    // Page structure only. Of the packet's real invoice numbers, only the three structural
+    // anchors named in the Phase 6C.4 brief are kept in the repository.
     assert.deepEqual(
-      result.segments.map((s) => `${s.startPage}-${s.endPage}:${s.invoiceNumber}`),
+      result.segments.map((s) => `${s.startPage}-${s.endPage}`),
       [
-        "1-1:50902751",
-        "2-2:51706237",
-        "3-3:52092774",
-        "4-5:52093808",
-        "6-6:52093891",
-        "7-10:52103732",
-        "11-11:52103733",
-        "12-12:52252469",
-        "13-13:52281822",
-        "14-14:52489324",
-        "15-15:55049814",
-        "16-16:55434794",
-        "17-17:56012854",
-        "18-18:56793162",
-        "19-19:56793163",
-        "20-20:57761097",
-        "21-21:57761098",
-        "22-22:58220214",
-        "23-23:58542740",
-        "24-24:59179794",
-        "25-25:59179795",
-        "26-26:59323982",
+        "1-1",
+        "2-2",
+        "3-3",
+        "4-5",
+        "6-6",
+        "7-10",
+        ...Array.from({ length: 16 }, (_, i) => `${i + 11}-${i + 11}`),
       ],
     );
+    const anchors = new Map(
+      result.segments.map((s) => [s.invoiceNumber, `${s.startPage}-${s.endPage}`]),
+    );
+    assert.equal(anchors.get("50902751"), "1-1");
+    assert.equal(anchors.get("52093808"), "4-5");
+    assert.equal(anchors.get("52103732"), "7-10");
+    assert.equal(
+      new Set(result.segments.map((s) => s.invoiceNumber)).size,
+      22,
+      "22 distinct invoice numbers",
+    );
+    assert.ok(result.segments.every((s) => /^\d{8}$/.test(s.invoiceNumber ?? "")));
     assert.ok(result.segments.every((s) => s.kind === "invoice" && s.reasons.length === 0));
     // No continuation page (5, 8, 9, 10) is its own invoice.
     for (const page of [5, 8, 9, 10]) assert.ok(!result.segments.some((s) => s.startPage === page));
@@ -714,8 +713,9 @@ test(
           `${number} reconciles`,
         );
     }
-    // Fully backordered invoices print $0.00 and carry no billable lines.
-    for (const number of ["57761098", "59179795", "59323982"]) {
+    // Fully backordered invoices (pages 21, 25, 26) print $0.00 and carry no billable lines.
+    for (const page of [21, 25, 26]) {
+      const number = result.segments.find((s) => s.startPage === page)!.invoiceNumber!;
       assert.equal(summaries.get(number)?.itemCount, 0);
       assert.equal(summaries.get(number)?.total, 0);
     }

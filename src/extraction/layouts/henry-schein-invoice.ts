@@ -1,7 +1,7 @@
 // Henry Schein invoice layout (the "INVOICE" form with a detachable remittance stub), as
 // unpdf prints it. Deterministic rules only: labels, line shapes and arithmetic.
 //
-// The layout stacks each label above its value ("Invoice#" / "50902751 Invoice Date" /
+// The layout stacks each label above its value ("Invoice#" / "60000001 Invoice Date" /
 // "01/02/26 Due Date"), repeats the identity block in a footer on every page, prints totals as a
 // column of labels followed by a column of amounts, and lists lines as
 //   LINE  ITEM-CODE  UNIT/SIZE  DESCRIPTION  QTY-ORDERED  QTY-SHIPPED  [CODES]  UNIT-PRICE  EXT-PRICE  [BOX SHIP-FROM]
@@ -63,7 +63,7 @@ export interface HenryScheinInvoiceLayout {
 export const HENRY_SCHEIN_VENDOR_NAME = "Henry Schein, Inc.";
 
 const REMIT = /please\s+remit\s+payments\s+to:\s*henry\s+schein,\s*inc\./i;
-// The header prints the label alone; per-page footers print it after the bill-to account ("3644156 Invoice#").
+// The header prints the label alone; per-page footers print it after the bill-to account ("1000002 Invoice#").
 const INVOICE_LABEL = /(?:^|\s)invoice#$/i;
 const NUMBER_THEN_DATE_LABEL = /^([A-Z0-9-]{4,20})\s+invoice\s+date:?$/i;
 const DATE_THEN_LABEL = /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:due\s+date|invoice\s+total)$/i;
