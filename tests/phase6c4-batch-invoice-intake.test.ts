@@ -435,7 +435,7 @@ test("multi-page invoice: first-page and continuation lines kept in order; heade
       (item) => !/total|tax|freight|special|invoice|line|page/i.test(item.description.value),
     ),
   );
-  assert.equal(extraction.header.purchaseOrder.value, "PRESEASON ORDER");
+  assert.equal(extraction.header.purchaseOrder.value, "TEST PRESEASON ORDER");
   assert.equal(extraction.header.invoiceDate.value, "2026-01-15");
 });
 

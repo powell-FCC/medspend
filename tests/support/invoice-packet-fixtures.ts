@@ -252,7 +252,7 @@ export function structuralPacket(): FixtureInvoice[] {
     {
       number: "60000002",
       date: "01/07/26",
-      po: "12-3-25",
+      po: "TEST-PO-1",
       order: "70000002",
       pages: [lines(1, 1)],
       tax: 0.5,
@@ -261,7 +261,7 @@ export function structuralPacket(): FixtureInvoice[] {
     {
       number: "60000003",
       date: "01/15/26",
-      po: "PRESEASON ORDER",
+      po: "TEST PRESEASON ORDER",
       order: "70000003",
       pages: [lines(2, 8), lines(10, 7)],
       tax: 4.11,
@@ -269,7 +269,7 @@ export function structuralPacket(): FixtureInvoice[] {
     {
       number: "60000004",
       date: "01/15/26",
-      po: "PRESEASON ORDER",
+      po: "TEST PRESEASON ORDER",
       order: "70000003",
       pages: [lines(17, 7), lines(24, 13), lines(37, 12), [...lines(49, 1)]],
       tax: 3.67,
@@ -277,7 +277,7 @@ export function structuralPacket(): FixtureInvoice[] {
     {
       number: "60000005",
       date: "01/26/26",
-      po: "PRESEASON ORDER",
+      po: "TEST PRESEASON ORDER",
       order: "70000003",
       pages: [lines(50, 1)],
       notes: ["YOUR ORDER 70000003 HAS BEEN SPLIT INTO MULTIPLE SHIPMENTS."],
@@ -285,7 +285,7 @@ export function structuralPacket(): FixtureInvoice[] {
     {
       number: "60000006",
       date: "06/02/26",
-      po: "6-2-2026",
+      po: "TEST-PO-2",
       order: "70000006",
       pages: [[{ ...lines(51, 1)[0], ordered: 1, shipped: 0 }]],
       notes: ["YOUR ORDER 70000006 HAS BEEN SPLIT INTO MULTIPLE SHIPMENTS."],
@@ -293,7 +293,7 @@ export function structuralPacket(): FixtureInvoice[] {
     {
       number: "60000007",
       date: "06/04/26",
-      po: "6-2-2026",
+      po: "TEST-PO-2",
       order: "70000006",
       pages: [
         [

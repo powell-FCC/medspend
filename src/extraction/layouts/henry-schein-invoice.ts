@@ -131,7 +131,7 @@ function purchaseOrder(lines: string[]): HenryScheinValue<string> | null {
 }
 
 // "MERCHANDISE TOTAL / SALES TAX / INVOICE TOTAL" then "$a / $b / $c". A label line may carry its
-// amount inline ("INVOICE TOTAL $46.61"); that amount takes its place in the value column.
+// amount inline ("INVOICE TOTAL $12.34"); that amount takes its place in the value column.
 function totals(lines: string[]) {
   const start = lines.findIndex((line) => /^merchandise\s+total\b/i.test(line));
   const result = {
