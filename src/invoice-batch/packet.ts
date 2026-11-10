@@ -1,7 +1,7 @@
 // Phase 6C.4 packet helpers: per-page text, the existing parser on one segment, and the
 // page-subset PDF a created invoice is stored as. No framework or path-alias imports, so the
 // integration tests run exactly this code.
-import { PDFDocument } from "pdf-lib";
+import type { PDFDocument } from "pdf-lib";
 import { DeterministicInvoiceExtractionProvider } from "../extraction/deterministic-invoice-provider.ts";
 import { validateUsableDocumentText } from "../extraction/document-text-validation.ts";
 import { EmbeddedPdfTextProvider } from "../extraction/embedded-pdf-text-provider.ts";
@@ -80,7 +80,17 @@ export async function summarizeSegment(
   }
 }
 
+/**
+ * pdf-lib is loaded only here, by the one path that builds page-subset PDFs (processing a packet).
+ * Listing, reading and releasing batches, provenance and single-invoice intake share this module
+ * graph and never evaluate pdf-lib, so a pdf-lib load failure cannot take them down with it.
+ */
+async function pdfLib(): Promise<typeof import("pdf-lib")> {
+  return import("pdf-lib");
+}
+
 export async function loadPacket(bytes: Uint8Array): Promise<PDFDocument> {
+  const { PDFDocument } = await pdfLib();
   return PDFDocument.load(bytes.slice(), { updateMetadata: false });
 }
 
@@ -92,6 +102,7 @@ export async function buildSegmentPdf(
 ): Promise<Uint8Array> {
   if (startPage < 1 || endPage < startPage || endPage > packet.getPageCount())
     throw new Error("Invalid page range");
+  const { PDFDocument } = await pdfLib();
   const output = await PDFDocument.create({ updateMetadata: false });
   const indices = Array.from(
     { length: endPage - startPage + 1 },
