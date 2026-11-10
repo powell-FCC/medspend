@@ -72,7 +72,49 @@ SELECT section, key, value FROM (
     ('get_budget_purchasing_overview'),
     ('get_inventory_overview'),
     ('move_inventory_stock'),
-    ('set_inventory_count_policy')
+    ('set_inventory_count_policy'),
+    -- Request workflow, must not change.
+    ('apply_supply_request_transition'),
+    ('transition_supply_request'),
+    ('guard_supply_request_lifecycle'),
+    ('replace_supply_request_items'),
+    ('update_submitted_supply_request'),
+    ('cancel_submitted_supply_request'),
+    ('resolve_supply_request_context'),
+    ('resolve_supply_request_item_costs'),
+    ('get_supply_request_budget_impact'),
+    ('get_supply_request_inventory_identities'),
+    ('get_supply_request_product_specifications'),
+    ('supply_request_product_history'),
+    ('supply_request_product_identities'),
+    ('list_staff_supply_request_updates'),
+    -- Catalog and search, must not change.
+    ('adopt_catalog_vendor_product'),
+    ('stock_catalog_vendor_product'),
+    ('get_catalog_vendor_product_admin_detail'),
+    ('get_catalog_vendor_product_effective_specifications'),
+    ('validate_catalog_parent_link_change'),
+    -- Catalog normalization and search helpers, must not change.
+    ('catalog_product_normalize_row'),
+    ('catalog_vendor_product_normalize_row'),
+    ('catalog_source_record_preserve_raw'),
+    ('catalog_search_text'),
+    ('catalog_search_token_pattern'),
+    ('catalog_search_edit_distance'),
+    ('normalize_catalog_text'),
+    ('normalize_catalog_search_text'),
+    ('normalize_catalog_sku'),
+    ('normalize_catalog_sku_match_key'),
+    -- Catalog search-document trigger functions, must not change.
+    ('tg_catalog_products_search_document'),
+    ('tg_catalog_vendor_products_search_document'),
+    ('tg_catalog_source_records_search_document'),
+    ('tg_catalog_vendors_search_document'),
+    -- Inventory count cadence and 5A.10 Saved Items, must not change.
+    ('get_inventory_count_policy'),
+    ('get_inventory_count_freshness'),
+    ('inventory_location_count_freshness'),
+    ('staff_saved_product_identity_check')
   ) AS fn(name)
 
   UNION ALL
@@ -93,13 +135,17 @@ SELECT section, key, value FROM (
               WHERE c.oid = to_regclass('public.' || t.name)
               GROUP BY c.relrowsecurity), 'absent')
   FROM (VALUES ('invoice_upload_batches'), ('invoice_upload_batch_segments'), ('vendor_invoices'), ('invoice_processing_jobs'),
-               ('invoices'), ('invoice_items'), ('inventory_items'), ('inventory_adjustments'), ('inventory_price_history')) AS t(name)
+               ('invoices'), ('invoice_items'), ('inventory_items'), ('inventory_adjustments'), ('inventory_price_history'),
+               ('invoice_extraction_runs'), ('invoice_extraction_candidates'), ('invoice_line_items'), ('vendor_identity_signatures'),
+               ('vendors'), ('staff_saved_products'), ('catalog_search_terms'), ('catalog_vendor_product_search_documents')) AS t(name)
   UNION ALL
   SELECT 4, 'policies', t.name,
     coalesce((SELECT string_agg(policyname, ',' ORDER BY policyname) FROM pg_policies
               WHERE schemaname = 'public' AND tablename = t.name), 'none')
   FROM (VALUES ('invoice_upload_batches'), ('invoice_upload_batch_segments'), ('vendor_invoices'), ('invoice_processing_jobs'),
-               ('invoices'), ('invoice_items'), ('inventory_items'), ('inventory_adjustments'), ('inventory_price_history')) AS t(name)
+               ('invoices'), ('invoice_items'), ('inventory_items'), ('inventory_adjustments'), ('inventory_price_history'),
+               ('invoice_extraction_runs'), ('invoice_extraction_candidates'), ('invoice_line_items'), ('vendor_identity_signatures'),
+               ('vendors'), ('staff_saved_products'), ('catalog_search_terms'), ('catalog_vendor_product_search_documents')) AS t(name)
   UNION ALL
   SELECT 4, 'grants', t.name,
     coalesce((SELECT string_agg(grantee || '=' || privileges, ';' ORDER BY grantee) FROM (
@@ -109,7 +155,9 @@ SELECT section, key, value FROM (
                   AND grantee IN ('anon', 'authenticated', 'service_role', 'PUBLIC')
                 GROUP BY grantee) g), 'none')
   FROM (VALUES ('invoice_upload_batches'), ('invoice_upload_batch_segments'), ('vendor_invoices'), ('invoice_processing_jobs'),
-               ('invoices'), ('invoice_items'), ('inventory_items'), ('inventory_adjustments'), ('inventory_price_history')) AS t(name)
+               ('invoices'), ('invoice_items'), ('inventory_items'), ('inventory_adjustments'), ('inventory_price_history'),
+               ('invoice_extraction_runs'), ('invoice_extraction_candidates'), ('invoice_line_items'), ('vendor_identity_signatures'),
+               ('vendors'), ('staff_saved_products'), ('catalog_search_terms'), ('catalog_vendor_product_search_documents')) AS t(name)
 
   -- Invoice file storage: the bucket and its owner-only policies, must not change.
   UNION ALL
@@ -120,19 +168,35 @@ SELECT section, key, value FROM (
   SELECT 4, 'storage', 'policy ' || policyname, md5(concat_ws(':', cmd, roles::text, qual, with_check))
   FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname LIKE 'vendor_invoices_storage%'
 
-  -- Indexes and triggers on the new and the invoice tables.
+  -- Constraints on the new, the invoice and the 5A.10 tables (primary, unique, foreign and check
+  -- keys), including invoices.source_file_id (UNIQUE, ON DELETE SET NULL) and
+  -- vendor_invoices.storage_path (UNIQUE), the one-file / one-invoice identity 6C.4 builds on.
+  UNION ALL
+  SELECT 5, 'constraint', t.relname || '.' || con.conname,
+    con.contype::text || ' ' || md5(pg_get_constraintdef(con.oid)) || ' validated=' || con.convalidated
+  FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace
+  WHERE n.nspname = 'public' AND t.relname IN ('invoice_upload_batches', 'invoice_upload_batch_segments', 'vendor_invoices',
+    'invoice_processing_jobs', 'invoices', 'invoice_items', 'invoice_extraction_runs', 'invoice_extraction_candidates',
+    'invoice_line_items', 'vendor_identity_signatures', 'vendors', 'staff_saved_products', 'catalog_search_terms',
+    'catalog_vendor_product_search_documents')
+
+  -- Indexes and triggers on the new, the invoice and the 5A.10 tables.
   UNION ALL
   SELECT 5, 'index', c.relname, md5(pg_get_indexdef(ix.indexrelid)) || ' valid=' || ix.indisvalid
   FROM pg_index ix JOIN pg_class c ON c.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid
   JOIN pg_namespace n ON n.oid = t.relnamespace
   WHERE n.nspname = 'public' AND t.relname IN ('invoice_upload_batches', 'invoice_upload_batch_segments', 'vendor_invoices',
-    'invoice_processing_jobs', 'invoices', 'invoice_items', 'inventory_price_history')
+    'invoice_processing_jobs', 'invoices', 'invoice_items', 'inventory_price_history', 'invoice_extraction_runs',
+    'invoice_extraction_candidates', 'invoice_line_items', 'vendor_identity_signatures', 'vendors', 'staff_saved_products',
+    'catalog_search_terms', 'catalog_vendor_product_search_documents')
   UNION ALL
   SELECT 6, 'trigger', c.relname || '.' || tg.tgname, md5(pg_get_triggerdef(tg.oid)) || ' enabled=' || tg.tgenabled::text
   FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND NOT tg.tgisinternal
     AND c.relname IN ('invoice_upload_batches', 'invoice_upload_batch_segments', 'vendor_invoices', 'invoice_processing_jobs',
-      'invoices', 'invoice_items', 'inventory_items', 'inventory_adjustments', 'inventory_price_history')
+      'invoices', 'invoice_items', 'inventory_items', 'inventory_adjustments', 'inventory_price_history',
+      'invoice_extraction_runs', 'invoice_extraction_candidates', 'invoice_line_items', 'vendor_identity_signatures', 'vendors',
+      'staff_saved_products', 'catalog_search_terms', 'catalog_vendor_product_search_documents')
 
   -- Counts across public.
   UNION ALL
@@ -147,8 +211,9 @@ SELECT section, key, value FROM (
   SELECT 7, 'count', 'public triggers', count(*)::text FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
   WHERE c.relnamespace = 'public'::regnamespace AND NOT tg.tgisinternal
 
-  -- Data: invoices, inventory, prices, requests, budgets, organizations: whole rows, must not
-  -- change. The new tables are empty.
+  -- Data: invoices and the invoice pipeline, vendors, inventory (items, balances, adjustments,
+  -- transfers, counts), prices, requests and their items, commitments, budgets, organizations,
+  -- memberships and the catalog: whole rows, must not change. The new tables are empty.
   UNION ALL
   SELECT 8, 'rows', 'vendor_invoices hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.vendor_invoices r
   UNION ALL
@@ -177,6 +242,36 @@ SELECT section, key, value FROM (
   SELECT 8, 'rows', 'products hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.products r
   UNION ALL
   SELECT 8, 'rows', 'vendor_products hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.vendor_products r
+  UNION ALL
+  SELECT 8, 'rows', 'supply_request_items hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.supply_request_items r
+  UNION ALL
+  SELECT 8, 'rows', 'catalog_products hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.catalog_products r
+  UNION ALL
+  SELECT 8, 'rows', 'catalog_vendor_products hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.catalog_vendor_products r
+  UNION ALL
+  SELECT 8, 'rows', 'catalog_vendors hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.catalog_vendors r
+  UNION ALL
+  SELECT 8, 'rows', 'catalog_source_records hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.catalog_source_records r
+  UNION ALL
+  SELECT 8, 'rows', 'product_aliases hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.product_aliases r
+  UNION ALL
+  SELECT 8, 'rows', 'inventory_location_balances hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.inventory_item_id, r.inventory_location_id)), 'empty') FROM public.inventory_location_balances r
+  UNION ALL
+  SELECT 8, 'rows', 'inventory_transfers hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.inventory_transfers r
+  UNION ALL
+  SELECT 8, 'rows', 'inventory_count_sessions hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.inventory_count_sessions r
+  UNION ALL
+  SELECT 8, 'rows', 'inventory_count_lines hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.inventory_count_lines r
+  UNION ALL
+  SELECT 8, 'rows', 'invoice_extraction_runs hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.invoice_extraction_runs r
+  UNION ALL
+  SELECT 8, 'rows', 'invoice_extraction_candidates hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.invoice_extraction_candidates r
+  UNION ALL
+  SELECT 8, 'rows', 'invoice_line_items hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.invoice_line_items r
+  UNION ALL
+  SELECT 8, 'rows', 'vendor_identity_signatures hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.vendor_identity_signatures r
+  UNION ALL
+  SELECT 8, 'rows', 'vendors hash', coalesce(md5(string_agg(to_jsonb(r)::text, ',' ORDER BY r.id)), 'empty') FROM public.vendors r
   UNION ALL
   SELECT 8, 'rows', 'staff_saved_products count', count(*)::text FROM public.staff_saved_products
   UNION ALL

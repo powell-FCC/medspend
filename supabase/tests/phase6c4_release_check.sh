@@ -9,7 +9,11 @@
 #      nothing may follow COMMIT; no temp tables.
 #   2. Boot a fresh container, apply every migration before 6C.4 (main, through 5A.10), and
 #      seed invoice history: uploads, reviewed and posted invoices with lines, inventory,
-#      price history, a budget, and a count cadence policy that is OFF, as in production.
+#      price history, a budget, and a count cadence policy that is OFF, as in production. The
+#      5A.10 discovery and 7B.2 count-history fixtures add the catalog, requests and their items,
+#      Saved Items, location balances, transfers and count sessions; a small seed adds catalog
+#      source records, aliases, extraction runs and candidates, legacy invoice lines, vendor
+#      signatures and a commitment, so every fingerprinted data line hashes real rows.
 #   3. precheck; an induced failure just before COMMIT (must roll back completely); the
 #      migration (success, no output); postcheck; a second application and a repeat precheck
 #      (both refused). Diff pre and post: only the documented lines may differ; every invoice,
@@ -59,6 +63,8 @@ for file in supabase/migrations/*.sql; do
   psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$file" >/dev/null
 done
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f supabase/tests/integration/phase6c4_batch_intake_fixture.sql >/dev/null
+PGOPTIONS="-c client_min_messages=error" psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f supabase/tests/integration/phase5a10_discovery_fixture.sql >/dev/null
+PGOPTIONS="-c client_min_messages=error" psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f supabase/tests/integration/phase7b2_count_history_fixture.sql >/dev/null
 # Invoice history: 40 uploads with reviewed drafts and lines (10 of them posted with inventory
 # and price history), a budget, stock, and cadence OFF.
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL' >/dev/null
@@ -87,7 +93,8 @@ DO $post$
 DECLARE _item record; _product jsonb;
 BEGIN
   FOR _item IN SELECT item.id, invoice.source_file_id FROM public.invoice_items item JOIN public.invoices invoice ON invoice.id = item.invoice_id
-               WHERE invoice.invoice_number::int BETWEEN 50000001 AND 50000010 ORDER BY item.id LOOP
+               WHERE invoice.id IN (SELECT ('6c4f1000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid FROM generate_series(1, 10) n)
+               ORDER BY item.id LOOP
     _product := public.create_product_from_invoice_item('6c4e0000-0000-4000-8000-000000000101', _item.source_file_id, _item.id);
     PERFORM public.confirm_invoice_item_product('6c4e0000-0000-4000-8000-000000000101', _item.source_file_id, _item.id, (_product->>'productId')::uuid, true);
   END LOOP;
@@ -95,6 +102,29 @@ BEGIN
   FROM generate_series(1, 10) n;
 END
 $post$;
+SQL
+# The rest of the pipeline and catalog data the fingerprint hashes.
+psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL' >/dev/null
+INSERT INTO public.invoice_extraction_runs (id, organization_id, vendor_invoice_id, processing_job_id, attempt_number, status, extractor_name, raw_result)
+SELECT ('6c4f2000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, job.organization_id, job.invoice_id, job.id, 1, 'succeeded', 'release-check', '{}'::jsonb
+FROM public.invoice_processing_jobs job
+JOIN generate_series(1, 5) n ON job.invoice_id = ('6c4f0000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid;
+INSERT INTO public.invoice_extraction_candidates (organization_id, extraction_run_id, candidate_type, line_number, field_data, confidence_data, source_data)
+SELECT run.organization_id, run.id, 'line_item', 1, '{"sku": "900-0001"}'::jsonb, '{}'::jsonb, '{}'::jsonb FROM public.invoice_extraction_runs run;
+INSERT INTO public.invoice_line_items (organization_id, invoice_id, description, quantity, unit_price, line_total)
+SELECT organization_id, id, 'Legacy line', 1, 5, 5 FROM public.invoices WHERE organization_id = '6c4e0000-0000-4000-8000-000000000101' ORDER BY id LIMIT 5;
+INSERT INTO public.vendor_identity_signatures (organization_id, vendor_id, signature_type, normalized_value)
+VALUES ('6c4e0000-0000-4000-8000-000000000101', '6c4e0000-0000-4000-8000-000000000301', 'SELLER_NAME', 'henry schein');
+INSERT INTO public.product_aliases (organization_id, product_id, alias, normalized_alias)
+SELECT organization_id, id, 'Alias ' || name, lower('alias ' || name) FROM public.products
+WHERE organization_id = '6c4e0000-0000-4000-8000-000000000101' ORDER BY id LIMIT 5;
+INSERT INTO public.catalog_import_batches (id, catalog_vendor_id, source_name, source_version, status)
+SELECT '6c4f3000-0000-4000-8000-000000000001', id, 'release-check', '1', 'completed' FROM public.catalog_vendors ORDER BY id LIMIT 1;
+INSERT INTO public.catalog_source_records (import_batch_id, catalog_vendor_id, source_ordinal, raw_vendor_sku, raw_product_name, raw_data, resolution_status)
+SELECT batch.id, batch.catalog_vendor_id, n, 'RC-' || n, 'Release source ' || n, jsonb_build_object('row', n), 'pending'
+FROM public.catalog_import_batches batch, generate_series(1, 5) n WHERE batch.id = '6c4f3000-0000-4000-8000-000000000001';
+INSERT INTO public.supply_request_commitments (organization_id, supply_request_id, amount, total_item_count, priced_item_count, pricing_status)
+SELECT organization_id, id, 0, 0, 0, 'unpriced' FROM public.supply_requests ORDER BY id LIMIT 1;
 SQL
 
 editor() { psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -At -F ' | ' -c "$(node "$rewrite" "$1")"; }
@@ -111,7 +141,11 @@ objects() { psql -X -U postgres -d postgres -Atc "SELECT (SELECT count(*) FROM p
 readonly_editor "$release/precheck.sql" > "$work/pre.txt"
 cmp -s "$work/pre.txt" <(fingerprint) || fail "precheck output is not exactly the fingerprint"
 for line in 'vendor_invoices hash' 'invoices hash' 'invoice_items hash' 'inventory_items hash' 'inventory_adjustments hash' 'inventory_price_history hash' \
-  'organizations hash' 'organization_memberships hash' 'organization_budgets hash' 'products hash'; do
+  'organizations hash' 'organization_memberships hash' 'organization_budgets hash' 'products hash' \
+  'supply_requests hash' 'supply_request_items hash' 'supply_request_commitments hash' 'catalog_products hash' 'catalog_vendor_products hash' \
+  'catalog_vendors hash' 'catalog_source_records hash' 'product_aliases hash' 'inventory_location_balances hash' 'inventory_transfers hash' \
+  'inventory_count_sessions hash' 'inventory_count_lines hash' 'invoice_extraction_runs hash' 'invoice_extraction_candidates hash' \
+  'invoice_line_items hash' 'vendor_identity_signatures hash' 'vendors hash'; do
   grep -q "^rows | $line | [0-9a-f]\{32\}\$" "$work/pre.txt" || fail "$line was not fingerprinted"
 done
 grep -q '^rows | inventory_count_policies | 6c4e0000-0000-4000-8000-000000000101 enabled=false interval=30$' "$work/pre.txt" || fail "cadence policy not reported"
@@ -139,6 +173,9 @@ echo "ok - migration (as the SQL Editor sends it) returned success with no outpu
 readonly_editor "$release/postcheck.sql" > "$work/post.txt"
 cmp -s "$work/post.txt" <(fingerprint) || fail "postcheck output is not exactly the fingerprint"
 echo "ok - postcheck passed"
+node supabase/tests/support/phase6c4_release_generate.mjs --pre "$work/pre.txt" --post "$work/post.txt" --check >/dev/null \
+  || fail "precheck.sql / postcheck.sql are not what the generator produces from fingerprint.sql on this database"
+echo "ok - precheck.sql and postcheck.sql are exactly what the generator produces from fingerprint.sql"
 
 expect_failure "second application" "Phase 6C.4 batch intake objects already exist unexpectedly" editor "supabase/migrations/$migration"
 expect_failure "precheck after the migration" "precheck: Phase 6C.4 objects already exist" readonly_editor "$release/precheck.sql"
@@ -150,6 +187,7 @@ strip() { grep -v -E "^(function|overloads) \| ($new_functions) \| " "$1" \
   | grep -v -E "^(table|policies|grants) \| ($new_tables) \| " \
   | grep -v -E "^index \| ($new_tables)_" \
   | grep -v -E '^index \| invoice_upload_batch' \
+  | grep -v -E "^constraint \| ($new_tables)\." \
   | grep -v -E '^trigger \| invoice_upload_batch_segments\.invoice_upload_batch_segments_updated_at \| ' \
   | grep -v -E "^rows \| ($new_tables) count \| " \
   | grep -v -E '^count \| public (functions|tables|indexes|triggers) \| '; }
@@ -164,6 +202,24 @@ for line in 'function | post_reviewed_invoice' 'function | delete_invoice_perman
   'storage | bucket vendor-invoices'; do
   [ "$(grep -F "$line |" "$work/pre.txt")" = "$(grep -F "$line |" "$work/post.txt")" ] || fail "$line changed"
 done
+# Every strengthened pin is present before the migration and identical after it.
+for prefix in 'function | apply_supply_request_transition' 'function | resolve_supply_request_item_costs' 'function | adopt_catalog_vendor_product' \
+  'function | normalize_catalog_sku_match_key' 'function | tg_catalog_vendors_search_document' 'function | staff_saved_product_identity_check' \
+  'table | staff_saved_products' 'table | catalog_search_terms' 'table | catalog_vendor_product_search_documents' 'table | vendors' \
+  'table | invoice_extraction_runs' 'table | invoice_extraction_candidates' 'table | invoice_line_items' 'table | vendor_identity_signatures' \
+  'policies | staff_saved_products' 'grants | staff_saved_products' 'policies | vendors' 'grants | vendors' \
+  'constraint | invoices.invoices_source_file_id_fkey' 'constraint | invoices.invoices_source_file_id_key' 'constraint | vendor_invoices.vendor_invoices_storage_path_key' \
+  'index | staff_saved_products_pkey' 'storage | policy vendor_invoices_storage_owner_select' \
+  'rows | supply_request_items hash' 'rows | catalog_source_records hash' 'rows | inventory_location_balances hash' 'rows | vendors hash'; do
+  before="$(grep -F "$prefix |" "$work/pre.txt")"
+  [ -n "$before" ] || fail "$prefix is not fingerprinted"
+  if echo "$before" | grep -q ' | absent$'; then fail "$prefix is absent before the migration"; fi
+  [ "$before" = "$(grep -F "$prefix |" "$work/post.txt")" ] || fail "$prefix changed"
+done
+[ "$(grep -c '^function | ' "$work/pre.txt")" = "86" ] || fail "expected 86 function pins (9 new, 77 existing)"
+[ "$(grep -c '^constraint | invoice_upload_batch' "$work/pre.txt")" = "0" ] && [ "$(grep -c '^constraint | invoice_upload_batch' "$work/post.txt")" -gt 0 ] \
+  || fail "new-table constraints are not fingerprinted after the migration only"
+echo "ok - every strengthened pin (77 existing functions, 5A.10 and invoice pipeline tables, constraints, catalog, request, inventory and pipeline data) is identical before and after"
 grep -q '^rows | invoice_upload_batches count | 0$' "$work/post.txt" || fail "packets are not empty"
 echo "ok - pre/post differ only in documented lines: +9 functions, +2 tables (no client access), +10 indexes, +1 trigger; no invoice, inventory, price, storage or posting line changed"
 echo "--- documented pre/post differences"

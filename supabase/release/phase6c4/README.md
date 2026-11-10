@@ -4,7 +4,24 @@ These scripts check the Phase 6C.4 migration on production. They are read-only a
 
 Production is migrated by hand in the Supabase SQL Editor. Never use `supabase db push`: the migration history does not record hand-applied migrations (see `../phase7a1/README.md`, "Migration history").
 
-Every file here works in the SQL Editor exactly as written: no psql meta-commands, no transaction control. `precheck.sql` and `postcheck.sql` are each one DO block of assertions followed by the shared fingerprint SELECT (`fingerprint.sql`), so the result grid is the full output. The migration creates two tables and enables RLS on each in the same file, so the Editor's "Run and enable RLS" check has nothing to flag and must not appear. `supabase/tests/phase6c4_release_check.sh` proves all of this on a seeded copy (40 invoice uploads with lines, 10 posted through `post_reviewed_invoice` with inventory and price history, a budget, stock, cadence OFF), sending each file the way the Editor does.
+Every file here works in the SQL Editor exactly as written: no psql meta-commands, no transaction control. `precheck.sql` and `postcheck.sql` are each one DO block of assertions followed by the shared fingerprint SELECT (`fingerprint.sql`), so the result grid is the full output. The migration creates two tables and enables RLS on each in the same file, so the Editor's "Run and enable RLS" check has nothing to flag and must not appear. `supabase/tests/phase6c4_release_check.sh` proves all of this on a seeded copy (40 invoice uploads with lines, 10 posted through `post_reviewed_invoice` with inventory and price history, a budget, stock, cadence OFF, plus the 5A.10 discovery and 7B.2 count-history fixtures and a small seed so that every fingerprinted data line hashes real rows), sending each file the way the Editor does.
+
+`fingerprint.sql` is the source. `precheck.sql` and `postcheck.sql` are generated from it by `supabase/tests/support/phase6c4_release_generate.mjs` (expected values read, read-only, from a disposable database on main `33e42d3` and the same with this migration); never edit them by hand. The release check fails if the committed files are not exactly what the generator produces.
+
+## What the checks pin
+
+- **Functions (77 existing + 9 new)**, by body hash, SECURITY DEFINER and who may execute them; asserted in both DO blocks:
+  - invoice upload, extraction, review, matching, posting and deletion (`post_reviewed_invoice`, `delete_invoice_permanently`, `seed_structured_invoice_draft`, `search_invoice_line_catalog_listings`, `match_invoice_item_to_catalog_listing`, …);
+  - organization role helpers and `tg_set_updated_at`;
+  - 5A.10 discovery and Saved Items (`search_supply_request_products`, `search_supply_request_products_with_signals`, `get_staff_product_discovery`, `save_staff_product`, `remove_staff_saved_product`, `staff_saved_product_identity_check`, …);
+  - the request workflow (transitions, lifecycle guard, item replacement, submitted updates and cancellation, context, item costs, budget impact, inventory identities, specifications, product history and identities, staff updates), commitments, budget and inventory functions;
+  - catalog adoption, stocking, admin detail, effective specifications, parent-link validation, the catalog normalization and search helpers and the four search-document trigger functions;
+  - inventory count cadence (`get_inventory_count_policy`, `get_inventory_count_freshness`, `inventory_location_count_freshness`, `set_inventory_count_policy`).
+- **Table definitions** (columns, types, NOT NULL, RLS), **policies** and **grants** of the new tables, `vendor_invoices`, `invoice_processing_jobs`, `invoices`, `invoice_items`, `inventory_items`, `inventory_adjustments`, `inventory_price_history`, `invoice_extraction_runs`, `invoice_extraction_candidates`, `invoice_line_items`, `vendor_identity_signatures`, `vendors` (read by duplicate detection), and the 5A.10 tables `staff_saved_products`, `catalog_search_terms`, `catalog_vendor_product_search_documents`. The definitions of the last eight are also asserted in both DO blocks.
+- **Constraints** (primary, unique, foreign and check keys), **indexes** and **triggers** of the same invoice, pipeline, vendor and 5A.10 tables. Both DO blocks also assert the invoice file identity 6C.4 builds on: `invoices.source_file_id` is UNIQUE and a validated foreign key to `vendor_invoices(id)` `ON DELETE SET NULL`; `vendor_invoices.storage_path` is UNIQUE. There is no existing unique constraint on vendor + invoice number; that identity is the new partial unique index on `invoice_upload_batch_segments` plus the lookup in `register_invoice_batch_segment`.
+- **Storage**: the `vendor-invoices` bucket and its owner-only storage policies.
+- **Whole-row data hashes**: `vendor_invoices`, `invoice_processing_jobs`, `invoices`, `invoice_items`, `invoice_extraction_runs`, `invoice_extraction_candidates`, `invoice_line_items`, `vendor_identity_signatures`, `vendors`, `inventory_items`, `inventory_location_balances`, `inventory_adjustments`, `inventory_transfers`, `inventory_count_sessions`, `inventory_count_lines`, `inventory_price_history`, `supply_requests`, `supply_request_items`, `supply_request_commitments`, `organization_budgets`, `organizations`, `organization_memberships`, `products`, `vendor_products`, `product_aliases`, `catalog_products`, `catalog_vendor_products`, `catalog_vendors`, `catalog_source_records`; the `staff_saved_products` count and the cadence policies. Data is compared precheck → postcheck (production's own values; nothing is assumed from local fixtures).
+- **Counts** of public functions, tables, indexes, policies and triggers, asserted in both DO blocks, and the absence of every 6C.4 object before the migration.
 
 ## One migration, before the deploy
 
@@ -24,7 +41,7 @@ Run each file as its own query: paste the whole file, run it once, and read the 
 
 1. **`precheck.sql`**
    - Success: a grid of fingerprint rows. Download as `phase6c4_pre.csv`.
-   - STOP on any error. `precheck: Phase 6C.4 objects already exist` means step 2 already ran; do not run it again. `function is missing or differs from the reviewed production state` or `public object counts differ` means production drifted from main `33e42d3`.
+   - STOP on any error. `precheck: Phase 6C.4 objects already exist` means step 2 already ran; do not run it again. `function is missing or differs from the reviewed production state`, `table is missing or differs from the reviewed production state`, `invoice file identity constraints differ` or `public object counts differ` means production drifted from main `33e42d3`.
 2. **`20261109120000_phase6c4_batch_invoice_intake.sql`**
    - One transaction with a preflight; any error rolls everything back.
    - The Editor must **not** offer "Run and enable RLS". If it does, stop.
@@ -38,11 +55,11 @@ Run each file as its own query: paste the whole file, run it once, and read the 
 ## Expected differences (precheck → postcheck)
 
 - **New functions** (`absent` → hash): the nine above. The seven client functions are `secdef=true authenticated=true anon=false public=false`; the two internal ones `secdef=false authenticated=false anon=false public=false`. Their overloads go from 0 to 1.
-- **New tables** (`absent` → column hash with `rls=true`), their `grants` lines (`none` → `service_role=SELECT`), `policies` stay `none`, ten new `index | invoice_upload_batch…` lines and one new `trigger` line.
+- **New tables** (`absent` → column hash with `rls=true`), their `grants` lines (`none` → `service_role=SELECT`), `policies` stay `none`, new `constraint | invoice_upload_batch…` lines (their primary, unique, foreign and check keys), ten new `index | invoice_upload_batch…` lines and one new `trigger` line.
 - **Counts**: public functions +9, tables +2, indexes +10, triggers +1; policies unchanged. On the current production baseline: functions 140 → 149, tables 46 → 48, indexes 171 → 181, triggers 75 → 76, policies 58.
 - **Rows**: `invoice_upload_batches count` and `invoice_upload_batch_segments count` go from `absent` to `0`.
 
-Everything else must be identical: every pinned function hash (`post_reviewed_invoice`, `delete_invoice_permanently`, `seed_structured_invoice_draft`, the matching and catalog-search functions, the 5A.10 discovery functions, request, budget and inventory functions), the invoice tables' columns, policies, grants, indexes and triggers, the `vendor-invoices` bucket and storage policies, and every vendor-invoice, processing-job, invoice, invoice-item, inventory, adjustment, price-history, request, commitment, budget, organization, membership, product and cadence line. Real use between the precheck and the postcheck (an upload, a review) changes the matching `rows` lines; run the two back to back.
+Everything else must be identical: every pinned function hash, every existing table, policy, grant, constraint, index and trigger line, the `vendor-invoices` bucket and storage policies, and every `rows` line listed under "What the checks pin". Real use between the precheck and the postcheck (an upload, a review) changes the matching `rows` lines; run the two back to back.
 
 ## Identity, duplicates and storage (for review)
 
@@ -57,4 +74,4 @@ Owner: upload a normal one-invoice PDF: it opens invoice review exactly as befor
 
 ## Provenance
 
-Hashes come from a disposable `public.ecr.aws/supabase/postgres:17.6.1.167` migrated from main `33e42d3` (production's application commit, Phase 5A.10) plus this migration. The main-only database reproduces the production baseline counts (140 / 46 / 171 / 58 / 75), and every pinned function hash is identical before and after the migration. `phase6c4_release_check.sh` runs the whole sequence on a seeded copy, including an induced failure before `COMMIT` (complete rollback), a refused second application and a refused repeat precheck.
+Hashes come from a disposable `public.ecr.aws/supabase/postgres:17.6.1.167` migrated from main `33e42d3` (production's application commit, Phase 5A.10) plus this migration. The main-only database reproduces the production baseline counts (140 / 46 / 171 / 58 / 75), and every pinned function hash and table definition is identical before and after the migration. Regenerate with both databases running: `node supabase/tests/support/phase6c4_release_generate.mjs --pre <port> --post <port>` (`--check` compares without writing). `phase6c4_release_check.sh` runs the whole sequence on a seeded copy, including an induced failure before `COMMIT` (complete rollback), a refused second application and a refused repeat precheck.
