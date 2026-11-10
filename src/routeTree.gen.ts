@@ -34,6 +34,7 @@ import { Route as AuthenticatedCountTokenRouteImport } from './routes/_authentic
 import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory.index'
 import { Route as AuthenticatedInvoicesIndexRouteImport } from './routes/_authenticated/invoices.index'
 import { Route as AuthenticatedInvoicesInvoiceIdRouteImport } from './routes/_authenticated/invoices.$invoiceId'
+import { Route as AuthenticatedInvoicesBatchesBatchIdRouteImport } from './routes/_authenticated/invoices.batches.$batchId'
 import { Route as AuthenticatedStaffIndexRouteImport } from './routes/_authenticated/staff/index'
 import { Route as AuthenticatedStaffRequestRouteImport } from './routes/_authenticated/staff/request'
 import { Route as AuthenticatedStaffRequestsRouteImport } from './routes/_authenticated/staff/requests'
@@ -173,6 +174,12 @@ const AuthenticatedInvoicesInvoiceIdRoute =
     path: '/$invoiceId',
     getParentRoute: () => AuthenticatedInvoicesRoute,
   } as any)
+const AuthenticatedInvoicesBatchesBatchIdRoute =
+  AuthenticatedInvoicesBatchesBatchIdRouteImport.update({
+    id: '/batches/$batchId',
+    path: '/batches/$batchId',
+    getParentRoute: () => AuthenticatedInvoicesRoute,
+  } as any)
 const AuthenticatedStaffIndexRoute = AuthenticatedStaffIndexRouteImport.update({
   id: '/staff/',
   path: '/staff/',
@@ -237,6 +244,7 @@ export interface FileRoutesByFullPath {
   '/join/$token': typeof JoinTokenRoute
   '/count/$token': typeof AuthenticatedCountTokenRoute
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
+  '/invoices/batches/$batchId': typeof AuthenticatedInvoicesBatchesBatchIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/count/': typeof AuthenticatedCountIndexRoute
@@ -268,6 +276,7 @@ export interface FileRoutesByTo {
   '/join/$token': typeof JoinTokenRoute
   '/count/$token': typeof AuthenticatedCountTokenRoute
   '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
+  '/invoices/batches/$batchId': typeof AuthenticatedInvoicesBatchesBatchIdRoute
   '/staff/request': typeof AuthenticatedStaffRequestRoute
   '/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/count': typeof AuthenticatedCountIndexRoute
@@ -303,6 +312,7 @@ export interface FileRoutesById {
   '/join/$token': typeof JoinTokenRoute
   '/_authenticated/count/$token': typeof AuthenticatedCountTokenRoute
   '/_authenticated/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
+  '/_authenticated/invoices/batches/$batchId': typeof AuthenticatedInvoicesBatchesBatchIdRoute
   '/_authenticated/staff/request': typeof AuthenticatedStaffRequestRoute
   '/_authenticated/staff/requests': typeof AuthenticatedStaffRequestsRouteWithChildren
   '/_authenticated/count/': typeof AuthenticatedCountIndexRoute
@@ -338,6 +348,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/count/$token'
     | '/invoices/$invoiceId'
+    | '/invoices/batches/$batchId'
     | '/staff/request'
     | '/staff/requests'
     | '/count/'
@@ -369,6 +380,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/count/$token'
     | '/invoices/$invoiceId'
+    | '/invoices/batches/$batchId'
     | '/staff/request'
     | '/staff/requests'
     | '/count'
@@ -403,6 +415,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/_authenticated/count/$token'
     | '/_authenticated/invoices/$invoiceId'
+    | '/_authenticated/invoices/batches/$batchId'
     | '/_authenticated/staff/request'
     | '/_authenticated/staff/requests'
     | '/_authenticated/count/'
@@ -600,6 +613,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedInvoicesInvoiceIdRouteImport
       parentRoute: typeof AuthenticatedInvoicesRoute
     }
+    '/_authenticated/invoices/batches/$batchId': {
+      id: '/_authenticated/invoices/batches/$batchId'
+      path: '/batches/$batchId'
+      fullPath: '/invoices/batches/$batchId'
+      preLoaderRoute: typeof AuthenticatedInvoicesBatchesBatchIdRouteImport
+      parentRoute: typeof AuthenticatedInvoicesRoute
+    }
     '/_authenticated/staff/': {
       id: '/_authenticated/staff/'
       path: '/staff'
@@ -675,11 +695,14 @@ const AuthenticatedInventoryRouteWithChildren =
 interface AuthenticatedInvoicesRouteChildren {
   AuthenticatedInvoicesInvoiceIdRoute: typeof AuthenticatedInvoicesInvoiceIdRoute
   AuthenticatedInvoicesIndexRoute: typeof AuthenticatedInvoicesIndexRoute
+  AuthenticatedInvoicesBatchesBatchIdRoute: typeof AuthenticatedInvoicesBatchesBatchIdRoute
 }
 
 const AuthenticatedInvoicesRouteChildren: AuthenticatedInvoicesRouteChildren = {
   AuthenticatedInvoicesInvoiceIdRoute: AuthenticatedInvoicesInvoiceIdRoute,
   AuthenticatedInvoicesIndexRoute: AuthenticatedInvoicesIndexRoute,
+  AuthenticatedInvoicesBatchesBatchIdRoute:
+    AuthenticatedInvoicesBatchesBatchIdRoute,
 }
 
 const AuthenticatedInvoicesRouteWithChildren =

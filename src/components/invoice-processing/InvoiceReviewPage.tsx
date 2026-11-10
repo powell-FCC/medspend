@@ -11,6 +11,7 @@ import { describeInvoiceLineReview } from '@/invoice/line-match';
 import { approveInvoiceFn, confirmInvoiceItemProductFn, createProductFromInvoiceItemFn, deleteInvoiceItemFn, getInvoiceReviewFn, matchInvoiceItemToCatalogFn, saveInvoiceHeaderFn, saveInvoiceItemFn, searchInvoiceCatalogFn, unlinkInvoiceItemProductFn } from '@/lib/invoice-processing.functions';
 import type { InvoiceHeaderInput, InvoiceItemInput, InvoiceMatchResult, ReviewItem } from '@/types/invoice-processing';
 import { InvoiceHeaderForm } from './InvoiceHeaderForm';
+import { InvoiceSourcePacket } from '@/components/invoices/InvoiceSourcePacket';
 import { InvoiceItemDialog } from './InvoiceItemDialog';
 import { ProductMatchDialog } from './ProductMatchDialog';
 import { ReviewItemsTable } from './ReviewItemsTable';
@@ -130,6 +131,7 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
         <div>
           <p className="font-medium">{data.header.originalFilename}</p>
           <p className="mt-1 text-xs text-muted-foreground">Uploaded {formatDate(data.header.uploadedAt)}</p>
+          <InvoiceSourcePacket organizationId={data.header.organizationId} sourceFileId={data.header.sourceFileId} />
         </div>
       </div>
       {data.header.structuredExtractionState === 'STRUCTURED_SUCCESS' && (

@@ -1,6 +1,7 @@
 import type { InvoiceExtractionProvider } from './providers.ts';
 import type { CanonicalInvoiceExtraction, ExtractedField, ExtractionFinancialEvidence } from './types.ts';
 import { classifyDocument, extractVendorEvidence } from './document-identity.ts';
+import { HENRY_SCHEIN_VENDOR_NAME, isHenryScheinInvoiceLayout, parseHenryScheinInvoiceLayout } from './layouts/henry-schein-invoice.ts';
 
 export interface ExtractionCandidateDiagnostic {
   field: string;
@@ -281,6 +282,64 @@ function parseItems(
   return items;
 }
 
+// Phase 6C.4: the Henry Schein invoice layout (see layouts/henry-schein-invoice.ts). Same output
+// contract as the generic rules; only the reading of this one printed form differs.
+function henryScheinExtraction(
+  rawText: string, lines: string[], classification: ReturnType<typeof classifyDocument>, headerCandidates: ExtractionCandidateDiagnostic[],
+): DeterministicExtractionDiagnostics {
+  const layout = parseHenryScheinInvoiceLayout(lines);
+  const remit = lines.findIndex((line) => /please\s+remit\s+payments\s+to:\s*henry\s+schein/i.test(line));
+  headerCandidates.push({ field: 'vendor', value: HENRY_SCHEIN_VENDOR_NAME, accepted: true, reason: 'HENRY_SCHEIN_REMIT_TO', confidence: 92, line: remit });
+  const identifier = (field: string, found: { value: string; line: number } | null, confidence: number) => {
+    if (!found || !found.value) return parsed('', 0);
+    headerCandidates.push({ field, value: found.value, accepted: true, reason: 'HENRY_SCHEIN_STACKED_LABEL', confidence, line: found.line });
+    return parsed(found.value, confidence);
+  };
+  const money = (field: string, found: { value: number; line: number } | null, confidence: number) => {
+    if (!found) return parsed<number | null>(null, 0);
+    headerCandidates.push({ field, value: found.value.toFixed(2), accepted: true, reason: 'HENRY_SCHEIN_TOTALS_COLUMN', confidence, line: found.line });
+    return parsed<number | null>(found.value, confidence);
+  };
+  const invoiceDate = identifier('invoiceDate', layout.invoiceDate, 92);
+  const lineItemCandidates: DeterministicExtractionDiagnostics['lineItemCandidates'] = layout.candidates
+    // A line shipped as 0 is not billed on this invoice: it is neither an item nor a rejected amount.
+    .filter((candidate) => candidate.reason !== 'HENRY_SCHEIN_NOT_SHIPPED')
+    .map((candidate) => ({ line: candidate.line, accepted: candidate.accepted, reason: candidate.reason, value: candidate.value, quantity: candidate.quantity, unitPrice: candidate.unitPrice, expectedExtension: candidate.expectedExtension, consumedLines: [candidate.line] }));
+  const items: CanonicalInvoiceExtraction['items'] = layout.rows.map((row) => ({
+    sku: parsed(row.sku, 94), description: parsed(row.description, 90), manufacturer: parsed('', 0), quantity: parsed(row.quantity, 96),
+    unit: parsed(row.unit, 86), unitPrice: parsed(row.unitPrice, 96), lineTotal: parsed(row.lineTotal, 98), suggestedCategory: parsed('', 0),
+  }));
+  const extraction: CanonicalInvoiceExtraction = {
+    header: {
+      documentType: parsed(classification.type, classification.confidence),
+      vendor: parsed(HENRY_SCHEIN_VENDOR_NAME, 92),
+      invoiceNumber: identifier('invoiceNumber', layout.invoiceNumber, 94),
+      invoiceDate,
+      orderNumber: parsed('', 0), orderDate: parsed('', 0),
+      purchaseOrder: identifier('purchaseOrder', layout.purchaseOrder, 90),
+      subtotal: money('subtotal', layout.subtotal, 94),
+      tax: money('tax', layout.tax, 92),
+      shipping: money('shipping', layout.shipping, 88),
+      total: money('total', layout.total, 94),
+    },
+    vendorEvidence: extractVendorEvidence(rawText),
+    items,
+  };
+  // The header's printed invoice total and the per-page footers repeat the total; they are
+  // explained by it, as is the totals column.
+  const explained = new Set(layout.totalsLines);
+  if (layout.headerTotal) explained.add(layout.headerTotal.line);
+  extraction.financialEvidence = financialEvidence(lines.map((line, index) => (explained.has(index) ? '' : line)), extraction.header, lineItemCandidates, headerCandidates);
+  const recognizable = Object.entries(extraction.header).some(([name, field]) => name !== 'documentType' && field.value !== '' && field.value !== null) || extraction.items.length;
+  if (!recognizable) throw new Error('Document text does not contain a recognizable invoice structure');
+  const regions = [{ startLine: Math.max(0, lines.findIndex((line) => /^line$/i.test(line))), endLine: lines.length - 1, headings: ['line', 'item code', 'unit size', 'description', 'qty shipped', 'unit price', 'ext. price'] }];
+  return {
+    normalizedText: lines.join('\n'), lines, headerCandidates, tableRegions: regions, lineItemCandidates, extensionCandidates: [],
+    summary: { lineCount: lines.length, detectedHeaderFields: Object.values(extraction.header).filter((field) => field.value !== '' && field.value !== null).length, detectedLineItems: extraction.items.length, reasonCodes: layout.reasons },
+    extraction,
+  };
+}
+
 export class DeterministicInvoiceExtractionProvider implements InvoiceExtractionProvider {
   readonly name = 'deterministic-invoice-v2';
   async extractInvoice(rawText: string) { return (await this.extractInvoiceWithDiagnostics(rawText)).extraction; }
@@ -291,6 +350,7 @@ export class DeterministicInvoiceExtractionProvider implements InvoiceExtraction
     const headerCandidates: ExtractionCandidateDiagnostic[] = [];
     const classification = classifyDocument(lines.join('\n'));
     headerCandidates.push({ field: 'documentType', value: classification.type, accepted: classification.type !== 'UNKNOWN', reason: classification.evidence || 'NO_EXPLICIT_DOCUMENT_LABEL', confidence: classification.confidence, line: 0 });
+    if (classification.type === 'INVOICE' && isHenryScheinInvoiceLayout(lines)) return henryScheinExtraction(rawText, lines, classification, headerCandidates);
     const pairedIndex = lines.findIndex((line) => /invoice\s*(?:number|no\.?|#)/i.test(line) && /invoice\s+date/i.test(line));
     const pairedValues = pairedIndex >= 0 ? lines[pairedIndex + 1]?.split(/\s{2,}/) : undefined;
     const invoiceNumberCandidate = classification.type === 'INVOICE' && pairedValues?.[0]
