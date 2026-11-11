@@ -24,8 +24,17 @@
 --     (eligibility rechecked at claim time). provider / provider_message_id / provider_metadata
 --     are opaque values from whichever adapter sent it.
 --   * organization_notification_settings: per organization. sending_enabled is the master
---     safety switch (default OFF; service role only; nothing is ever delivered while it is off,
---     and events raised while it is off are suppressed, never replayed later). The digest
+--     safety switch (default OFF; service role only; nothing is ever delivered while it is off).
+--     Turning it ON records sending_enabled_at, a durable delivery boundary set by a guard
+--     trigger (it cannot be written or backdated directly): only events created at or after
+--     the current boundary are ever dispatched or delivered, and only digest slots scheduled at
+--     or after it are enqueued. Events raised while sending is OFF (including every event
+--     before an organization's first enablement) are therefore suppressed whenever the Worker
+--     next sees them, regardless of the order of operator actions and Worker runs, and never
+--     replay. OFF -> ON again sets a new boundary. The guard takes a SHARE ROW EXCLUSIVE lock
+--     on notification_events before reading clock_timestamp(), and events take their
+--     created_at from clock_timestamp() at insert time, so an event write concurrent with
+--     enabling is either fully before the boundary (suppressed) or after it. The digest
 --     preference (enabled, daily / weekdays / weekly, send hour, weekly weekday, IANA time
 --     zone) is editable by organization admins. An organization without a row uses the
 --     defaults: sending OFF, digest ON, daily, 08:00, Monday, America/New_York, 7 days.
@@ -39,6 +48,10 @@
 -- dispatch_notification_events, claim_notification_deliveries and
 -- complete_notification_delivery; set_organization_notification_sending is service role only.
 --
+-- Suppression reasons: events 'sending_disabled' (switch OFF at dispatch),
+-- 'created_before_sending_enabled' (older than the current boundary), 'too_old' (expired);
+-- deliveries 'sending_disabled', 'created_before_sending_enabled', recipient checks, etc.
+--
 -- Retry policy (complete_notification_delivery): at most 5 attempts; after a retryable failure
 -- the next attempt waits 1, 5, 30, then 120 minutes; a permanent failure, the 5th failed
 -- attempt, or an expired lease on the 5th attempt dead-letters the delivery. A lease (default
@@ -47,7 +60,8 @@
 -- when first dispatched are expired instead of delivered.
 --
 -- Additive: three tables, their indexes, two triggers on supply_requests and
--- supply_request_updates, an updated_at trigger, and the functions below. No existing table,
+-- supply_request_updates, two updated_at triggers, the sending-boundary guard trigger, and the
+-- functions below. No existing table,
 -- column, policy, grant, function or row changes; request lifecycle functions are untouched.
 
 BEGIN;
@@ -72,6 +86,7 @@ BEGIN
                 WHERE n.nspname = 'public' AND p.proname IN (
                   'capture_supply_request_submitted_notification',
                   'capture_supply_request_decision_notification',
+                  'guard_notification_sending_boundary',
                   'get_organization_notification_settings',
                   'update_organization_notification_settings',
                   'set_organization_notification_sending',
@@ -93,6 +108,9 @@ $preflight$;
 CREATE TABLE public.organization_notification_settings (
   organization_id uuid PRIMARY KEY REFERENCES public.organizations(id) ON DELETE CASCADE,
   sending_enabled boolean NOT NULL DEFAULT false,
+  -- The current delivery boundary: when sending was last turned ON (NULL until the first time).
+  -- Maintained only by guard_notification_sending_boundary.
+  sending_enabled_at timestamptz,
   digest_enabled boolean NOT NULL DEFAULT true,
   digest_frequency text NOT NULL DEFAULT 'daily'
     CONSTRAINT organization_notification_settings_frequency_check
@@ -109,7 +127,9 @@ CREATE TABLE public.organization_notification_settings (
       CHECK (ordered_receipt_threshold_days BETWEEN 1 AND 90),
   updated_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT organization_notification_settings_boundary_check
+    CHECK (NOT sending_enabled OR sending_enabled_at IS NOT NULL)
 );
 
 CREATE TABLE public.notification_events (
@@ -133,7 +153,8 @@ CREATE TABLE public.notification_events (
       CHECK (status IN ('pending', 'dispatched', 'suppressed', 'expired')),
   status_reason text,
   recipient_count integer,
-  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Insert time (not transaction start), compared with the sending boundary.
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   processed_at timestamptz,
   CONSTRAINT notification_events_shape_check CHECK (
     (event_type = 'request_submitted' AND entity_type = 'supply_request' AND source_type = 'supply_request'
@@ -199,6 +220,38 @@ CREATE TRIGGER organization_notification_settings_updated_at
 CREATE TRIGGER notification_deliveries_updated_at
   BEFORE UPDATE ON public.notification_deliveries
   FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
+
+-- The delivery boundary. OFF -> ON (or a new row created ON) records a new boundary; anything
+-- else keeps the stored one (a direct write cannot set or backdate it); a new row created OFF
+-- has none. Before reading the clock it locks notification_events in SHARE ROW EXCLUSIVE
+-- mode: that waits for every transaction that has written an event (their created_at values
+-- are therefore earlier) and holds back new event writes until this transaction ends (theirs
+-- are therefore later). Event writers never touch this table, so the lock cannot deadlock
+-- with them.
+CREATE FUNCTION public.guard_notification_sending_boundary()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  IF NEW.sending_enabled AND (TG_OP = 'INSERT' OR NOT OLD.sending_enabled) THEN
+    LOCK TABLE public.notification_events IN SHARE ROW EXCLUSIVE MODE;
+    NEW.sending_enabled_at := clock_timestamp();
+  ELSIF TG_OP = 'INSERT' THEN
+    NEW.sending_enabled_at := NULL;
+  ELSE
+    NEW.sending_enabled_at := OLD.sending_enabled_at;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.guard_notification_sending_boundary() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER organization_notification_settings_sending_boundary
+  BEFORE INSERT OR UPDATE ON public.organization_notification_settings
+  FOR EACH ROW EXECUTE FUNCTION public.guard_notification_sending_boundary();
 
 ALTER TABLE public.organization_notification_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notification_events ENABLE ROW LEVEL SECURITY;
@@ -478,6 +531,7 @@ DECLARE
   _local timestamp;
   _local_date date;
   _iso_week text;
+  _slot timestamptz;
   _content jsonb;
   _created integer := 0;
   _inserted integer;
@@ -494,6 +548,10 @@ BEGIN
     _local_date := _local::date;
     _iso_week := to_char(_local, 'IYYY-"W"IW');
     CONTINUE WHEN extract(hour FROM _local)::integer < _settings.digest_send_hour;
+    -- Only slots scheduled at or after the current delivery boundary: enabling sending never
+    -- produces a digest for a slot that passed while sending was OFF.
+    _slot := (_local_date + make_time(_settings.digest_send_hour, 0, 0)) AT TIME ZONE _settings.timezone;
+    CONTINUE WHEN _settings.sending_enabled_at IS NULL OR _slot < _settings.sending_enabled_at;
     CONTINUE WHEN _settings.digest_frequency = 'weekdays' AND extract(isodow FROM _local)::integer > 5;
     CONTINUE WHEN _settings.digest_frequency = 'weekly'
       AND extract(isodow FROM _local)::integer <> _settings.digest_weekday;
@@ -540,6 +598,7 @@ AS $$
 DECLARE
   _event public.notification_events%ROWTYPE;
   _sending boolean;
+  _boundary timestamptz;
   _requester uuid;
   _count integer;
   _processed integer := 0;
@@ -552,12 +611,22 @@ BEGIN
     FOR UPDATE SKIP LOCKED
   LOOP
     _processed := _processed + 1;
-    SELECT s.sending_enabled INTO _sending
+    _sending := NULL;
+    _boundary := NULL;
+    SELECT s.sending_enabled, s.sending_enabled_at INTO _sending, _boundary
     FROM public.organization_notification_settings s WHERE s.organization_id = _event.organization_id;
 
     IF NOT COALESCE(_sending, false) THEN
       UPDATE public.notification_events
       SET status = 'suppressed', status_reason = 'sending_disabled', processed_at = _now, recipient_count = 0
+      WHERE id = _event.id;
+      CONTINUE;
+    END IF;
+    -- Raised before the current boundary (while sending was OFF, or before it was last turned
+    -- back ON): never delivered.
+    IF _boundary IS NULL OR _event.created_at < _boundary THEN
+      UPDATE public.notification_events
+      SET status = 'suppressed', status_reason = 'created_before_sending_enabled', processed_at = _now, recipient_count = 0
       WHERE id = _event.id;
       CONTINUE;
     END IF;
@@ -660,6 +729,8 @@ BEGIN
 
     IF NOT COALESCE(_settings.sending_enabled, false) THEN
       _reason := 'sending_disabled';
+    ELSIF _settings.sending_enabled_at IS NULL OR _event.created_at < _settings.sending_enabled_at THEN
+      _reason := 'created_before_sending_enabled';
     ELSIF NOT EXISTS (SELECT 1 FROM public.organization_memberships m
                       WHERE m.organization_id = _delivery.organization_id AND m.user_id = _delivery.recipient_user_id
                         AND m.active) THEN

@@ -9,6 +9,11 @@
 #   3. complete: two completions of the same claim at once: one records 'sent', the other
 #      waits for the row lock and returns 'stale_claim'.
 #   4. digest enqueue: two schedulers at the same instant create one digest event.
+#   5. sending boundary: enabling sending concurrently with an event write. An event written by
+#      a transaction still open when sending is turned ON is ordered before the boundary (the
+#      enable waits for it) and is suppressed; an event written while the enabling transaction
+#      is open waits for it and is ordered after the boundary (delivered). No event written
+#      while sending was OFF slips through.
 #
 # Requires Docker and public.ecr.aws/supabase/postgres:17.6.1.167.
 # Usage: supabase/tests/phase6c3_race_check.sh
@@ -116,4 +121,58 @@ wait
   || fail "concurrent schedulers created $(q "SELECT count(*) FROM public.notification_events WHERE event_type = 'approver_digest'") digests"
 [ "$(( $(head -1 "$work/digest_a") + $(cat "$work/digest_b") ))" = "1" ] || fail "enqueue results A=$(head -1 "$work/digest_a") B=$(cat "$work/digest_b")"
 echo "ok - two digest schedulers at the same instant: one digest"
+# 5a. An event-writing transaction is open (sending OFF for organization 102) when an operator
+#     turns sending ON: the enable waits for it; the event is before the boundary.
+psql -X -q -At -v ON_ERROR_STOP=1 -U postgres -d postgres > "$work/f1_a" <<'SQL' &
+BEGIN;
+SELECT set_config('request.jwt.claim.sub', '6c3e0000-0000-4000-8000-000000000008', true);
+SELECT public.submit_supply_request('6c3e0000-0000-4000-8000-000000000102', 'reorder', NULL, NULL, NULL,
+  '[{"freeTextItem": "Open while enabling", "quantity": 1}]'::jsonb);
+SELECT pg_sleep(3);
+COMMIT;
+SQL
+sleep 1
+start=$(date +%s)
+q "SELECT public.set_organization_notification_sending('6c3e0000-0000-4000-8000-000000000102', true)" >/dev/null
+waited=$(( $(date +%s) - start ))
+wait
+[ "$waited" -ge 1 ] || fail "enabling did not wait for the open event-writing transaction (${waited}s)"
+f1="$(grep -E '^[0-9a-f-]{36}$' "$work/f1_a" | tail -1)"
+[ "$(q "SELECT (e.created_at < s.sending_enabled_at)::text FROM public.notification_events e, public.organization_notification_settings s WHERE e.entity_id = '$f1' AND s.organization_id = '6c3e0000-0000-4000-8000-000000000102'")" = "true" ] \
+  || fail "the open transaction's event is not ordered before the boundary"
+q "SELECT public.dispatch_notification_events()" >/dev/null
+[ "$(q "SELECT status || ':' || status_reason FROM public.notification_events WHERE entity_id = '$f1'")" = "suppressed:created_before_sending_enabled" ] \
+  || fail "an event written while sending was OFF was not suppressed: $(q "SELECT status || ':' || coalesce(status_reason, '') FROM public.notification_events WHERE entity_id = '$f1'")"
+[ "$(q "SELECT count(*) FROM public.notification_deliveries d JOIN public.notification_events e ON e.id = d.event_id WHERE e.entity_id = '$f1'")" = "0" ] \
+  || fail "deliveries created for an event written while sending was OFF"
+echo "ok - enable concurrent with an open event write: the enable waited; the event is before the boundary and suppressed"
+
+# 5b. Sending is turned OFF and ON again inside a transaction that stays open while a request
+#     is submitted: the submission waits for it; its event is after the new boundary.
+psql -X -q -At -v ON_ERROR_STOP=1 -U postgres -d postgres > "$work/f2_a" <<'SQL' &
+BEGIN;
+SELECT public.set_organization_notification_sending('6c3e0000-0000-4000-8000-000000000102', false);
+SELECT public.set_organization_notification_sending('6c3e0000-0000-4000-8000-000000000102', true);
+SELECT pg_sleep(3);
+COMMIT;
+SQL
+sleep 1
+start=$(date +%s)
+f2="$(psql -X -q -At -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL' | grep -E '^[0-9a-f-]{36}$' | tail -1
+SELECT set_config('request.jwt.claim.sub', '6c3e0000-0000-4000-8000-000000000008', false);
+SELECT public.submit_supply_request('6c3e0000-0000-4000-8000-000000000102', 'reorder', NULL, NULL, NULL,
+  '[{"freeTextItem": "Submitted while enabling", "quantity": 1}]'::jsonb);
+SQL
+)"
+waited=$(( $(date +%s) - start ))
+wait
+[ "$waited" -ge 1 ] || fail "the event write did not wait for the open enabling transaction (${waited}s)"
+[ "$(q "SELECT (e.created_at >= s.sending_enabled_at)::text FROM public.notification_events e, public.organization_notification_settings s WHERE e.entity_id = '$f2' AND s.organization_id = '6c3e0000-0000-4000-8000-000000000102'")" = "true" ] \
+  || fail "the waiting submission's event is not ordered after the new boundary"
+q "SELECT public.dispatch_notification_events()" >/dev/null
+[ "$(q "SELECT count(*) FROM public.notification_deliveries d JOIN public.notification_events e ON e.id = d.event_id WHERE e.entity_id = '$f2'")" = "1" ] \
+  || fail "the event written after enabling was not delivered to the organization's admin"
+[ "$(q "SELECT count(*) FROM public.notification_deliveries d JOIN public.notification_events e ON e.id = d.event_id WHERE e.entity_id = '$f1'")" = "0" ] \
+  || fail "the earlier OFF event replayed after OFF -> ON"
+echo "ok - event write concurrent with OFF -> ON: it waited, is after the new boundary and is delivered; the OFF event never replays"
 echo "phase6c3_race_check: all checks passed"

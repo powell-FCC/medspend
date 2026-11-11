@@ -142,19 +142,19 @@ expect_failure "second application" "Phase 6C.3 notification objects already exi
 expect_failure "precheck after the migration" "precheck: Phase 6C.3 objects already exist" readonly_editor "$release/precheck.sql"
 cmp -s "$work/post.txt" <(fingerprint) || fail "the refused reapplication changed something"
 
-new_functions='capture_supply_request_decision_notification|capture_supply_request_submitted_notification|claim_notification_deliveries|complete_notification_delivery|dispatch_notification_events|enqueue_due_notification_digests|get_organization_notification_settings|notification_approver_digest_content|notification_request_items|set_organization_notification_sending|update_organization_notification_settings'
+new_functions='capture_supply_request_decision_notification|capture_supply_request_submitted_notification|claim_notification_deliveries|complete_notification_delivery|dispatch_notification_events|enqueue_due_notification_digests|get_organization_notification_settings|guard_notification_sending_boundary|notification_approver_digest_content|notification_request_items|set_organization_notification_sending|update_organization_notification_settings'
 new_tables='notification_events|notification_deliveries|organization_notification_settings'
 strip() { grep -v -E "^(function|overloads) \| ($new_functions) \| " "$1" \
   | grep -v -E "^(table|policies|grants) \| ($new_tables) \| " \
   | grep -v -E "^index \| (notification_|organization_notification_settings)" \
   | grep -v -E "^constraint \| ($new_tables)\." \
-  | grep -v -E '^trigger \| (notification_deliveries\.notification_deliveries_updated_at|organization_notification_settings\.organization_notification_settings_updated_at|supply_requests\.supply_requests_submitted_notification|supply_request_updates\.supply_request_updates_decision_notification) \| ' \
+  | grep -v -E '^trigger \| (notification_deliveries\.notification_deliveries_updated_at|organization_notification_settings\.organization_notification_settings_updated_at|organization_notification_settings\.organization_notification_settings_sending_boundary|supply_requests\.supply_requests_submitted_notification|supply_request_updates\.supply_request_updates_decision_notification) \| ' \
   | grep -v -E "^rows \| ($new_tables) count \| " \
   | grep -v -E '^count \| public (functions|tables|indexes|triggers) \| '; }
 diff <(strip "$work/pre.txt") <(strip "$work/post.txt") || fail "precheck/postcheck differ outside the documented lines"
 delta() { echo $(( $(grep -F "count | public $1 |" "$work/post.txt" | awk -F' [|] ' '{print $3}') - $(grep -F "count | public $1 |" "$work/pre.txt" | awk -F' [|] ' '{print $3}') )); }
-[ "$(delta functions)" = "11" ] && [ "$(delta tables)" = "3" ] && [ "$(delta indexes)" = "12" ] \
-  && [ "$(delta policies)" = "0" ] && [ "$(delta triggers)" = "4" ] \
+[ "$(delta functions)" = "12" ] && [ "$(delta tables)" = "3" ] && [ "$(delta indexes)" = "12" ] \
+  && [ "$(delta policies)" = "0" ] && [ "$(delta triggers)" = "5" ] \
   || fail "unexpected object deltas: functions $(delta functions) tables $(delta tables) indexes $(delta indexes) policies $(delta policies) triggers $(delta triggers)"
 for prefix in 'function | submit_supply_request' 'function | decide_supply_request' 'function | transition_supply_request' \
   'function | apply_supply_request_transition' 'function | is_org_admin' 'function | has_org_role' 'function | post_reviewed_invoice' \
@@ -168,10 +168,10 @@ for prefix in 'function | submit_supply_request' 'function | decide_supply_reque
   if echo "$before" | grep -q ' | absent$'; then fail "$prefix is absent before the migration"; fi
   [ "$before" = "$(grep -F "$prefix |" "$work/post.txt")" ] || fail "$prefix changed"
 done
-[ "$(grep -c '^function | ' "$work/pre.txt")" = "43" ] || fail "expected 43 function pins (11 new, 32 existing)"
+[ "$(grep -c '^function | ' "$work/pre.txt")" = "44" ] || fail "expected 44 function pins (12 new, 32 existing)"
 grep -q '^rows | notification_events count | 0$' "$work/post.txt" && grep -q '^rows | organization_notification_settings count | 0$' "$work/post.txt" \
   || fail "new tables are not empty"
-echo "ok - pre/post differ only in documented lines: +11 functions, +3 tables (no client access), +12 indexes, +4 triggers; no request, membership, budget, invoice or inventory line changed"
+echo "ok - pre/post differ only in documented lines: +12 functions, +3 tables (no client access), +12 indexes, +5 triggers; no request, membership, budget, invoice or inventory line changed"
 
 # After the release: the unchanged lifecycle raises one pending event and nothing else.
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<'SQL'

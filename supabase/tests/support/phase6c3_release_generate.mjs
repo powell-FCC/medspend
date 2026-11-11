@@ -38,6 +38,7 @@ const NEW_FUNCTIONS = [
   "dispatch_notification_events",
   "enqueue_due_notification_digests",
   "get_organization_notification_settings",
+  "guard_notification_sending_boundary",
   "notification_approver_digest_content",
   "notification_request_items",
   "set_organization_notification_sending",
@@ -49,9 +50,10 @@ const NEW_TABLES = [
   "organization_notification_settings",
 ];
 // The triggers 6C.3 adds (two event-capture triggers on existing request tables, two
-// updated_at triggers on its own tables).
+// updated_at triggers and the sending-boundary guard on its own tables).
 const NEW_TRIGGERS = [
   "notification_deliveries.notification_deliveries_updated_at",
+  "organization_notification_settings.organization_notification_settings_sending_boundary",
   "organization_notification_settings.organization_notification_settings_updated_at",
   "supply_request_updates.supply_request_updates_decision_notification",
   "supply_requests.supply_requests_submitted_notification",
@@ -296,7 +298,7 @@ DECLARE
   _mismatch text;
 BEGIN
   -- The new functions, exactly as reviewed (two admin settings RPCs, worker functions for the
-  -- service role only, two trigger functions without client EXECUTE).
+  -- service role only, three trigger functions without client EXECUTE).
 ${functionLoop(newPairs, "%: Phase 6C.3 function is missing or differs from the reviewed migration: %")}
 
   -- Everything the precheck pinned is unchanged.

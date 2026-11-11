@@ -40,7 +40,7 @@ test("precheck and postcheck end with exactly the shared fingerprint SELECT", ()
   const postcheck = read("supabase/release/phase6c3/postcheck.sql");
   assert.match(
     postcheck,
-    /expected functions 160, tables 51, indexes 193, policies 58, triggers 80/,
+    /expected functions 161, tables 51, indexes 193, policies 58, triggers 81/,
   );
   assert.match(
     postcheck,
@@ -51,6 +51,14 @@ test("precheck and postcheck end with exactly the shared fingerprint SELECT", ()
     /\('update_organization_notification_settings', '[0-9a-f]{32} secdef=true authenticated=true anon=false service_role=false public=false'\)/,
   );
   assert.match(postcheck, /supply_requests\.supply_requests_submitted_notification/);
+  assert.match(
+    postcheck,
+    /organization_notification_settings\.organization_notification_settings_sending_boundary/,
+  );
+  assert.match(
+    postcheck,
+    /\('guard_notification_sending_boundary', '[0-9a-f]{32} secdef=true authenticated=false anon=false service_role=false public=false'\)/,
+  );
   assert.match(postcheck, /supply_request_updates\.supply_request_updates_decision_notification/);
 });
 
@@ -78,10 +86,12 @@ test("release README documents the rollout gates and the expected deltas", () =>
   const readme = read("supabase/release/phase6c3/README.md");
   assert.match(
     readme,
-    /functions 149 → 160, tables 48 → 51, indexes 181 → 193, triggers 76 → 80, policies 58/,
+    /functions 149 → 161, tables 48 → 51, indexes 181 → 193, triggers 76 → 81, policies 58/,
   );
   assert.match(readme, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(readme, /RESEND_API_KEY/);
   assert.match(readme, /set_organization_notification_sending/);
   assert.match(readme, /master switch/);
+  assert.match(readme, /created_before_sending_enabled/);
+  assert.doesNotMatch(readme, /never replayed when the switch turns on/);
 });

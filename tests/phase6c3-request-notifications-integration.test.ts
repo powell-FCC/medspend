@@ -510,6 +510,40 @@ test("concurrent workers never send the same delivery twice", { skip }, async ()
   assert.ok(deliveries.every((d) => d.status === "sent" && d.attempts === 1));
 });
 
+test(
+  "sending boundary: events raised while OFF never send after enabling, even if the Worker never ran",
+  { skip },
+  async () => {
+    await must(
+      service.rpc("set_organization_notification_sending", {
+        _organization_id: WEST,
+        _enabled: false,
+      }),
+    );
+    const whileOff = await submit(westStaff, WEST, [
+      { freeTextItem: "Raised while OFF", quantity: 1 },
+    ]);
+    // No Worker run while OFF; the operator turns sending back ON first.
+    await must(
+      service.rpc("set_organization_notification_sending", {
+        _organization_id: WEST,
+        _enabled: true,
+      }),
+    );
+    const provider = new FakeEmailProvider();
+    await cycle(provider);
+    assert.equal(
+      provider.sent.filter((m) => m.to === email(7)).length,
+      0,
+      "no email for an event raised while sending was OFF",
+    );
+    const [event] = await eventsFor(whileOff);
+    assert.equal(event.status, "suppressed");
+    assert.equal(event.status_reason, "created_before_sending_enabled");
+    assert.equal((await deliveriesFor(whileOff)).length, 0);
+  },
+);
+
 test("organization boundary: the other organization's admins only", { skip }, async () => {
   await submit(westStaff, WEST, [{ freeTextItem: "West line", quantity: 1 }]);
   const provider = new FakeEmailProvider();

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Phase 6C.3 mutation check. Proves phase6c3_request_notifications_behavior.sql fails when a
-# critical rule in the 6C.3 migration is removed. Disposable databases only: never point this
+# Phase 6C.3 mutation check. Proves phase6c3_request_notifications_behavior.sql or
+# phase6c3_sending_boundary_behavior.sql fails when a critical rule in the 6C.3 migration is
+# removed. Disposable databases only: never point this
 # at production.
 #
 # Usage:
@@ -19,14 +20,15 @@
 #     the second row).
 # Not expressible here: granting clients SELECT on auth.users (postgres holds no grant option on
 # it; the suite still asserts that clients are refused).
-# Covered elsewhere: FOR UPDATE SKIP LOCKED (a single session cannot observe it) is proven by
-# supabase/tests/phase6c3_race_check.sh and the concurrent-worker integration tests.
+# Covered elsewhere: FOR UPDATE SKIP LOCKED and the sending-boundary table lock (a single
+# session cannot observe either) are proven by supabase/tests/phase6c3_race_check.sh and the
+# concurrent-worker integration tests.
 set -euo pipefail
 
 database="${1:?usage: $0 <database>}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 migration="$root/supabase/migrations/20261110120000_phase6c3_request_notifications.sql"
-suite="$root/supabase/tests/phase6c3_request_notifications_behavior.sql"
+suites=("$root/supabase/tests/phase6c3_request_notifications_behavior.sql" "$root/supabase/tests/phase6c3_sending_boundary_behavior.sql")
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -74,6 +76,18 @@ mutants=(
   "every lifecycle change raises an event|PREPEND|DROP TRIGGER supply_request_updates_decision_notification ON public.supply_request_updates; CREATE TRIGGER supply_request_updates_decision_notification AFTER INSERT ON public.supply_request_updates FOR EACH ROW WHEN (NEW.status_to IS NOT NULL) EXECUTE FUNCTION public.capture_supply_request_decision_notification();"
   "requester edits raise an event|PREPEND|DROP TRIGGER supply_request_updates_decision_notification ON public.supply_request_updates; CREATE TRIGGER supply_request_updates_decision_notification AFTER INSERT ON public.supply_request_updates FOR EACH ROW WHEN (NEW.status_to IN ('approved', 'denied') OR NEW.event_kind = 'requester_edited') EXECUTE FUNCTION public.capture_supply_request_decision_notification();"
   "the event dedupe key is not unique|PREPEND|ALTER TABLE public.notification_events DROP CONSTRAINT notification_events_dedupe_key_key; CREATE INDEX phase6c3_mutant_dedupe ON public.notification_events (dedupe_key);"
+  "dispatch ignores the sending boundary|    IF _boundary IS NULL OR _event.created_at < _boundary THEN|    IF false THEN"
+  "claim ignores the sending boundary|    ELSIF _settings.sending_enabled_at IS NULL OR _event.created_at < _settings.sending_enabled_at THEN|    ELSIF false THEN"
+  "digests enqueued for slots before enablement|    CONTINUE WHEN _settings.sending_enabled_at IS NULL OR _slot < _settings.sending_enabled_at;|    CONTINUE WHEN false;"
+  "re-enabling keeps the old boundary|  IF NEW.sending_enabled AND (TG_OP = 'INSERT' OR NOT OLD.sending_enabled) THEN|  IF NEW.sending_enabled AND TG_OP = 'INSERT' THEN"
+  "the boundary can be written directly|  ELSE
+    NEW.sending_enabled_at := OLD.sending_enabled_at;|  ELSE
+    NEW.sending_enabled_at := NEW.sending_enabled_at;"
+  "a row created OFF may carry a boundary|  ELSIF TG_OP = 'INSERT' THEN
+    NEW.sending_enabled_at := NULL;|  ELSIF TG_OP = 'INSERT' THEN
+    NEW.sending_enabled_at := coalesce(NEW.sending_enabled_at, '2000-01-01');"
+  "events dated at transaction start|PREPEND|ALTER TABLE public.notification_events ALTER COLUMN created_at SET DEFAULT now();"
+  "the boundary guard trigger is missing|PREPEND|DROP TRIGGER organization_notification_settings_sending_boundary ON public.organization_notification_settings; ALTER TABLE public.organization_notification_settings DROP CONSTRAINT organization_notification_settings_boundary_check;"
   "anon may read settings|PREPEND|GRANT EXECUTE ON FUNCTION public.get_organization_notification_settings(uuid) TO anon;"
   "clients read deliveries directly|PREPEND|GRANT SELECT ON public.notification_deliveries TO authenticated;"
   "clients write events directly|PREPEND|GRANT INSERT ON public.notification_events TO authenticated;"
@@ -88,13 +102,13 @@ python3 - "$migration" "$work/functions.sql" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 found = re.findall(r"(CREATE (?:OR REPLACE )?FUNCTION .*?\nAS (\$\$|\$function\$)\n.*?\n\2;)", text, re.S)
-if len(found) != 11:
-    sys.exit(f"expected the migration's 11 functions, found {len(found)}")
+if len(found) != 12:
+    sys.exit(f"expected the migration's 12 functions, found {len(found)}")
 open(sys.argv[2], "w").write("\n".join(block for block, _ in found))
 PY
 
-build() {  # <spec or empty> <target>
-  python3 - "$work/functions.sql" "$suite" "$2" "$1" <<'PY'
+build() {  # <spec or empty> <target> <suite>
+  python3 - "$work/functions.sql" "$3" "$2" "$1" <<'PY'
 import sys
 functions, suite, target, spec = sys.argv[1:5]
 text = open(functions).read()
@@ -119,18 +133,27 @@ PY
 survived=0
 for entry in "${mutants[@]}"; do
   name="${entry%%|*}"
-  build "${entry#*|}" "$work/mutant.sql"
-  if psql -q -v ON_ERROR_STOP=1 -d "$database" -f "$work/mutant.sql" >/dev/null 2>"$work/err"; then
+  killed=""
+  for suite in "${suites[@]}"; do
+    build "${entry#*|}" "$work/mutant.sql" "$suite"
+    if ! psql -q -v ON_ERROR_STOP=1 -d "$database" -f "$work/mutant.sql" >/dev/null 2>"$work/err"; then
+      killed="$(basename "$suite" .sql): $(grep -m1 -o 'ERROR: .*' "$work/err" | head -c 110)"
+      break
+    fi
+  done
+  if [ -z "$killed" ]; then
     echo "SURVIVED - $name"
     survived=$((survived + 1))
   else
-    echo "KILLED - $name: $(grep -m1 -o 'ERROR: .*' "$work/err" | head -c 120)"
+    echo "KILLED - $name: $killed"
   fi
 done
 
-# Control: the unmutated functions pass.
-build "" "$work/control.sql"
-psql -q -v ON_ERROR_STOP=1 -d "$database" -f "$work/control.sql" >/dev/null || { echo "control run failed"; exit 1; }
+# Control: the unmutated functions pass both suites.
+for suite in "${suites[@]}"; do
+  build "" "$work/control.sql" "$suite"
+  psql -q -v ON_ERROR_STOP=1 -d "$database" -f "$work/control.sql" >/dev/null || { echo "control run failed: $suite"; exit 1; }
+done
 
 if [ "$survived" -ne 0 ]; then
   echo "$survived mutant(s) survived"

@@ -924,3 +924,35 @@ test("client code never imports server-only notification modules", () => {
     );
   }
 });
+
+test("migration: the master switch is a durable delivery boundary (no replay of OFF-period events)", () => {
+  assert.match(migration, /sending_enabled_at timestamptz,/);
+  assert.match(migration, /CHECK \(NOT sending_enabled OR sending_enabled_at IS NOT NULL\)/);
+  assert.match(migration, /created_at timestamptz NOT NULL DEFAULT clock_timestamp\(\),/);
+  const guard = functionBody("guard_notification_sending_boundary");
+  assert.match(
+    guard,
+    /LOCK TABLE public\.notification_events IN SHARE ROW EXCLUSIVE MODE;\s+NEW\.sending_enabled_at := clock_timestamp\(\);/,
+  );
+  assert.match(guard, /NEW\.sending_enabled_at := OLD\.sending_enabled_at;/);
+  assert.match(
+    migration,
+    /BEFORE INSERT OR UPDATE ON public\.organization_notification_settings\s+FOR EACH ROW EXECUTE FUNCTION public\.guard_notification_sending_boundary\(\);/,
+  );
+  assert.match(
+    functionBody("dispatch_notification_events"),
+    /IF _boundary IS NULL OR _event\.created_at < _boundary THEN[\s\S]*?'created_before_sending_enabled'/,
+  );
+  assert.match(
+    functionBody("claim_notification_deliveries"),
+    /ELSIF _settings\.sending_enabled_at IS NULL OR _event\.created_at < _settings\.sending_enabled_at THEN\s+_reason := 'created_before_sending_enabled';/,
+  );
+  assert.match(
+    functionBody("enqueue_due_notification_digests"),
+    /CONTINUE WHEN _settings\.sending_enabled_at IS NULL OR _slot < _settings\.sending_enabled_at;/,
+  );
+  assert.match(
+    migration,
+    /REVOKE ALL ON FUNCTION public\.guard_notification_sending_boundary\(\) FROM PUBLIC, anon, authenticated, service_role;/,
+  );
+});

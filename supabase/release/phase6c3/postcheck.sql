@@ -17,7 +17,7 @@ DECLARE
   _mismatch text;
 BEGIN
   -- The new functions, exactly as reviewed (two admin settings RPCs, worker functions for the
-  -- service role only, two trigger functions without client EXECUTE).
+  -- service role only, three trigger functions without client EXECUTE).
   FOR _mismatch IN
     SELECT format('%s=%s', expected.name, coalesce((
       SELECT md5(pg_get_functiondef(p.oid)) || ' secdef=' || p.prosecdef
@@ -31,11 +31,12 @@ BEGIN
     FROM (VALUES
       ('capture_supply_request_decision_notification', '0a4eab343ec06a3770726f6b1a5862ba secdef=true authenticated=false anon=false service_role=false public=false'),
       ('capture_supply_request_submitted_notification', 'ea66cb32d0d903044e4aaf8302ec46e7 secdef=true authenticated=false anon=false service_role=false public=false'),
-      ('claim_notification_deliveries', '5033fd860721ce05c4158596a2840e0a secdef=true authenticated=false anon=false service_role=true public=false'),
+      ('claim_notification_deliveries', '358de20e247d131831b8e4bf1aac17ce secdef=true authenticated=false anon=false service_role=true public=false'),
       ('complete_notification_delivery', '85dd835bb5cde4d6d3b6f9bdc94d1cf9 secdef=true authenticated=false anon=false service_role=true public=false'),
-      ('dispatch_notification_events', '6ee34526996e2aeaeac2cee5565a15a2 secdef=true authenticated=false anon=false service_role=true public=false'),
-      ('enqueue_due_notification_digests', '05c260e1a699a24c9d8ca59cfc62febe secdef=true authenticated=false anon=false service_role=true public=false'),
+      ('dispatch_notification_events', '19acbcfd83c3231ca6576d852d1d504b secdef=true authenticated=false anon=false service_role=true public=false'),
+      ('enqueue_due_notification_digests', '87c085467e21e4bdb54437145422e57f secdef=true authenticated=false anon=false service_role=true public=false'),
       ('get_organization_notification_settings', 'dcd1f7382508bc2bb3362f9f6ec10e39 secdef=true authenticated=true anon=false service_role=false public=false'),
+      ('guard_notification_sending_boundary', '54f8559e3f0e5687f2cfb23494043b33 secdef=true authenticated=false anon=false service_role=false public=false'),
       ('notification_approver_digest_content', '250ad57d0a2b9242ea80e4f50b4bd498 secdef=true authenticated=false anon=false service_role=true public=false'),
       ('notification_request_items', 'e06c156069ad9dc3f3b4518495c8c354 secdef=true authenticated=false anon=false service_role=true public=false'),
       ('set_organization_notification_sending', '5706cf80a756777a88b2ab561fb55f20 secdef=true authenticated=false anon=false service_role=true public=false'),
@@ -149,7 +150,7 @@ BEGIN
       WHERE c.oid = to_regclass('public.notification_deliveries')) IS DISTINCT FROM 'a921da807e0fe8e712fd5896afe23923 rls=true'
      OR (SELECT md5(string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull, ',' ORDER BY a.attnum)) || ' rls=' || bool_and(c.relrowsecurity)
       FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-      WHERE c.oid = to_regclass('public.organization_notification_settings')) IS DISTINCT FROM '0149cb9317e74eb02cf01406f187af93 rls=true' THEN
+      WHERE c.oid = to_regclass('public.organization_notification_settings')) IS DISTINCT FROM 'fc2f568cda3671376cc4ecc825c74647 rls=true' THEN
     RAISE EXCEPTION '%: Phase 6C.3 tables differ from the reviewed migration', _stage;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('notification_events', 'notification_deliveries', 'organization_notification_settings'))
@@ -189,6 +190,7 @@ BEGIN
   FOR _mismatch IN
     SELECT expected.name FROM (VALUES
       ('notification_deliveries.notification_deliveries_updated_at', '6be3d6f2e54c808028eb5322cfdd64c1 enabled=O'),
+      ('organization_notification_settings.organization_notification_settings_sending_boundary', '9eec822aea6c6703b9dad7da3a728984 enabled=O'),
       ('organization_notification_settings.organization_notification_settings_updated_at', 'c8056e5325ff8830bca9232745382656 enabled=O'),
       ('supply_request_updates.supply_request_updates_decision_notification', 'a14c8ad67f724ec8bd9237ae3924f9a9 enabled=O'),
       ('supply_requests.supply_requests_submitted_notification', '36a571fd08d99fe460b184ce9da65d4d enabled=O')
@@ -199,13 +201,13 @@ BEGIN
   LOOP
     RAISE EXCEPTION '%: trigger is missing or differs: %', _stage, _mismatch;
   END LOOP;
-  IF (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace) <> 160
+  IF (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace) <> 161
      OR (SELECT count(*) FROM pg_tables WHERE schemaname = 'public') <> 51
      OR (SELECT count(*) FROM pg_indexes WHERE schemaname = 'public') <> 193
      OR (SELECT count(*) FROM pg_policies WHERE schemaname = 'public') <> 58
      OR (SELECT count(*) FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
-         WHERE c.relnamespace = 'public'::regnamespace AND NOT tg.tgisinternal) <> 80 THEN
-    RAISE EXCEPTION '%: public object counts differ from the reviewed state (expected functions 160, tables 51, indexes 193, policies 58, triggers 80)', _stage;
+         WHERE c.relnamespace = 'public'::regnamespace AND NOT tg.tgisinternal) <> 81 THEN
+    RAISE EXCEPTION '%: public object counts differ from the reviewed state (expected functions 161, tables 51, indexes 193, policies 58, triggers 81)', _stage;
   END IF;
 END
 $phase6c3_postcheck$;
@@ -235,6 +237,7 @@ SELECT section, key, value FROM (
     ('dispatch_notification_events'),
     ('enqueue_due_notification_digests'),
     ('get_organization_notification_settings'),
+    ('guard_notification_sending_boundary'),
     ('notification_approver_digest_content'),
     ('notification_request_items'),
     ('set_organization_notification_sending'),

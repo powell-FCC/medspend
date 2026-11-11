@@ -10,7 +10,7 @@ Every file here works in the SQL Editor exactly as written: no psql meta-command
 
 ## What the checks pin
 
-- **Functions (32 existing + 11 new)**, by body hash, SECURITY DEFINER and who may execute them (authenticated, anon, service_role, PUBLIC); asserted in both DO blocks:
+- **Functions (32 existing + 12 new)**, by body hash, SECURITY DEFINER and who may execute them (authenticated, anon, service_role, PUBLIC); asserted in both DO blocks:
   - the request lifecycle (`submit_supply_request`, `decide_supply_request`, `transition_supply_request`, `apply_supply_request_transition`, the lifecycle guard, item replacement, requester edit and cancellation, context, item costs, staff updates, commitments). 6C.3 changes none of them: events are captured by two new triggers;
   - the organization role helpers `has_org_role`, `is_org_admin`, `is_org_member` (approver recipients are resolved with `is_org_admin`) and `tg_set_updated_at`;
   - budgets, invoice posting and deletion, inventory, count cadence, 6C.4 batch intake and 5A.10 discovery.
@@ -25,8 +25,9 @@ Every file here works in the SQL Editor exactly as written: no psql meta-command
 
 - **Table `notification_events`**: durable, provider- and channel-neutral events (organization, event type, entity and source record, actor, `dedupe_key` UNIQUE, status `pending` / `dispatched` / `suppressed` / `expired`). No rendered bodies.
 - **Table `notification_deliveries`**: one per event, recipient and channel (UNIQUE), V1 channel `email`; status `pending` / `processing` / `sent` / `skipped` / `dead`, attempts, next attempt, lease (claim token and expiry), sent time, last error, and opaque `provider` / `provider_message_id` / `provider_metadata`.
-- **Table `organization_notification_settings`**: `sending_enabled` (master switch, default OFF), digest preference (enabled, `daily` / `weekdays` / `weekly`, send hour, weekly weekday, IANA time zone) and the ordered-without-receipt threshold (7 days). No rows are created: every organization uses the defaults, with sending OFF.
+- **Table `organization_notification_settings`**: `sending_enabled` (master switch, default OFF) with `sending_enabled_at` (the delivery boundary, see below), digest preference (enabled, `daily` / `weekdays` / `weekly`, send hour, weekly weekday, IANA time zone) and the ordered-without-receipt threshold (7 days). No rows are created: every organization uses the defaults, with sending OFF.
 - All three: RLS on, no policies, `service_role` SELECT only, no `anon` / `authenticated` grants. Two `updated_at` triggers.
+- **Sending boundary guard** (`organization_notification_settings_sending_boundary`, BEFORE INSERT OR UPDATE, function `guard_notification_sending_boundary`): turning sending ON (OFF → ON, or a new row created ON) records `sending_enabled_at = clock_timestamp()` after taking a SHARE ROW EXCLUSIVE lock on `notification_events`; every other write keeps the stored value, so it cannot be set or backdated directly. Events take `created_at` from `clock_timestamp()` at insert. Dispatch and delivery-time claim only accept events created at or after the current boundary (others are recorded as `created_before_sending_enabled`); digest slots scheduled before it are never enqueued.
 - **Two event-capture triggers** (one INSERT each, no lookups): `supply_requests_submitted_notification` (AFTER INSERT, new submitted request) and `supply_request_updates_decision_notification` (AFTER INSERT, update row moving a request to approved or denied). If the event insert fails, the request write fails with it. Under review, ordered, received, completed, requester edits and cancellations raise no event.
 - **Admin client functions** (`authenticated` EXECUTE, `is_org_admin` checked inside): `get_organization_notification_settings`, `update_organization_notification_settings` (digest preference only; the time zone must exist in `pg_timezone_names`).
 - **Service-role functions** (no client EXECUTE): `enqueue_due_notification_digests`, `dispatch_notification_events`, `claim_notification_deliveries` (FOR UPDATE SKIP LOCKED, eligibility rechecked, sign-in email from `auth.users`), `complete_notification_delivery`, `set_organization_notification_sending`, `notification_request_items`, `notification_approver_digest_content`.
@@ -52,9 +53,9 @@ Run each file as its own query: paste the whole file, run it once, and read the 
 
 ## Expected differences (precheck → postcheck)
 
-- **New functions** (`absent` → hash): the eleven above. `get_organization_notification_settings` and `update_organization_notification_settings` are `secdef=true authenticated=true anon=false service_role=false public=false`; the seven worker and helper functions `secdef=true authenticated=false anon=false service_role=true public=false`; the two trigger functions `secdef=true authenticated=false anon=false service_role=false public=false`.
-- **New tables** (`absent` → column hash with `rls=true`), their `grants` lines (`none` → `service_role=SELECT`), `policies` stay `none`, new `constraint` lines for them, twelve new `index` lines and four new `trigger` lines (two `updated_at`, `supply_requests.supply_requests_submitted_notification`, `supply_request_updates.supply_request_updates_decision_notification`).
-- **Counts**: public functions +11, tables +3, indexes +12, triggers +4; policies unchanged. On the current production baseline: functions 149 → 160, tables 48 → 51, indexes 181 → 193, triggers 76 → 80, policies 58.
+- **New functions** (`absent` → hash): the twelve above. `get_organization_notification_settings` and `update_organization_notification_settings` are `secdef=true authenticated=true anon=false service_role=false public=false`; the seven worker and helper functions `secdef=true authenticated=false anon=false service_role=true public=false`; the three trigger functions `secdef=true authenticated=false anon=false service_role=false public=false`.
+- **New tables** (`absent` → column hash with `rls=true`), their `grants` lines (`none` → `service_role=SELECT`), `policies` stay `none`, new `constraint` lines for them, twelve new `index` lines and five new `trigger` lines (two `updated_at`, `organization_notification_settings.organization_notification_settings_sending_boundary`, `supply_requests.supply_requests_submitted_notification`, `supply_request_updates.supply_request_updates_decision_notification`).
+- **Counts**: public functions +12, tables +3, indexes +12, triggers +5; policies unchanged. On the current production baseline: functions 149 → 161, tables 48 → 51, indexes 181 → 193, triggers 76 → 81, policies 58.
 - **Rows**: `notification_events count`, `notification_deliveries count` and `organization_notification_settings count` go from `absent` to `0`.
 
 Everything else must be identical. Real use between the precheck and the postcheck (a request submitted or decided) changes the matching `rows` lines and, after the migration, adds pending `notification_events` rows; the postcheck accepts pending request events but no deliveries, settings rows or digests.
@@ -67,7 +68,12 @@ Nothing is emailed until all of these are true:
 2. `notify.sport-spend.com` is verified in Resend for the sender `SportSpend <notifications@notify.sport-spend.com>`.
 3. The organization's master switch is turned on, only during production acceptance, with `SELECT public.set_organization_notification_sending('<organization id>', true);` (service role / SQL Editor). Turning it off again with `false` stops every send at the next claim, including deliveries already queued.
 
-While the switch is OFF, events are recorded and then suppressed by the Worker; they are never replayed when the switch turns on.
+The switch is a durable delivery boundary enforced by the database, independent of the order of these steps or of Worker runs:
+
+- Events created while sending is OFF, including every event recorded between the migration and an organization's first enablement, never become deliverable. When the Worker next sees them they are suppressed with the reason `created_before_sending_enabled` (or `sending_disabled` while still OFF). Enabling never sends a backlog.
+- Turning sending ON sets a new boundary (`sending_enabled_at`); turning it OFF stops every send at the next claim; OFF → ON again sets a later boundary, so neither OFF-period events nor deliveries queued before the OFF ever replay.
+- Enabling and event writes are serialized by the boundary lock: an event written by a transaction still open when sending is enabled is ordered before the boundary; one written while the enabling transaction is open waits and is ordered after it.
+- Digests: only slots scheduled at or after the boundary are sent. Enabling at 10:00 with a daily 08:00 digest sends the next digest at 08:00 the following day; it summarizes the requests that need action at that time (current state, not a replay of past events).
 
 ## Provenance
 

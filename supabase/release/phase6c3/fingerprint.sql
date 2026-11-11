@@ -29,6 +29,7 @@ SELECT section, key, value FROM (
     ('dispatch_notification_events'),
     ('enqueue_due_notification_digests'),
     ('get_organization_notification_settings'),
+    ('guard_notification_sending_boundary'),
     ('notification_approver_digest_content'),
     ('notification_request_items'),
     ('set_organization_notification_sending'),

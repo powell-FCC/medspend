@@ -462,7 +462,7 @@ SELECT pg_temp.keep('org2', public.submit_supply_request(pg_temp.o(2), 'reorder'
   jsonb_build_array(jsonb_build_object('freeTextItem', 'West line', 'quantity', 1))));
 RESET ROLE;
 
--- An event older than 24 hours is expired, not delivered.
+-- An event dated before the sending boundary (here: 25 hours old) is suppressed, not delivered.
 INSERT INTO public.notification_events (organization_id, event_type, entity_type, entity_id, source_type, source_id, actor_id, dedupe_key, created_at)
 VALUES (pg_temp.o(1), 'request_submitted', 'supply_request', pg_temp.v('on_multi'), 'supply_request', pg_temp.v('on_multi'), pg_temp.u(3),
   'phase6c3-test-old-event', now() - interval '25 hours');
@@ -482,9 +482,10 @@ BEGIN
     = (SELECT array_agg(x ORDER BY x) FROM unnest(_admins) x), 'submission goes to all active admins including the owner membership');
   PERFORM pg_temp.assert((SELECT bool_and(audience = 'approver' AND channel = 'email' AND status = 'pending' AND attempts = 0)
     FROM pg_temp.deliveries_for(pg_temp.v('on_multi'))), 'approver email deliveries pending');
-  PERFORM pg_temp.assert((SELECT status FROM public.notification_events WHERE dedupe_key = 'phase6c3-test-old-event') = 'expired'
+  PERFORM pg_temp.assert((SELECT status || ':' || status_reason FROM public.notification_events WHERE dedupe_key = 'phase6c3-test-old-event')
+    = 'suppressed:created_before_sending_enabled'
     AND NOT EXISTS (SELECT 1 FROM public.notification_deliveries d JOIN public.notification_events e ON e.id = d.event_id
-                    WHERE e.dedupe_key = 'phase6c3-test-old-event'), 'old event expired, no deliveries');
+                    WHERE e.dedupe_key = 'phase6c3-test-old-event'), 'event older than the boundary suppressed, no deliveries');
   -- Actor excluded.
   PERFORM pg_temp.assert((SELECT array_agg(recipient_user_id ORDER BY recipient_user_id) FROM pg_temp.deliveries_for(pg_temp.v('admin_own'))
                           WHERE audience = 'approver')
@@ -512,6 +513,20 @@ BEGIN
     WHERE d.organization_id <> e.organization_id), 'delivery organization always equals event organization');
 END
 $phase6c3_recipients$;
+
+-- An event after the boundary that is not dispatched within 24 hours is expired, not delivered.
+INSERT INTO public.notification_events (organization_id, event_type, entity_type, entity_id, source_type, source_id, actor_id, dedupe_key)
+VALUES (pg_temp.o(1), 'request_submitted', 'supply_request', pg_temp.v('on_multi'), 'supply_request', pg_temp.v('on_multi'), pg_temp.u(3),
+  'phase6c3-test-stale-event');
+DO $phase6c3_expired$
+BEGIN
+  PERFORM public.dispatch_notification_events(100, clock_timestamp() + interval '25 hours');
+  PERFORM pg_temp.assert((SELECT status || ':' || status_reason FROM public.notification_events WHERE dedupe_key = 'phase6c3-test-stale-event')
+    = 'expired:too_old'
+    AND NOT EXISTS (SELECT 1 FROM public.notification_deliveries d JOIN public.notification_events e ON e.id = d.event_id
+                    WHERE e.dedupe_key = 'phase6c3-test-stale-event'), 'undispatched event older than 24 hours expired, no deliveries');
+END
+$phase6c3_expired$;
 
 -- Reversal after dispatch: the corrective denial is one more requester delivery.
 SET LOCAL ROLE authenticated;
@@ -784,16 +799,17 @@ RETURNS TABLE (local_date text, status text, frequency text) LANGUAGE sql SECURI
 SET LOCAL ROLE service_role;
 DO $phase6c3_daily$
 BEGIN
-  -- 2026-11-10 is a Tuesday. 08:00 in Los Angeles (PST, UTC-8) is 16:00Z.
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-10 15:59:59+00') = 0, 'not before the send hour');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-10 16:00:00+00') = 1, 'due at 08:00 local');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-10 16:00:00+00') = 0, 'cron retry: no duplicate');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-10 23:00:00+00') = 0, 'later the same local day: no duplicate');
-  -- 2026-11-11 07:59 local is still the 11th's morning; the 10th is done.
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-11 07:00:00+00') = 0, 'midnight UTC is not a new local day');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-11 16:30:00+00') = 1, 'next local day');
+  -- 2027-11-09 is a Tuesday (all digest instants are in the future relative to the sending
+  -- boundary the fixture rows record). 08:00 in Los Angeles (PST, UTC-8) is 16:00Z.
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-09 15:59:59+00') = 0, 'not before the send hour');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-09 16:00:00+00') = 1, 'due at 08:00 local');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-09 16:00:00+00') = 0, 'cron retry: no duplicate');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-09 23:00:00+00') = 0, 'later the same local day: no duplicate');
+  -- 2027-11-10 07:59 local is still the 11th's morning; the 10th is done.
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-10 07:00:00+00') = 0, 'midnight UTC is not a new local day');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-10 16:30:00+00') = 1, 'next local day');
   PERFORM pg_temp.assert((SELECT array_agg(local_date || '/' || status) FROM pg_temp.digests(pg_temp.o(2)))
-    = ARRAY['2026-11-10/pending', '2026-11-11/pending'], 'one digest per local date');
+    = ARRAY['2027-11-09/pending', '2027-11-10/pending'], 'one digest per local date');
 END
 $phase6c3_daily$;
 RESET ROLE;
@@ -832,12 +848,12 @@ BEGIN
     JOIN public.notification_events e ON e.id = d.event_id WHERE e.organization_id = pg_temp.o(2) AND e.event_type = 'approver_digest'
     AND d.status <> 'sent'), 'skipped as nothing actionable');
   -- A due day with nothing actionable records one suppressed evaluation and no deliveries.
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-12 16:00:00+00') = 1, 'evaluated once');
-  PERFORM pg_temp.assert((SELECT status FROM pg_temp.digests(pg_temp.o(2)) WHERE local_date = '2026-11-12') = 'suppressed', 'empty digest suppressed');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-12 18:00:00+00') = 0, 'empty day not re-evaluated');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-11 16:00:00+00') = 1, 'evaluated once');
+  PERFORM pg_temp.assert((SELECT status FROM pg_temp.digests(pg_temp.o(2)) WHERE local_date = '2027-11-11') = 'suppressed', 'empty digest suppressed');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-11 18:00:00+00') = 0, 'empty day not re-evaluated');
   PERFORM public.dispatch_notification_events();
   PERFORM pg_temp.assert(NOT EXISTS (SELECT 1 FROM public.notification_deliveries d JOIN public.notification_events e ON e.id = d.event_id
-    WHERE e.context ->> 'localDate' = '2026-11-12' AND e.organization_id = pg_temp.o(2)), 'no empty digest deliveries');
+    WHERE e.context ->> 'localDate' = '2027-11-11' AND e.organization_id = pg_temp.o(2)), 'no empty digest deliveries');
 END
 $phase6c3_digest_emptied$;
 RESET ROLE;
@@ -852,43 +868,43 @@ DELETE FROM public.organization_notification_settings WHERE organization_id = pg
 
 DO $phase6c3_frequencies$
 BEGIN
-  -- Weekdays only (New York, EST UTC-5 in November). 2026-11-14 Saturday, 15 Sunday, 16 Monday.
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-13 13:00:00+00') = 1, 'Friday sends');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-14 13:00:00+00') = 0, 'Saturday skipped');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-15 20:00:00+00') = 0, 'Sunday skipped');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-16 12:59:00+00') = 0, 'Monday before 08:00');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-16 13:00:00+00') = 1, 'Monday sends');
+  -- Weekdays only (New York, EST UTC-5 in November). 2027-11-13 Saturday, 14 Sunday, 15 Monday.
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-12 13:00:00+00') = 1, 'Friday sends');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-13 13:00:00+00') = 0, 'Saturday skipped');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-14 20:00:00+00') = 0, 'Sunday skipped');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-15 12:59:00+00') = 0, 'Monday before 08:00');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-15 13:00:00+00') = 1, 'Monday sends');
   -- Saturday 03:00Z is still Friday evening in New York: the Friday digest already exists.
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-14 03:00:00+00') = 0, 'local weekday, not UTC weekday');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-13 03:00:00+00') = 0, 'local weekday, not UTC weekday');
 
-  -- Weekly on Wednesday (3). 2026-11-18 Wednesday, 2026-11-25 next Wednesday.
+  -- Weekly on Wednesday (3). 2027-11-17 Wednesday, 2027-11-24 next Wednesday.
   UPDATE public.organization_notification_settings SET digest_frequency = 'weekly', digest_weekday = 3 WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-17 13:00:00+00') = 0, 'weekly: Tuesday skipped');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-18 13:00:00+00') = 1, 'weekly: Wednesday sends');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-18 20:00:00+00') = 0, 'weekly: once on the day');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-19 13:00:00+00') = 0, 'weekly: Thursday skipped');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-16 13:00:00+00') = 0, 'weekly: Tuesday skipped');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-17 13:00:00+00') = 1, 'weekly: Wednesday sends');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-17 20:00:00+00') = 0, 'weekly: once on the day');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-18 13:00:00+00') = 0, 'weekly: Thursday skipped');
   -- Changing the weekday mid-week does not produce a second weekly digest that week.
   UPDATE public.organization_notification_settings SET digest_weekday = 5 WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-20 13:00:00+00') = 0, 'weekly: one per ISO week after a weekday change');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-19 13:00:00+00') = 0, 'weekly: one per ISO week after a weekday change');
   UPDATE public.organization_notification_settings SET digest_weekday = 3 WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-25 13:00:00+00') = 1, 'weekly: next week');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-24 13:00:00+00') = 1, 'weekly: next week');
 
   -- Frequency change on a day that already had a digest: still one per local date.
   UPDATE public.organization_notification_settings SET digest_frequency = 'daily' WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-25 18:00:00+00') = 0, 'daily after weekly the same day: no second digest');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-26 13:00:00+00') = 1, 'daily resumes next day');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-24 18:00:00+00') = 0, 'daily after weekly the same day: no second digest');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-25 13:00:00+00') = 1, 'daily resumes next day');
 
   -- Digest off, then master off.
   UPDATE public.organization_notification_settings SET digest_enabled = false WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-27 13:00:00+00') = 0, 'digest off');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-26 13:00:00+00') = 0, 'digest off');
   UPDATE public.organization_notification_settings SET digest_enabled = true, sending_enabled = false WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-27 13:00:00+00') = 0, 'master off overrides digest preference');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-26 13:00:00+00') = 0, 'master off overrides digest preference');
   UPDATE public.organization_notification_settings SET sending_enabled = true WHERE organization_id = pg_temp.o(3);
 
-  -- DST, New York. Fall back 2026-11-01 (01:00 happens twice): send hour 1 → one digest.
+  -- DST, New York. Fall back 2027-11-07 (01:00 happens twice): send hour 1 → one digest.
   UPDATE public.organization_notification_settings SET digest_send_hour = 1 WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-01 05:00:00+00') = 1, 'fall back: first 01:00 EDT');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-01 06:00:00+00') = 0, 'fall back: repeated 01:00 EST is not a second digest');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-07 05:00:00+00') = 1, 'fall back: first 01:00 EDT');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-07 06:00:00+00') = 0, 'fall back: repeated 01:00 EST is not a second digest');
   -- Spring forward 2027-03-14 (02:00 does not exist): send hour 2 → sent at 03:00 EDT, once.
   UPDATE public.organization_notification_settings SET digest_send_hour = 2 WHERE organization_id = pg_temp.o(3);
   PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-03-14 06:59:00+00') = 0, 'spring forward: 01:59 EST not due');
@@ -899,11 +915,11 @@ BEGIN
   PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-06-15 11:59:00+00') = 0
     AND public.enqueue_due_notification_digests('2027-06-15 12:00:00+00') = 1, 'EDT offset applied');
 
-  -- A time zone ahead of UTC: Auckland (NZDT, UTC+13). 08:00 on 2026-11-11 local is 19:00Z on the 10th.
+  -- A time zone ahead of UTC: Auckland (NZDT, UTC+13). 08:00 on 2027-11-10 local is 19:00Z on the 9th.
   UPDATE public.organization_notification_settings SET timezone = 'Pacific/Auckland' WHERE organization_id = pg_temp.o(3);
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-11-10 18:59:00+00') = 0
-    AND public.enqueue_due_notification_digests('2026-11-10 19:00:00+00') = 1, 'Auckland 08:00');
-  PERFORM pg_temp.assert(EXISTS (SELECT 1 FROM pg_temp.digests(pg_temp.o(3)) WHERE local_date = '2026-11-11'), 'local date is the Auckland date');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-09 18:59:00+00') = 0
+    AND public.enqueue_due_notification_digests('2027-11-09 19:00:00+00') = 1, 'Auckland 08:00');
+  PERFORM pg_temp.assert(EXISTS (SELECT 1 FROM pg_temp.digests(pg_temp.o(3)) WHERE local_date = '2027-11-10'), 'local date is the Auckland date');
 END
 $phase6c3_frequencies$;
 
@@ -917,12 +933,12 @@ UPDATE public.organization_notification_settings SET timezone = 'America/New_Yor
 SET LOCAL ROLE service_role;
 DO $phase6c3_multi_zone$
 BEGIN
-  -- 2026-12-01 13:00Z: London 13:00 (due), New York 08:00 (due), Los Angeles 05:00 (not yet).
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-12-01 13:00:00+00') = 2, 'London and New York due');
-  PERFORM pg_temp.assert((SELECT status FROM pg_temp.digests(pg_temp.o(4)) WHERE local_date = '2026-12-01') = 'suppressed', 'London org: nothing actionable');
-  PERFORM pg_temp.assert(EXISTS (SELECT 1 FROM pg_temp.digests(pg_temp.o(3)) WHERE local_date = '2026-12-01' AND status = 'pending'), 'New York org pending');
-  PERFORM pg_temp.assert(NOT EXISTS (SELECT 1 FROM pg_temp.digests(pg_temp.o(2)) WHERE local_date = '2026-12-01'), 'Los Angeles not yet');
-  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2026-12-01 16:00:00+00') = 1, 'Los Angeles at its 08:00');
+  -- 2027-11-30 13:00Z: London 13:00 (due), New York 08:00 (due), Los Angeles 05:00 (not yet).
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-30 13:00:00+00') = 2, 'London and New York due');
+  PERFORM pg_temp.assert((SELECT status FROM pg_temp.digests(pg_temp.o(4)) WHERE local_date = '2027-11-30') = 'suppressed', 'London org: nothing actionable');
+  PERFORM pg_temp.assert(EXISTS (SELECT 1 FROM pg_temp.digests(pg_temp.o(3)) WHERE local_date = '2027-11-30' AND status = 'pending'), 'New York org pending');
+  PERFORM pg_temp.assert(NOT EXISTS (SELECT 1 FROM pg_temp.digests(pg_temp.o(2)) WHERE local_date = '2027-11-30'), 'Los Angeles not yet');
+  PERFORM pg_temp.assert(public.enqueue_due_notification_digests('2027-11-30 16:00:00+00') = 1, 'Los Angeles at its 08:00');
 END
 $phase6c3_multi_zone$;
 RESET ROLE;
