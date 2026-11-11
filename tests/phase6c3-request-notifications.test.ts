@@ -52,6 +52,78 @@ const functionBody = (name: string) => {
   return migration.slice(start, migration.indexOf("\n$$;", start));
 };
 
+// Bundle the Settings section for rendering BEFORE any test is registered (as in the 7B.5
+// test): the runner can only start tests, and therefore only run the cleanup below, once the
+// bundle is fully written and loaded. The directory is per process, so concurrent runs of this
+// file cannot delete each other's bundle.
+const cacheDir = join(root, `node_modules/.cache/phase6c3-notifications-test-${process.pid}`);
+mkdirSync(cacheDir, { recursive: true });
+const pending = "() => new Promise(() => {})";
+const stubs: Record<string, string> = {
+  "@tanstack/react-start": `export const useServerFn = (fn) => fn;`,
+  "@/lib/notification-settings.functions": `export const getNotificationSettingsFn = ${pending}, updateNotificationSettingsFn = ${pending};`,
+};
+function resolveSource(base: string) {
+  for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), base]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`Cannot resolve ${base}`);
+}
+const entry = join(cacheDir, "entry.tsx");
+writeFileSync(
+  entry,
+  `
+  import { createElement } from "react";
+  import { renderToStaticMarkup } from "react-dom/server";
+  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+  export { NotificationSettingsForm, NotificationSettings } from "@/components/settings/NotificationSettings";
+  export function render(component, props) {
+    return renderToStaticMarkup(
+      createElement(QueryClientProvider, { client: new QueryClient() }, createElement(component, props)));
+  }
+`,
+);
+const bundlePath = join(cacheDir, "bundle.cjs");
+await build({
+  entryPoints: [entry],
+  bundle: true,
+  format: "cjs",
+  platform: "node",
+  jsx: "automatic",
+  packages: "external",
+  outfile: bundlePath,
+  logLevel: "silent",
+  plugins: [
+    {
+      name: "notification-stubs",
+      setup(pluginBuild) {
+        pluginBuild.onResolve({ filter: /.*/ }, (args) => {
+          if (args.path in stubs) return { path: args.path, namespace: "stub" };
+          if (args.path.startsWith("@/"))
+            return { path: resolveSource(join(root, "src", args.path.slice(2))) };
+          return undefined;
+        });
+        pluginBuild.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({
+          contents: stubs[args.path],
+          loader: "jsx",
+          resolveDir: root,
+        }));
+      },
+    },
+  ],
+});
+const ui = createRequire(import.meta.url)(bundlePath);
+// Registered only after the bundle has been loaded into memory.
+after(() => rmSync(cacheDir, { recursive: true, force: true }));
+const render = (component: unknown, props: Record<string, unknown>) =>
+  ui.render(component, props) as string;
+const text = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ");
+
 const APP = "https://app.example.test";
 const NOW = new Date("2026-11-10T15:00:00Z");
 
@@ -686,74 +758,6 @@ test("settings: defaults, parsing, labels and the explicit time zone list", () =
     );
   }
 });
-
-// Bundle the Settings section for rendering.
-const cacheDir = join(root, "node_modules/.cache/phase6c3-notifications-test");
-mkdirSync(cacheDir, { recursive: true });
-after(() => rmSync(cacheDir, { recursive: true, force: true }));
-const pending = "() => new Promise(() => {})";
-const stubs: Record<string, string> = {
-  "@tanstack/react-start": `export const useServerFn = (fn) => fn;`,
-  "@/lib/notification-settings.functions": `export const getNotificationSettingsFn = ${pending}, updateNotificationSettingsFn = ${pending};`,
-};
-function resolveSource(base: string) {
-  for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), base]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  throw new Error(`Cannot resolve ${base}`);
-}
-const entry = join(cacheDir, "entry.tsx");
-writeFileSync(
-  entry,
-  `
-  import { createElement } from "react";
-  import { renderToStaticMarkup } from "react-dom/server";
-  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-  export { NotificationSettingsForm, NotificationSettings } from "@/components/settings/NotificationSettings";
-  export function render(component, props) {
-    return renderToStaticMarkup(
-      createElement(QueryClientProvider, { client: new QueryClient() }, createElement(component, props)));
-  }
-`,
-);
-const bundlePath = join(cacheDir, "bundle.cjs");
-await build({
-  entryPoints: [entry],
-  bundle: true,
-  format: "cjs",
-  platform: "node",
-  jsx: "automatic",
-  packages: "external",
-  outfile: bundlePath,
-  logLevel: "silent",
-  plugins: [
-    {
-      name: "notification-stubs",
-      setup(pluginBuild) {
-        pluginBuild.onResolve({ filter: /.*/ }, (args) => {
-          if (args.path in stubs) return { path: args.path, namespace: "stub" };
-          if (args.path.startsWith("@/"))
-            return { path: resolveSource(join(root, "src", args.path.slice(2))) };
-          return undefined;
-        });
-        pluginBuild.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({
-          contents: stubs[args.path],
-          loader: "jsx",
-          resolveDir: root,
-        }));
-      },
-    },
-  ],
-});
-const ui = createRequire(import.meta.url)(bundlePath);
-const render = (component: unknown, props: Record<string, unknown>) =>
-  ui.render(component, props) as string;
-const text = (html: string) =>
-  html
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&#x27;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ");
 
 test("Settings section: digest on/off, frequency, send time, time zone; sending switch read-only", () => {
   const settings = { organizationId: "o", ...DEFAULT_NOTIFICATION_SETTINGS, updatedAt: null };
