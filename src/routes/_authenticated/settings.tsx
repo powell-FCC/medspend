@@ -7,6 +7,7 @@ import { createInvitationFn, listOrgInvitesFn, listOrgMembersFn, revokeInvitatio
 import { listOrgStructureFn } from "@/lib/org-structure.functions";
 import { ConfirmOrganizationAction, MembersSection, StructureSection } from "@/components/settings/OrganizationManagement";
 import { CountPolicySettings } from "@/components/settings/CountPolicySettings";
+import { NotificationSettings } from "@/components/settings/NotificationSettings";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({ meta: [{ title: "Settings — MedSpend" }, { name: "robots", content: "noindex" }] }),
@@ -185,6 +186,7 @@ function SettingsContent() {
         organizationId={active.organizationId}
         canManage={active.role === "owner"}
       />
+      <NotificationSettings organizationId={active.organizationId} />
     </div>
   );
 }
