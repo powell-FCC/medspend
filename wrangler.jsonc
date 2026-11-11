@@ -12,6 +12,12 @@
       "globs": ["**/*.mjs", "**/*.js"]
     }
   ],
+  // Phase 6C.3 request notifications: one schedule for every organization. Each run sends due
+  // immediate notifications and evaluates which organizations' digests are due in their own
+  // local time. Activated only by the normal deployment.
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "assets": {
     "binding": "ASSETS",
     "directory": ".output/public"

@@ -2577,6 +2577,50 @@ export type Database = {
         }
         Returns: Json
       }
+      claim_notification_deliveries: {
+        Args: { _limit?: number; _lease_seconds?: number; _now?: string }
+        Returns: { delivery_id: string; claim_token: string; attempt: number; channel: string; event_type: string; recipient_email: string; context: Json }[]
+      }
+      complete_notification_delivery: {
+        Args: {
+          _delivery_id: string
+          _claim_token: string
+          _outcome: string
+          _provider?: string | null
+          _provider_message_id?: string | null
+          _error?: string | null
+          _provider_metadata?: Json | null
+          _now?: string
+        }
+        Returns: string
+      }
+      dispatch_notification_events: {
+        Args: { _limit?: number; _now?: string }
+        Returns: number
+      }
+      enqueue_due_notification_digests: {
+        Args: { _now?: string }
+        Returns: number
+      }
+      get_organization_notification_settings: {
+        Args: { _organization_id: string }
+        Returns: Json
+      }
+      set_organization_notification_sending: {
+        Args: { _organization_id: string; _enabled: boolean }
+        Returns: boolean
+      }
+      update_organization_notification_settings: {
+        Args: {
+          _organization_id: string
+          _digest_enabled: boolean
+          _digest_frequency: string
+          _digest_send_hour: number
+          _digest_weekday: number
+          _timezone: string
+        }
+        Returns: Json
+      }
       ensure_inventory_unassigned_location: {
         Args: { _organization_id: string }
         Returns: string

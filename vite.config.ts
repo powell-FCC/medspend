@@ -39,6 +39,11 @@ function pdfLibTslibEsm(): Plugin {
 
 export default defineConfig({
   plugins: [pdfLibTslibEsm()],
+  // Nitro runtime plugins (server only). The Phase 6C.3 plugin handles the Worker's scheduled
+  // event; the cron trigger is declared in wrangler.jsonc. The wrapper passes this object to
+  // nitro() unchanged (merged over its cloudflare-module default preset); its type only lists
+  // preset/output/cloudflare, hence the cast.
+  nitro: { plugins: ["./src/server/notification-scheduler.ts"] } as { preset?: string },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
