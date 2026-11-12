@@ -20,6 +20,9 @@
 #     listed mutant removes both checks);
 #   * the mark row-count assertion (an internal consistency guard that cannot fail while the
 #     callers pass exactly the statuses they wrote).
+# Phase 7C replaced apply_supply_request_receipt, receive_supply_request and
+# receive_and_complete_supply_request (receiving destination). They are no longer re-created here;
+# their mutants (profile gating, retries, notes, accepted states) live in phase7c_mutation_check.sh.
 # Covered elsewhere: row-lock serialization of concurrent compound actions and decisions
 # (supabase/tests/phase7c0_race_check.sh).
 set -euo pipefail
@@ -55,8 +58,6 @@ mutants=(
   "non-members read the profile|  IF _organization_id IS NULL OR NOT COALESCE(public.is_org_member(_organization_id, auth.uid()), false) THEN|  IF _organization_id IS NULL THEN"
   "Approve & Order ignores the profile|  IF public.organization_request_workflow_profile(_organization_id) <> 'lean' THEN|  IF false THEN"
   "Approve & Order enabled for Standard|  IF public.organization_request_workflow_profile(_organization_id) <> 'lean' THEN|  IF public.organization_request_workflow_profile(_organization_id) NOT IN ('lean', 'standard') THEN"
-  "Receive & Complete enabled for Detailed|NOT IN ('lean', 'standard') THEN|NOT IN ('lean', 'standard', 'detailed') THEN"
-  "Receive & Complete disabled for Standard|NOT IN ('lean', 'standard') THEN|NOT IN ('lean') THEN"
   "no stale-screen check|  IF _expected_updated_at IS NULL OR _request.updated_at IS DISTINCT FROM _expected_updated_at THEN|  IF false THEN"
   "Approve & Order retry writes again|  -- A retry after success (double tap, network retry) adds nothing.
   IF _request.status = 'ordered' THEN|  IF false THEN"
@@ -67,10 +68,6 @@ mutants=(
     );|    PERFORM public.apply_supply_request_transition(_organization_id, _request_id, 'approved');"
   "a one-step call is marked as a bundle|  IF cardinality(_written) > 1 THEN|  IF cardinality(_written) > 0 THEN"
   "bundles are never marked|  IF cardinality(_written) > 1 THEN|  IF false THEN"
-  "Receive & Complete retry writes again|  IF _request.status = 'completed' THEN|  IF false THEN"
-  "Receive & Complete accepts an approved request|  IF _request.status NOT IN ('ordered', 'received') THEN|  IF _request.status NOT IN ('approved', 'ordered', 'received') THEN"
-  "receipt notes duplicated on the received row|    PERFORM public.apply_supply_request_receipt(_organization_id, _request_id, NULL, NULL);|    PERFORM public.apply_supply_request_receipt(_organization_id, _request_id, _internal_note, _staff_visible_note);"
-  "Mark Received retry fails|  IF _request.status = 'received' THEN|  IF false THEN"
   "staff history drops the marker|      u.event_kind, u.created_at, u.compound_action|      u.event_kind, u.created_at, NULL::text"
   "guard lets clients insert a marker|    IF (TG_OP = 'INSERT' AND NEW.compound_action IS NOT NULL)|    IF false"
   "guard lets clients change a marker|       OR (TG_OP = 'UPDATE' AND NEW.compound_action IS DISTINCT FROM OLD.compound_action) THEN|       THEN"
@@ -88,7 +85,13 @@ text = open(sys.argv[1]).read()
 found = re.findall(r"(CREATE (?:OR REPLACE )?FUNCTION .*?\nAS (\$\$|\$function\$)\n.*?\n\2;)", text, re.S)
 if len(found) != 11:
     sys.exit(f"expected the migration's 11 functions, found {len(found)}")
-open(sys.argv[2], "w").write("\n".join(block for block, _ in found))
+# Phase 7C re-created the receive path with a receiving destination; those three functions are
+# mutated by supabase/tests/phase7c_mutation_check.sh against their current bodies.
+superseded = ("apply_supply_request_receipt", "receive_supply_request", "receive_and_complete_supply_request")
+kept = [block for block, _ in found if not re.match(r"CREATE (?:OR REPLACE )?FUNCTION public\.(%s)\(" % "|".join(superseded), block)]
+if len(kept) != 8:
+    sys.exit(f"expected 8 functions after removing the Phase 7C receive path, found {len(kept)}")
+open(sys.argv[2], "w").write("\n".join(kept))
 PY
 
 build() {  # <spec or empty> <target> <suite>

@@ -7,7 +7,8 @@ import { AdminQueueTabs, adminQueueLabel, type AdminQueueKey } from "@/component
 import { AdminRequestCard } from "@/components/admin/supply-requests/AdminRequestCard";
 import { AdminRequestDetail, type AdminDrawerAction } from "@/components/admin/supply-requests/AdminRequestDetail";
 import { useActiveOrg } from "@/hooks/use-active-org";
-import { approveAndOrderSupplyRequestFn, decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyRequestBudgetImpactFn, listRequestUpdatesFn, receiveAndCompleteSupplyRequestFn, receiveSupplyRequestFn, releaseSupplyRequestCommitmentFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
+import { approveAndOrderSupplyRequestFn, decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyRequestBudgetImpactFn, listReceivingDestinationsFn, listRequestUpdatesFn, receiveAndCompleteSupplyRequestFn, receiveSupplyRequestFn, releaseSupplyRequestCommitmentFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
+import { rememberLastUsedDestination } from "@/supply-requests/receiving";
 import type { CommitmentReleaseKind } from "@/supply-requests/commitments";
 import { adminActionFeedback, DEFAULT_REQUEST_WORKFLOW_PROFILE, visibleAdminQueues } from "@/supply-requests/workflow-profiles";
 
@@ -34,6 +35,7 @@ function Page() {
   const approveAndOrder = useServerFn(approveAndOrderSupplyRequestFn);
   const receive = useServerFn(receiveSupplyRequestFn);
   const receiveAndComplete = useServerFn(receiveAndCompleteSupplyRequestFn);
+  const fetchDestinations = useServerFn(listReceivingDestinationsFn);
   const fetchBudgetImpact = useServerFn(getSupplyRequestBudgetImpactFn);
   const releaseCommitment = useServerFn(releaseSupplyRequestCommitmentFn);
   const queryClient = useQueryClient();
@@ -67,6 +69,12 @@ function Page() {
     queryFn: () => fetchUpdates({ data: { requestId: selected!.id } }),
     enabled: !!active && !!selected,
   });
+  // Phase 7C: receiving destinations, loaded only while an ordered request is open.
+  const destinations = useQuery({
+    queryKey: ["org", active?.organizationId, "receiving-destinations"],
+    queryFn: () => fetchDestinations({ data: { organizationId: active!.organizationId } }),
+    enabled: !!active && selected?.lifecycleStatus === "ordered",
+  });
   const budgetImpact = useQuery({
     queryKey: ["org", active?.organizationId, "requests", selected?.id, "budget-impact"],
     queryFn: () => fetchBudgetImpact({ data: { organizationId: active!.organizationId, requestId: selected!.id } }),
@@ -75,7 +83,7 @@ function Page() {
 
   // Phase 7C.0: the drawer's action follows the organization's workflow profile. Compound
   // actions run in one database transaction; the database enforces the profile.
-  async function transition(action: AdminDrawerAction, staffMessage: string, internalNote: string) {
+  async function transition(action: AdminDrawerAction, staffMessage: string, internalNote: string, inventoryLocationId?: string) {
     if (!selected || !active || submitting.current) return;
     submitting.current = true;
     setBusy(true);
@@ -95,10 +103,10 @@ function Page() {
         await decide({ data: { ...data, decision: action === "approve" ? "approved" : "denied", expectedUpdatedAt: selected.updatedAt } });
       } else if (action === "approve_and_order") {
         await approveAndOrder({ data: { ...data, expectedUpdatedAt: selected.updatedAt } });
-      } else if (action === "mark_received") {
-        await receive({ data });
-      } else if (action === "receive_and_complete") {
-        await receiveAndComplete({ data });
+      } else if (action === "mark_received" || action === "receive_and_complete") {
+        // Phase 7C: the receipt records where the delivery was received (required).
+        await (action === "mark_received" ? receive : receiveAndComplete)({ data: { ...data, inventoryLocationId } });
+        if (inventoryLocationId) rememberLastUsedDestination(organizationId, inventoryLocationId);
       } else {
         await updateStatus({ data: { ...data, status: action === "mark_ordered" ? "ordered" : "completed" } });
       }
@@ -181,7 +189,9 @@ function Page() {
           </div>}
         </section>
       </div>
-      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} budgetImpact={budgetImpact.data} loadingBudgetImpact={budgetImpact.isLoading} budgetImpactError={budgetImpact.isError} onRetryBudgetImpact={() => void budgetImpact.refetch()} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} onReleaseCommitment={release} workflowProfile={workflowProfile} />}
+      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} budgetImpact={budgetImpact.data} loadingBudgetImpact={budgetImpact.isLoading} budgetImpactError={budgetImpact.isError} onRetryBudgetImpact={() => void budgetImpact.refetch()} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} onReleaseCommitment={release} workflowProfile={workflowProfile}
+        organizationId={active?.organizationId} destinations={destinations.data ?? []} loadingDestinations={destinations.isLoading}
+        destinationsError={destinations.isError} onRetryDestinations={() => void destinations.refetch()} />}
     </div>
   );
 }

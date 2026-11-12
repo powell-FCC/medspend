@@ -3,6 +3,14 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AdminActionButton } from "@/components/admin/supply-requests/AdminActionButton";
 import { AdminMessagePanel } from "@/components/admin/supply-requests/AdminMessagePanel";
+import { ReceivingDestinationPicker } from "@/components/admin/supply-requests/ReceivingDestinationPicker";
+import {
+  UNASSIGNED_DESTINATION_LABEL,
+  actionNeedsDestination,
+  initialDestinationId,
+  readLastUsedDestination,
+  type ReceivingDestination,
+} from "@/supply-requests/receiving";
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 import { translateAdminRequestStatus, type AdminSupplyRequestViewModel } from "@/supply-requests/admin-dashboard";
 import { requestItemIsCustom, requestTimestamp } from "@/supply-requests/admin-request-inbox";
@@ -26,6 +34,9 @@ type Update = {
   eventKind?: string | null;
   createdAt: string;
   compoundAction?: CompoundAction | null;
+  // Phase 7C: set on the received row of a request that has a receipt (name snapshot).
+  receivingDestination?: string | null;
+  receivingDestinationKind?: "unassigned" | "storage" | null;
 };
 
 export type AdminDrawerAction = AdminWorkflowActionKind | "decline";
@@ -41,6 +52,7 @@ const primaryTransition: Partial<Record<SupplyRequestStatus, SupplyRequestStatus
 export function AdminRequestDetail({ request, updates, loadingUpdates, updatesError, onRetryUpdates,
   budgetImpact, loadingBudgetImpact, budgetImpactError, onRetryBudgetImpact,
   busy, error, onClose, onTransition, onReleaseCommitment, workflowProfile = "detailed",
+  organizationId, destinations = [], loadingDestinations = false, destinationsError = false, onRetryDestinations = () => {},
 }: {
   request: AdminSupplyRequestViewModel;
   updates: Update[];
@@ -54,9 +66,15 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onTransition: (action: AdminDrawerAction, staffMessage: string, internalNote: string) => void;
+  onTransition: (action: AdminDrawerAction, staffMessage: string, internalNote: string, inventoryLocationId?: string) => void;
   onReleaseCommitment: (kind: CommitmentReleaseKind, reason: string) => void;
   workflowProfile?: RequestWorkflowProfile;
+  // Phase 7C: the receiving picker's options (loaded only for a request awaiting delivery).
+  organizationId?: string;
+  destinations?: readonly ReceivingDestination[];
+  loadingDestinations?: boolean;
+  destinationsError?: boolean;
+  onRetryDestinations?: () => void;
 }) {
   const [staffMessage, setStaffMessage] = useState("");
   const [internalNote, setInternalNote] = useState("");
@@ -66,11 +84,22 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   const [releaseKind, setReleaseKind] = useState<CommitmentReleaseKind>("settled");
   const [releaseReason, setReleaseReason] = useState("");
   const [releaseError, setReleaseError] = useState<string | null>(null);
+  const [destinationId, setDestinationId] = useState("");
   const messageRef = useRef<HTMLTextAreaElement>(null);
   const pending = request.lifecycleStatus === "submitted" || request.lifecycleStatus === "under_review";
   const declining = pending && mode === "decline";
   const nextStatus = primaryTransition[request.lifecycleStatus];
   const action = nextStatus ? adminPrimaryAction(workflowProfile, request.lifecycleStatus) : null;
+  // Phase 7C: Mark Received and Receive & Complete record where the delivery was received.
+  const needsDestination = actionNeedsDestination(action?.kind) && !declining;
+  const destinationOptions = destinations.map((destination) => destination.id).join(",");
+  useEffect(() => {
+    // Suggest the admin's last-used destination (this browser only) while it is still active.
+    if (!needsDestination || !organizationId) return;
+    setDestinationId((current) => current && destinations.some((destination) => destination.id === current)
+      ? current
+      : initialDestinationId(destinations, readLastUsedDestination(organizationId)));
+  }, [needsDestination, organizationId, destinationOptions]); // eslint-disable-line react-hooks/exhaustive-deps
   // One user action is one step: the canonical rows a compound action wrote show together.
   const steps = collapseCompoundUpdates(updates.map((update) => ({
     ...update,
@@ -79,6 +108,8 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
     created_at: update.createdAt,
     staff_visible_note: update.staffVisibleNote,
     internal_note: update.internalNote ?? null,
+    receivingDestination: update.receivingDestination ?? null,
+    receivingDestinationKind: update.receivingDestinationKind ?? null,
   })));
   const commitmentActive = budgetImpact?.commitmentStatus === "active";
 
@@ -89,13 +120,17 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if (busy || !action) return;
+    if (needsDestination && !destinationId) {
+      setDenialError("Choose where this delivery was received.");
+      return;
+    }
     if (declining && !staffMessage.trim()) {
       setDenialError("Add a short reason so staff understand the decision.");
       messageRef.current?.focus();
       return;
     }
     setDenialError(null);
-    onTransition(declining ? "decline" : action.kind, staffMessage, internalNote);
+    onTransition(declining ? "decline" : action.kind, staffMessage, internalNote, needsDestination ? destinationId : undefined);
   }
 
   function releaseCommitment() {
@@ -169,6 +204,11 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                 <p className="mt-2 whitespace-pre-wrap rounded-lg bg-[#f5f7f9] p-3 text-sm leading-6 text-[#526174] [overflow-wrap:anywhere]">{request.staffNote || "No note provided."}</p>
               </section>
 
+              {needsDestination && <ReceivingDestinationPicker destinations={destinations} value={destinationId}
+                onChange={(value) => { setDestinationId(value); setDenialError(null); }}
+                loading={loadingDestinations} error={destinationsError} onRetry={onRetryDestinations} disabled={busy}
+                requestTeam={request.team} requestLocation={request.location} />}
+
               {nextStatus && <AdminMessagePanel staffMessage={staffMessage} internalNote={internalNote}
                 onStaffMessageChange={(value) => { setStaffMessage(value); if (value.trim()) setDenialError(null); }}
                 onInternalNoteChange={setInternalNote} staffMessageRequired={declining} disabled={busy} staffMessageRef={messageRef}
@@ -181,13 +221,13 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                 {loadingUpdates ? <p role="status" className="py-3 text-sm text-[#697687]">Loading updates…</p> : updatesError ? <div role="alert" className="py-3 text-sm text-[#a83340]">Could not load activity. <button type="button" onClick={onRetryUpdates} className="min-h-11 underline">Try again</button></div> : (
                   <ol className="space-y-4 border-l border-[#dce2e8] pl-4 text-sm">
                     <li><div className="font-medium text-[#263b53]">Submitted</div><time dateTime={request.submittedAt} className="text-xs text-[#75808e]">{requestTimestamp(request.submittedAt)}</time></li>
-                    {steps.map((update) => <li key={update.id}>
-                      <div className="font-medium text-[#263b53]">{update.eventKind === "requester_edited" ? "Requester edited request" : update.compound_action && update.canonicalRows.length > 1 ? COMPOUND_ACTION_LABELS[update.compound_action] : update.statusTo ? translateAdminRequestStatus(update.statusTo).statusLabel : "Update"}</div>
+                    {steps.map((update) => { const receipt = update.canonicalRows.find((row) => row.receivingDestination); return <li key={update.id}>
+                      <div className="font-medium text-[#263b53]">{update.eventKind === "requester_edited" ? "Requester edited request" : update.compound_action && update.canonicalRows.length > 1 ? COMPOUND_ACTION_LABELS[update.compound_action] : receipt ? "Received" : update.statusTo ? translateAdminRequestStatus(update.statusTo).statusLabel : "Update"}{receipt && <span data-testid="receipt-destination"> — {receipt.receivingDestinationKind === "unassigned" ? UNASSIGNED_DESTINATION_LABEL : receipt.receivingDestination}</span>}</div>
                       {update.canonicalRows.length > 1 && <div className="text-xs text-[#75808e]" data-testid="compound-canonical-steps">Recorded as {update.canonicalRows.map((row) => row.status_to ? translateAdminRequestStatus(row.status_to).statusLabel : "Update").join(" → ")}</div>}
                       <time dateTime={update.createdAt} className="text-xs text-[#75808e]">{requestTimestamp(update.createdAt)}</time>
                       {update.staff_visible_note && <div className="mt-2 rounded border border-[#edd8c9] bg-[#fff8f3] p-3"><div className="text-xs font-semibold text-[#8c4b1f]">Staff Communication</div><p className="mt-1 whitespace-pre-wrap text-[#624b3b] [overflow-wrap:anywhere]">{update.staff_visible_note}</p></div>}
                       {update.internal_note && <div className="mt-2 rounded border border-[#dce2e8] bg-[#f7f9fb] p-3"><div className="text-xs font-semibold text-[#586779]">Internal Note · Admins only</div><p className="mt-1 whitespace-pre-wrap text-[#526174] [overflow-wrap:anywhere]">{update.internal_note}</p></div>}
-                    </li>)}
+                    </li>; })}
                   </ol>
                 )}
               </details>
@@ -202,7 +242,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                 </>}
                 {pending && !declining && <AdminActionButton variant="danger" disabled={busy} onClick={() => setMode("decline")}>Decline</AdminActionButton>}
                 {declining && <AdminActionButton variant="secondary" disabled={busy} onClick={() => { setMode("review"); setDenialError(null); }}>Cancel</AdminActionButton>}
-                {nextStatus && <AdminActionButton type="submit" variant={declining ? "danger" : "primary"} disabled={busy}>{busy ? "Saving…" : declining ? "Decline Request" : action?.label}</AdminActionButton>}
+                {nextStatus && <AdminActionButton type="submit" variant={declining ? "danger" : "primary"} disabled={busy || (needsDestination && !destinationId)}>{busy ? "Saving…" : declining ? "Decline Request" : action?.label}</AdminActionButton>}
                 {!nextStatus && <AdminActionButton variant="secondary" onClick={onClose}>Close</AdminActionButton>}
               </div>
             </footer>

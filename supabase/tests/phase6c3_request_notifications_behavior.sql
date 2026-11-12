@@ -317,7 +317,9 @@ BEGIN
   PERFORM public.decide_supply_request(pg_temp.o(1), pg_temp.v('lifecycle'), 'approved', NULL, NULL,
     (SELECT updated_at FROM public.supply_requests WHERE id = pg_temp.v('lifecycle')));
   PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('lifecycle'), 'ordered', NULL, 'Ordered');
-  PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('lifecycle'), 'received', NULL, 'Arrived');
+  -- Phase 7C: receiving goes through the receive action, which records a destination.
+  PERFORM public.receive_supply_request(pg_temp.o(1), pg_temp.v('lifecycle'), 'Arrived', NULL,
+    (SELECT id FROM public.list_receiving_destinations(pg_temp.o(1)) WHERE kind = 'unassigned'));
   PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('lifecycle'), 'completed', NULL, 'Picked up');
 END
 $phase6c3_decide$;

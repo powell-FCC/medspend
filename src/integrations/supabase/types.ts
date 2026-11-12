@@ -2624,6 +2624,22 @@ export type Database = {
         }
         Returns: Json
       }
+      list_receiving_destinations: {
+        Args: { _organization_id: string }
+        Returns: { id: string; name: string; kind: string }[]
+      }
+      list_supply_request_receipts: {
+        Args: { _organization_id: string; _request_ids: string[] }
+        Returns: {
+          supply_request_id: string
+          supply_request_update_id: string
+          inventory_location_id: string | null
+          destination_name: string
+          destination_kind: string
+          received_at: string
+          compound_action: string | null
+        }[]
+      }
       get_request_workflow_profile: {
         Args: { _organization_id: string }
         Returns: string
@@ -2652,6 +2668,7 @@ export type Database = {
           _request_id: string
           _staff_visible_note?: string
           _internal_note?: string
+          _inventory_location_id?: string
         }
         Returns: Json
       }
@@ -2661,6 +2678,7 @@ export type Database = {
           _request_id: string
           _staff_visible_note?: string
           _internal_note?: string
+          _inventory_location_id?: string
         }
         Returns: Json
       }

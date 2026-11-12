@@ -1138,7 +1138,9 @@ $phase6c_canonical_decisions$;
 
 -- Operational steps after a decision still run through transition_supply_request.
 SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'ordered');
-SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'received');
+-- Phase 7C: receiving goes through the receive action, which records a destination.
+SELECT public.receive_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', NULL, NULL,
+  (SELECT id FROM public.list_receiving_destinations('6c6c0000-0000-4000-8000-000000000101') WHERE kind = 'unassigned'));
 SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'completed');
 -- Denial after approval (a cancellation of an approved request) keeps 6A.2 release semantics.
 SELECT public.transition_supply_request('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'denied', NULL, 'No longer needed');
@@ -1164,8 +1166,9 @@ END
 $phase6c_operational_transitions$;
 
 -- Backward, skipped, and terminal transitions remain invalid.
+-- Phase 7C: the generic transition never receives (the receive action records the destination).
 SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'received',
-  'Invalid supply request transition: approved to received');
+  'Use the receiving action to choose a receiving destination.');
 SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'submitted',
   'Invalid supply request transition: approved to submitted');
 SELECT pg_temp.phase6c_expect_transition_error('6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'under_review',

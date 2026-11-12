@@ -16,6 +16,7 @@ import {
   updateSubmittedSupplyRequestInputSchema,
 } from "@/supply-requests/validation";
 import { adminRequestDecisionSchema, adminWorkflowActionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
+import { parseReceiptSummaries, parseReceivingDestinations, type ReceiptSummary } from "@/supply-requests/receiving";
 import {
   adminQueueCardAction,
   parseCompoundAction,
@@ -498,8 +499,9 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!row) throw new Error("Request not found");
 
-    const [workflowProfile, { data: updates, error: updatesError }] = await Promise.all([
+    const [workflowProfile, receipts, { data: updates, error: updatesError }] = await Promise.all([
       loadRequestWorkflowProfile(context, data.organizationId),
+      loadReceipts(context, data.organizationId, [row.id]),
       context.supabase
         .rpc("list_staff_supply_request_updates", {
           _organization_id: data.organizationId, _request_ids: [row.id],
@@ -544,6 +546,8 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
           event_kind: update.event_kind,
           created_at: update.created_at,
           compound_action: parseCompoundAction(update.compound_action),
+          receiving_destination: receipts.get(update.id)?.destinationName ?? null,
+          receiving_destination_kind: receipts.get(update.id)?.destinationKind ?? null,
         })),
         workflowProfile,
       ),
@@ -741,9 +745,12 @@ export const receiveSupplyRequestFn = createServerFn({ method: "POST" })
   .inputValidator((value: unknown) => adminWorkflowActionSchema.parse(value))
   .handler(async ({ data, context }) => {
     await requireAdmin(context, data.organizationId);
+    // Phase 7C: a receipt always names its destination; the database refuses one without.
+    if (!data.inventoryLocationId) throw new Error("Choose where this delivery was received.");
     const { data: result, error } = await context.supabase.rpc("receive_supply_request", {
       _organization_id: data.organizationId,
       _request_id: data.id,
+      _inventory_location_id: data.inventoryLocationId,
       ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
       ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
     });
@@ -759,12 +766,42 @@ export const receiveAndCompleteSupplyRequestFn = createServerFn({ method: "POST"
     const { data: result, error } = await context.supabase.rpc("receive_and_complete_supply_request", {
       _organization_id: data.organizationId,
       _request_id: data.id,
+      ...(data.inventoryLocationId ? { _inventory_location_id: data.inventoryLocationId } : {}),
       ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
       ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
     });
     if (error) throw new Error(error.message);
     return result;
   });
+
+// Phase 7C: the receiving picker's options (owners and admins; active locations, Unassigned
+// included). The database function checks authority itself.
+export const listReceivingDestinationsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => z.object({ organizationId: z.string().uuid() }).parse(value))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    const { data: rows, error } = await context.supabase.rpc("list_receiving_destinations", {
+      _organization_id: data.organizationId,
+    });
+    if (error) throw new Error(error.message);
+    return parseReceivingDestinations(rows);
+  });
+
+// Phase 7C: receipts (destination name snapshots) of requests the caller may see.
+async function loadReceipts(
+  context: { supabase: SupabaseClient<Database> },
+  organizationId: string,
+  requestIds: string[],
+): Promise<Map<string, ReceiptSummary>> {
+  if (requestIds.length === 0) return new Map();
+  const { data: rows, error } = await context.supabase.rpc("list_supply_request_receipts", {
+    _organization_id: organizationId,
+    _request_ids: requestIds,
+  });
+  if (error) throw new Error(error.message);
+  return new Map(parseReceiptSummaries(rows).map((receipt) => [receipt.supplyRequestUpdateId, receipt]));
+}
 
 export const getSupplyRequestBudgetImpactFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -855,6 +892,12 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
     const membership = await requireMembership(context, request.organization_id);
     const isAdmin = membership.role === "owner" || membership.role === "admin";
     if (!isAdmin && request.requested_by !== context.userId) throw new Error("Forbidden");
+    // Phase 7C: the receipt's destination (name snapshot) belongs on the received row.
+    const receipts = await loadReceipts(context, request.organization_id, [data.requestId]);
+    const receiptFields = (id: string) => ({
+      receivingDestination: receipts.get(id)?.destinationName ?? null,
+      receivingDestinationKind: receipts.get(id)?.destinationKind ?? null,
+    });
     if (!isAdmin) {
       const { data: rows, error } = await context.supabase.rpc("list_staff_supply_request_updates", {
         _organization_id: request.organization_id, _request_ids: [data.requestId],
@@ -864,6 +907,7 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
         id: row.id, statusFrom: row.status_from, statusTo: row.status_to,
         staffVisibleNote: row.staff_visible_note, eventKind: row.event_kind, createdAt: row.created_at,
         compoundAction: parseCompoundAction(row.compound_action),
+        ...receiptFields(row.id),
       }));
     }
     const query = context.supabase.from("supply_request_updates")
@@ -881,6 +925,7 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
       eventKind: row.event_kind,
       createdAt: row.created_at,
       compoundAction: parseCompoundAction(row.compound_action),
+      ...receiptFields(row.id),
     }));
   });
 
