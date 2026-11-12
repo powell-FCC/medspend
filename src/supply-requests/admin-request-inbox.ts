@@ -15,6 +15,16 @@ export const adminRequestDecisionSchema = z.object({
   message: "A staff-visible reason is required to decline a request.",
 });
 
+// Phase 7C.0: Approve & Order, Mark Received and Receive & Complete. Approve & Order sends the
+// reviewed version (required by the database); the receive actions need none.
+export const adminWorkflowActionSchema = z.object({
+  organizationId: z.string().uuid(),
+  id: z.string().uuid(),
+  staffVisibleNote: z.string().trim().max(5000).nullable().optional(),
+  internalNote: z.string().trim().max(5000).nullable().optional(),
+  expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
+});
+
 export function requestItemIsCustom(item: SupplyRequestItemViewModel): boolean {
   return ![item.inventoryItemId, item.vendorProductId, item.productId, item.catalogVendorProductId].some(Boolean);
 }

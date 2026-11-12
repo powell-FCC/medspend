@@ -1,4 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
@@ -13,7 +15,12 @@ import {
   multiItemSupplyRequestInputSchema,
   updateSubmittedSupplyRequestInputSchema,
 } from "@/supply-requests/validation";
-import { adminRequestDecisionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
+import { adminRequestDecisionSchema, adminWorkflowActionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
+import {
+  parseCompoundAction,
+  parseRequestWorkflowProfile,
+  type RequestWorkflowProfile,
+} from "@/supply-requests/workflow-profiles";
 import { releaseCommitmentSchema, type RequestBudgetImpact } from "@/supply-requests/commitments";
 import {
   STAFF_OPEN_REQUEST_LIMIT,
@@ -95,6 +102,19 @@ async function requireAdmin(context: { supabase: any; userId: string }, organiza
   const membership = await requireMembership(context, organizationId);
   if (!["owner", "admin"].includes(membership.role)) throw new Error("Forbidden: administrator access required");
   return membership;
+}
+
+// Phase 7C.0: the organization's request workflow profile (any active member may read it; no
+// settings row means detailed). It decides presentation and which actions are offered only.
+async function loadRequestWorkflowProfile(
+  context: { supabase: SupabaseClient<Database> },
+  organizationId: string,
+): Promise<RequestWorkflowProfile> {
+  const { data, error } = await context.supabase.rpc("get_request_workflow_profile", {
+    _organization_id: organizationId,
+  });
+  if (error) throw new Error(error.message);
+  return parseRequestWorkflowProfile(data);
 }
 
 async function requireRelatedRecord(
@@ -381,7 +401,8 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
     await requireMembership(context, data.organizationId);
     const columns =
       "id,product_id,quantity,status,free_text_item,created_at,updated_at,products(name,unit_of_measure)";
-    const [openResult, pastResult] = await Promise.all([
+    const [workflowProfile, openResult, pastResult] = await Promise.all([
+      loadRequestWorkflowProfile(context, data.organizationId),
       context.supabase
         .from("supply_requests")
         .select(columns)
@@ -426,7 +447,7 @@ export const getStaffDashboardFn = createServerFn({ method: "POST" })
     }
 
     const requests: StaffRequestViewModel[] = rows.map((row) => {
-      const status = translateStaffRequestStatus(row.status as SupplyRequestStatus);
+      const status = translateStaffRequestStatus(row.status as SupplyRequestStatus, workflowProfile);
       const product = row.products as { name: string; unit_of_measure: string | null } | null;
       const message = latestMessages.get(row.id);
       const items = itemsByRequest.get(row.id) ?? [];
@@ -476,11 +497,14 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!row) throw new Error("Request not found");
 
-    const { data: updates, error: updatesError } = await context.supabase
-      .rpc("list_staff_supply_request_updates", {
-        _organization_id: data.organizationId, _request_ids: [row.id],
-      })
-      .order("created_at", { ascending: true }).order("status_to", { ascending: true });
+    const [workflowProfile, { data: updates, error: updatesError }] = await Promise.all([
+      loadRequestWorkflowProfile(context, data.organizationId),
+      context.supabase
+        .rpc("list_staff_supply_request_updates", {
+          _organization_id: data.organizationId, _request_ids: [row.id],
+        })
+        .order("created_at", { ascending: true }).order("status_to", { ascending: true }),
+    ]);
     if (updatesError) throw new Error(updatesError.message);
 
     const visibleUpdates = updates ?? [];
@@ -489,7 +513,7 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
     const items = (await loadRequestItems(context.supabase, data.organizationId, [row])).get(row.id) ?? [];
     const first = items[0];
     const lifecycleStatus = row.status as SupplyRequestStatus;
-    const status = translateStaffRequestStatus(lifecycleStatus);
+    const status = translateStaffRequestStatus(lifecycleStatus, workflowProfile);
     const detail: StaffRequestDetailViewModel = {
       id: row.id,
       lifecycleStatus,
@@ -518,7 +542,9 @@ export const getStaffRequestDetailFn = createServerFn({ method: "POST" })
           staff_visible_note: update.staff_visible_note,
           event_kind: update.event_kind,
           created_at: update.created_at,
+          compound_action: parseCompoundAction(update.compound_action),
         })),
+        workflowProfile,
       ),
     };
     return detail;
@@ -581,7 +607,8 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
     const requestIds = (rows ?? []).map((row) => row.id);
     const itemsByRequest = await loadRequestItems(context.supabase, data.organizationId, rows ?? []);
     const requesterIds = Array.from(new Set((rows ?? []).map((row) => row.requested_by)));
-    const [identitiesResult, updatesResult] = await Promise.all([
+    const [workflowProfile, identitiesResult, updatesResult] = await Promise.all([
+      loadRequestWorkflowProfile(context, data.organizationId),
       requesterIds.length
         ? context.supabase.rpc("list_organization_member_identities", { _organization_id: data.organizationId })
         : Promise.resolve({ data: [], error: null }),
@@ -668,7 +695,7 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
         )),
       };
     });
-    return buildAdminRequestDashboard(requests);
+    return { ...buildAdminRequestDashboard(requests), workflowProfile };
   });
 
 export const decideSupplyRequestFn = createServerFn({ method: "POST" })
@@ -681,6 +708,55 @@ export const decideSupplyRequestFn = createServerFn({ method: "POST" })
       _request_id: data.id,
       _decision: data.decision,
       _expected_updated_at: data.expectedUpdatedAt,
+      ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
+      ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
+    });
+    if (error) throw new Error(error.message);
+    return result;
+  });
+
+// Phase 7C.0 workflow actions. The database enforces the organization's profile, the request
+// row lock, the reviewed-version check (Approve & Order) and safe retries; these only forward.
+export const approveAndOrderSupplyRequestFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => adminWorkflowActionSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    if (!data.expectedUpdatedAt) throw new Error("Refresh the request and review the latest details before approving it.");
+    const { data: result, error } = await context.supabase.rpc("approve_and_order_supply_request", {
+      _organization_id: data.organizationId,
+      _request_id: data.id,
+      _expected_updated_at: data.expectedUpdatedAt,
+      ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
+      ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
+    });
+    if (error) throw new Error(error.message);
+    return result;
+  });
+
+export const receiveSupplyRequestFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => adminWorkflowActionSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    const { data: result, error } = await context.supabase.rpc("receive_supply_request", {
+      _organization_id: data.organizationId,
+      _request_id: data.id,
+      ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
+      ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
+    });
+    if (error) throw new Error(error.message);
+    return result;
+  });
+
+export const receiveAndCompleteSupplyRequestFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => adminWorkflowActionSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context, data.organizationId);
+    const { data: result, error } = await context.supabase.rpc("receive_and_complete_supply_request", {
+      _organization_id: data.organizationId,
+      _request_id: data.id,
       ...(data.staffVisibleNote ? { _staff_visible_note: data.staffVisibleNote } : {}),
       ...(data.internalNote ? { _internal_note: data.internalNote } : {}),
     });
@@ -785,10 +861,11 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
       return (rows ?? []).map((row) => ({
         id: row.id, statusFrom: row.status_from, statusTo: row.status_to,
         staffVisibleNote: row.staff_visible_note, eventKind: row.event_kind, createdAt: row.created_at,
+        compoundAction: parseCompoundAction(row.compound_action),
       }));
     }
     const query = context.supabase.from("supply_request_updates")
-      .select("id,status_from,status_to,internal_note,staff_visible_note,event_kind,created_at")
+      .select("id,status_from,status_to,internal_note,staff_visible_note,event_kind,created_at,compound_action")
       .eq("organization_id", request.organization_id).eq("supply_request_id", data.requestId)
       .order("created_at", { ascending: true }).order("status_to", { ascending: true });
     const { data: rows, error } = await query;
@@ -801,6 +878,7 @@ export const listRequestUpdatesFn = createServerFn({ method: "POST" })
       internalNote: isAdmin ? row.internal_note : undefined,
       eventKind: row.event_kind,
       createdAt: row.created_at,
+      compoundAction: parseCompoundAction(row.compound_action),
     }));
   });
 

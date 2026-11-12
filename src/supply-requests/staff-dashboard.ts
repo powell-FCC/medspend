@@ -1,4 +1,12 @@
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
+import {
+  COMPOUND_ACTION_LABELS,
+  DEFAULT_REQUEST_WORKFLOW_PROFILE,
+  collapseCompoundUpdates,
+  staffStatusOverride,
+  type CompoundAction,
+  type RequestWorkflowProfile,
+} from "./workflow-profiles.ts";
 
 // Staff-facing groupings of the canonical lifecycle. They are presentation only: the
 // database statuses are unchanged. READY is the admin "Ready for Staff" queue
@@ -123,8 +131,15 @@ export const STAFF_OPEN_REQUEST_LIMIT = 100;
 export const STAFF_PAST_REQUEST_PAGE_SIZE = 20;
 export const STAFF_PAST_REQUEST_MAX = 200;
 
-export function translateStaffRequestStatus(status: SupplyRequestStatus): StaffRequestStatus {
-  return STAFF_STATUS[status];
+// Phase 7C.0: the organization's workflow profile may present a canonical status more simply
+// (Lean: an ordered request reads "Approved & ordered"). The group never changes.
+export function translateStaffRequestStatus(
+  status: SupplyRequestStatus,
+  profile: RequestWorkflowProfile = DEFAULT_REQUEST_WORKFLOW_PROFILE,
+): StaffRequestStatus {
+  const base = STAFF_STATUS[status];
+  const override = staffStatusOverride(profile, status);
+  return override ? { ...base, ...override } : base;
 }
 
 export function summarizeRequestItems(items: SupplyRequestItemViewModel[]): string {
@@ -164,17 +179,29 @@ export type StaffRequestUpdateRow = {
   staff_visible_note: string | null;
   event_kind: string | null;
   created_at: string;
+  // Phase 7C.0: set on every canonical row one bundled action wrote.
+  compound_action?: CompoundAction | null;
+};
+
+const STAFF_COMPOUND_LABELS: Readonly<Record<CompoundAction, string>> = {
+  approve_and_order: COMPOUND_ACTION_LABELS.approve_and_order,
+  receive_and_complete: "Completed",
 };
 
 // Only stored events: the request's creation time and the staff-safe audited updates.
-// Nothing is inferred from the current status.
+// Nothing is inferred from the current status. The canonical rows one compound action wrote
+// (Approve & Order, Receive & Complete) show as one step with its final status and note.
 export function buildStaffRequestTimeline(
   submittedAt: string,
   updates: StaffRequestUpdateRow[],
+  profile: RequestWorkflowProfile = DEFAULT_REQUEST_WORKFLOW_PROFILE,
 ): StaffRequestTimelineItem[] {
+  const steps = collapseCompoundUpdates(
+    updates.map((update) => ({ ...update, compound_action: update.compound_action ?? null })),
+  );
   return [
     { label: "Submitted", occurredAt: submittedAt, message: null },
-    ...updates.flatMap((update): StaffRequestTimelineItem[] => {
+    ...steps.flatMap((update): StaffRequestTimelineItem[] => {
       if (update.event_kind === "requester_edited") {
         return [{ label: "You edited this request", occurredAt: update.created_at, message: null }];
       }
@@ -182,10 +209,13 @@ export function buildStaffRequestTimeline(
         return [{ label: "Request cancelled", occurredAt: update.created_at, message: null }];
       }
       if (!update.status_to) return [];
-      const translated = translateStaffRequestStatus(update.status_to);
+      const label =
+        update.compound_action && update.canonicalRows.length > 1
+          ? STAFF_COMPOUND_LABELS[update.compound_action]
+          : translateStaffRequestStatus(update.status_to, profile).label;
       return [
         {
-          label: translated.label,
+          label,
           occurredAt: update.created_at,
           message: update.staff_visible_note,
         },

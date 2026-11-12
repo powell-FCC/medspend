@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { ArrowRight, CheckCircle2, ClipboardCheck, PackageCheck, Truck } from "lucide-react";
 import { useActiveOrg } from "@/hooks/use-active-org";
 import { getAdminSupplyRequestDashboardFn } from "@/lib/supply-requests.functions";
+import { ADMIN_QUEUE_ORDER, visibleAdminQueues } from "@/supply-requests/workflow-profiles";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — MedSpend" }, { name: "robots", content: "noindex" }] }),
@@ -20,6 +21,8 @@ function Dashboard() {
   });
 
   const summary = queue.data?.summary;
+  // Phase 7C.0: a workflow profile hides an optional stage only while it is empty.
+  const shown: readonly string[] = queue.data ? visibleAdminQueues(queue.data.workflowProfile, queue.data.summary) : ADMIN_QUEUE_ORDER;
   return (
     <div className="min-h-screen bg-[#f5f7f9] px-4 py-8 sm:px-6 lg:px-10">
       <div className="mx-auto max-w-6xl">
@@ -35,9 +38,9 @@ function Dashboard() {
           {queue.isError && <p role="alert" className="mt-6 rounded-lg bg-[#fff0f1] p-3 text-sm text-[#a83340]">Could not load supply operations.</p>}
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <OperationMetric label="Needs Review" value={summary?.needsReview ?? 0} icon={<ClipboardCheck className="size-4" />} />
-            <OperationMetric label="Awaiting Order" value={summary?.awaitingOrder ?? 0} icon={<PackageCheck className="size-4" />} />
+            {shown.includes("awaitingOrder") && <OperationMetric label="Awaiting Order" value={summary?.awaitingOrder ?? 0} icon={<PackageCheck className="size-4" />} />}
             <OperationMetric label="Awaiting Delivery" value={summary?.awaitingDelivery ?? 0} icon={<Truck className="size-4" />} />
-            <OperationMetric label="Ready for Staff" value={summary?.readyForStaff ?? 0} icon={<CheckCircle2 className="size-4" />} />
+            {shown.includes("readyForStaff") && <OperationMetric label="Ready for Staff" value={summary?.readyForStaff ?? 0} icon={<CheckCircle2 className="size-4" />} />}
           </div>
           <p className="mt-4 text-xs text-[#7a8592]">Completed requests: {summary?.completed ?? 0}</p>
         </section>
