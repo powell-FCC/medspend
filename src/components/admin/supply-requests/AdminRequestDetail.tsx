@@ -8,6 +8,14 @@ import { translateAdminRequestStatus, type AdminSupplyRequestViewModel } from "@
 import { requestItemIsCustom, requestTimestamp } from "@/supply-requests/admin-request-inbox";
 import { formatUSD } from "@/budget/budget";
 import { pricingDescription, type CommitmentReleaseKind, type RequestBudgetImpact } from "@/supply-requests/commitments";
+import {
+  COMPOUND_ACTION_LABELS,
+  adminPrimaryAction,
+  collapseCompoundUpdates,
+  type AdminWorkflowActionKind,
+  type CompoundAction,
+  type RequestWorkflowProfile,
+} from "@/supply-requests/workflow-profiles";
 
 type Update = {
   id: string;
@@ -17,20 +25,22 @@ type Update = {
   internalNote?: string | null;
   eventKind?: string | null;
   createdAt: string;
+  compoundAction?: CompoundAction | null;
 };
+
+export type AdminDrawerAction = AdminWorkflowActionKind | "decline";
 
 const primaryTransition: Partial<Record<SupplyRequestStatus, SupplyRequestStatus>> = {
   submitted: "approved", under_review: "approved", approved: "ordered",
   ordered: "received", received: "completed",
 };
-const primaryActionLabel: Partial<Record<SupplyRequestStatus, string>> = {
-  submitted: "Approve", under_review: "Approve", approved: "Mark Ordered",
-  ordered: "Mark Received", received: "Complete Request",
-};
+// Phase 7C.0: the primary action's label and whether it bundles canonical steps come from the
+// organization's workflow profile (adminPrimaryAction); the canonical next status above does not
+// change. Detailed is today's set of actions.
 
 export function AdminRequestDetail({ request, updates, loadingUpdates, updatesError, onRetryUpdates,
   budgetImpact, loadingBudgetImpact, budgetImpactError, onRetryBudgetImpact,
-  busy, error, onClose, onTransition, onReleaseCommitment,
+  busy, error, onClose, onTransition, onReleaseCommitment, workflowProfile = "detailed",
 }: {
   request: AdminSupplyRequestViewModel;
   updates: Update[];
@@ -44,8 +54,9 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onTransition: (status: SupplyRequestStatus, staffMessage: string, internalNote: string) => void;
+  onTransition: (action: AdminDrawerAction, staffMessage: string, internalNote: string) => void;
   onReleaseCommitment: (kind: CommitmentReleaseKind, reason: string) => void;
+  workflowProfile?: RequestWorkflowProfile;
 }) {
   const [staffMessage, setStaffMessage] = useState("");
   const [internalNote, setInternalNote] = useState("");
@@ -59,6 +70,16 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   const pending = request.lifecycleStatus === "submitted" || request.lifecycleStatus === "under_review";
   const declining = pending && mode === "decline";
   const nextStatus = primaryTransition[request.lifecycleStatus];
+  const action = nextStatus ? adminPrimaryAction(workflowProfile, request.lifecycleStatus) : null;
+  // One user action is one step: the canonical rows a compound action wrote show together.
+  const steps = collapseCompoundUpdates(updates.map((update) => ({
+    ...update,
+    status_to: update.statusTo,
+    compound_action: update.compoundAction ?? null,
+    created_at: update.createdAt,
+    staff_visible_note: update.staffVisibleNote,
+    internal_note: update.internalNote ?? null,
+  })));
   const commitmentActive = budgetImpact?.commitmentStatus === "active";
 
   useEffect(() => {
@@ -67,14 +88,14 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (busy || !nextStatus) return;
+    if (busy || !action) return;
     if (declining && !staffMessage.trim()) {
       setDenialError("Add a short reason so staff understand the decision.");
       messageRef.current?.focus();
       return;
     }
     setDenialError(null);
-    onTransition(declining ? "denied" : nextStatus, staffMessage, internalNote);
+    onTransition(declining ? "decline" : action.kind, staffMessage, internalNote);
   }
 
   function releaseCommitment() {
@@ -160,11 +181,12 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                 {loadingUpdates ? <p role="status" className="py-3 text-sm text-[#697687]">Loading updates…</p> : updatesError ? <div role="alert" className="py-3 text-sm text-[#a83340]">Could not load activity. <button type="button" onClick={onRetryUpdates} className="min-h-11 underline">Try again</button></div> : (
                   <ol className="space-y-4 border-l border-[#dce2e8] pl-4 text-sm">
                     <li><div className="font-medium text-[#263b53]">Submitted</div><time dateTime={request.submittedAt} className="text-xs text-[#75808e]">{requestTimestamp(request.submittedAt)}</time></li>
-                    {updates.map((update) => <li key={update.id}>
-                      <div className="font-medium text-[#263b53]">{update.eventKind === "requester_edited" ? "Requester edited request" : update.statusTo ? translateAdminRequestStatus(update.statusTo).statusLabel : "Update"}</div>
+                    {steps.map((update) => <li key={update.id}>
+                      <div className="font-medium text-[#263b53]">{update.eventKind === "requester_edited" ? "Requester edited request" : update.compound_action && update.canonicalRows.length > 1 ? COMPOUND_ACTION_LABELS[update.compound_action] : update.statusTo ? translateAdminRequestStatus(update.statusTo).statusLabel : "Update"}</div>
+                      {update.canonicalRows.length > 1 && <div className="text-xs text-[#75808e]" data-testid="compound-canonical-steps">Recorded as {update.canonicalRows.map((row) => row.status_to ? translateAdminRequestStatus(row.status_to).statusLabel : "Update").join(" → ")}</div>}
                       <time dateTime={update.createdAt} className="text-xs text-[#75808e]">{requestTimestamp(update.createdAt)}</time>
-                      {update.staffVisibleNote && <div className="mt-2 rounded border border-[#edd8c9] bg-[#fff8f3] p-3"><div className="text-xs font-semibold text-[#8c4b1f]">Staff Communication</div><p className="mt-1 whitespace-pre-wrap text-[#624b3b] [overflow-wrap:anywhere]">{update.staffVisibleNote}</p></div>}
-                      {update.internalNote && <div className="mt-2 rounded border border-[#dce2e8] bg-[#f7f9fb] p-3"><div className="text-xs font-semibold text-[#586779]">Internal Note · Admins only</div><p className="mt-1 whitespace-pre-wrap text-[#526174] [overflow-wrap:anywhere]">{update.internalNote}</p></div>}
+                      {update.staff_visible_note && <div className="mt-2 rounded border border-[#edd8c9] bg-[#fff8f3] p-3"><div className="text-xs font-semibold text-[#8c4b1f]">Staff Communication</div><p className="mt-1 whitespace-pre-wrap text-[#624b3b] [overflow-wrap:anywhere]">{update.staff_visible_note}</p></div>}
+                      {update.internal_note && <div className="mt-2 rounded border border-[#dce2e8] bg-[#f7f9fb] p-3"><div className="text-xs font-semibold text-[#586779]">Internal Note · Admins only</div><p className="mt-1 whitespace-pre-wrap text-[#526174] [overflow-wrap:anywhere]">{update.internal_note}</p></div>}
                     </li>)}
                   </ol>
                 )}
@@ -180,7 +202,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                 </>}
                 {pending && !declining && <AdminActionButton variant="danger" disabled={busy} onClick={() => setMode("decline")}>Decline</AdminActionButton>}
                 {declining && <AdminActionButton variant="secondary" disabled={busy} onClick={() => { setMode("review"); setDenialError(null); }}>Cancel</AdminActionButton>}
-                {nextStatus && <AdminActionButton type="submit" variant={declining ? "danger" : "primary"} disabled={busy}>{busy ? "Saving…" : declining ? "Decline Request" : primaryActionLabel[request.lifecycleStatus]}</AdminActionButton>}
+                {nextStatus && <AdminActionButton type="submit" variant={declining ? "danger" : "primary"} disabled={busy}>{busy ? "Saving…" : declining ? "Decline Request" : action?.label}</AdminActionButton>}
                 {!nextStatus && <AdminActionButton variant="secondary" onClick={onClose}>Close</AdminActionButton>}
               </div>
             </footer>

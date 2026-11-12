@@ -2127,6 +2127,7 @@ export type Database = {
       supply_request_updates: {
         Row: {
           author_id: string | null
+          compound_action: string | null
           created_at: string
           event_kind: string | null
           id: string
@@ -2141,6 +2142,7 @@ export type Database = {
         }
         Insert: {
           author_id?: string | null
+          compound_action?: string | null
           created_at?: string
           event_kind?: string | null
           id?: string
@@ -2157,6 +2159,7 @@ export type Database = {
         }
         Update: {
           author_id?: string | null
+          compound_action?: string | null
           created_at?: string
           event_kind?: string | null
           id?: string
@@ -2621,6 +2624,46 @@ export type Database = {
         }
         Returns: Json
       }
+      get_request_workflow_profile: {
+        Args: { _organization_id: string }
+        Returns: string
+      }
+      get_organization_request_workflow_settings: {
+        Args: { _organization_id: string }
+        Returns: Json
+      }
+      update_organization_request_workflow_settings: {
+        Args: { _organization_id: string; _workflow_profile: string }
+        Returns: Json
+      }
+      approve_and_order_supply_request: {
+        Args: {
+          _organization_id: string
+          _request_id: string
+          _staff_visible_note?: string
+          _internal_note?: string
+          _expected_updated_at?: string
+        }
+        Returns: Json
+      }
+      receive_supply_request: {
+        Args: {
+          _organization_id: string
+          _request_id: string
+          _staff_visible_note?: string
+          _internal_note?: string
+        }
+        Returns: Json
+      }
+      receive_and_complete_supply_request: {
+        Args: {
+          _organization_id: string
+          _request_id: string
+          _staff_visible_note?: string
+          _internal_note?: string
+        }
+        Returns: Json
+      }
       ensure_inventory_unassigned_location: {
         Args: { _organization_id: string }
         Returns: string
@@ -2977,6 +3020,7 @@ export type Database = {
           staff_visible_note: string | null
           event_kind: string | null
           created_at: string
+          compound_action: string | null
         }[]
       }
       accept_invitation: {

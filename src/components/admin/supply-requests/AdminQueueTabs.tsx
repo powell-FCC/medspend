@@ -13,16 +13,20 @@ const queueLabels: Record<AdminQueueKey, string> = {
 export function AdminQueueTabs({
   active,
   summary,
+  queues,
   onChange,
 }: {
   active: AdminQueueKey;
   summary: AdminSupplyRequestDashboard["summary"];
+  // Phase 7C.0: the tabs the organization's workflow profile shows (defaults to all).
+  queues?: readonly AdminQueueKey[];
   onChange: (queue: AdminQueueKey) => void;
 }) {
+  const keys = queues ?? (Object.keys(queueLabels) as AdminQueueKey[]);
   return (
     <div role="tablist" aria-label="Supply request queues">
       <div className="flex flex-wrap gap-1 border-b border-[#dce2e8]">
-        {(Object.keys(queueLabels) as AdminQueueKey[]).map((queue) => {
+        {keys.map((queue) => {
           const selected = active === queue;
           return (
             <button
@@ -34,7 +38,6 @@ export function AdminQueueTabs({
               id={`queue-${queue}`}
               onClick={() => onChange(queue)}
               onKeyDown={(event) => {
-                const keys = Object.keys(queueLabels) as AdminQueueKey[];
                 const index = keys.indexOf(queue);
                 const next = event.key === "ArrowRight" ? (index + 1) % keys.length
                   : event.key === "ArrowLeft" ? (index + keys.length - 1) % keys.length

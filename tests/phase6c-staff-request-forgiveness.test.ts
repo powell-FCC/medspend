@@ -548,7 +548,9 @@ test("the admin decision sends the version the screen rendered and refreshes on 
   assert.match(decide, /if \(error\) throw new Error\(error\.message\)/);
 
   const transition = between(adminRoute, "async function transition(", "async function release(");
-  assert.match(transition, /decide\(\{ data: \{ \.\.\.data, decision: status, expectedUpdatedAt: selected\.updatedAt \} \}\)/);
+  assert.match(transition, /decide\(\{ data: \{ \.\.\.data, decision: action === "approve" \? "approved" : "denied", expectedUpdatedAt: selected\.updatedAt \} \}\)/);
+  // Phase 7C.0: Approve & Order names the reviewed version too.
+  assert.match(transition, /approveAndOrder\(\{ data: \{ \.\.\.data, expectedUpdatedAt: selected\.updatedAt \} \}\)/);
   const failure = between(transition, "} catch (error) {", "} finally {");
   assert.match(failure, /setMutationError\(error instanceof Error \? error\.message/);
   assert.match(failure, /invalidateQueries\(\{ queryKey: \["org", organizationId, "requests"\] \}\)/);
@@ -638,10 +640,13 @@ test("direct table writes cannot set or change a request's status", () => {
 
 test("the admin UI routes pending approve/decline only to the decision RPC", () => {
   const transition = between(adminRoute, "async function transition(", "async function release(");
-  assert.match(
-    transition,
-    /const pending = selected\.lifecycleStatus === "submitted" \|\| selected\.lifecycleStatus === "under_review";\s+if \(pending && \(status === "approved" \|\| status === "denied"\)\) \{/,
-  );
+  // Phase 7C.0: the drawer names an action. Approve and Decline go to the decision RPC; Approve &
+  // Order goes to its own RPC, which approves through decide_supply_request; the generic status
+  // update is used only for Mark Ordered and Complete Request (never an approval or denial).
+  assert.match(transition, /if \(action === "approve" \|\| action === "decline"\) \{\s+await decide\(/);
+  assert.match(transition, /else if \(action === "approve_and_order"\) \{\s+await approveAndOrder\(/);
+  assert.match(transition, /await updateStatus\(\{ data: \{ \.\.\.data, status: action === "mark_ordered" \? "ordered" : "completed" \} \}\)/);
+  assert.doesNotMatch(transition, /status: "approved"|status: "denied"/);
 });
 
 test("SQL behavioral coverage proves decide_supply_request is the exclusive decision path", () => {

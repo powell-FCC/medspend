@@ -758,29 +758,29 @@ SELECT pg_temp.phase6c_expect_decision_error(
   '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'approved',
   current_setting('phase6c.v911_loaded'),
   'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
-  '40001');
+  '55000');
 SELECT pg_temp.phase6c_expect_decision_error(
   '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000911', 'denied',
   current_setting('phase6c.v911_loaded'),
   'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
-  '40001');
+  '55000');
 SELECT pg_temp.phase6c_expect_decision_error(
   '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000912', 'denied',
   current_setting('phase6c.v912_loaded'),
   'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
-  '40001');
+  '55000');
 -- A decision that names no version is treated as stale.
 SELECT pg_temp.phase6c_expect_decision_error(
   '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'approved',
   NULL,
   'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
-  '40001');
+  '55000');
 -- Another request's version cannot authorize this request.
 SELECT pg_temp.phase6c_expect_decision_error(
   '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000913', 'approved',
   current_setting('phase6c.v914_loaded'),
   'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
-  '40001');
+  '55000');
 
 DO $phase6c_stale_no_writes$
 BEGIN
@@ -937,7 +937,7 @@ SELECT pg_temp.phase6c_expect_decision_error(
   '6c6c0000-0000-4000-8000-000000000101', '6c6c0000-0000-4000-8000-000000000915', 'approved',
   current_setting('phase6c.v915_loaded'),
   'This request changed while you were reviewing it. Refresh the request and review the latest details before making a decision.',
-  '40001');
+  '55000');
 DO $phase6c_under_review_reloaded$
 DECLARE
   _result jsonb;

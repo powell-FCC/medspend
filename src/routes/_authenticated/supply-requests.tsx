@@ -5,11 +5,11 @@ import { RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AdminQueueTabs, adminQueueLabel, type AdminQueueKey } from "@/components/admin/supply-requests/AdminQueueTabs";
 import { AdminRequestCard } from "@/components/admin/supply-requests/AdminRequestCard";
-import { AdminRequestDetail } from "@/components/admin/supply-requests/AdminRequestDetail";
+import { AdminRequestDetail, type AdminDrawerAction } from "@/components/admin/supply-requests/AdminRequestDetail";
 import { useActiveOrg } from "@/hooks/use-active-org";
-import { decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyRequestBudgetImpactFn, listRequestUpdatesFn, releaseSupplyRequestCommitmentFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
+import { approveAndOrderSupplyRequestFn, decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyRequestBudgetImpactFn, listRequestUpdatesFn, receiveAndCompleteSupplyRequestFn, receiveSupplyRequestFn, releaseSupplyRequestCommitmentFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
 import type { CommitmentReleaseKind } from "@/supply-requests/commitments";
-import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
+import { adminActionFeedback, DEFAULT_REQUEST_WORKFLOW_PROFILE, visibleAdminQueues } from "@/supply-requests/workflow-profiles";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUEUE_KEYS = ["needsReview", "awaitingOrder", "awaitingDelivery", "readyForStaff", "completed"] as const satisfies readonly AdminQueueKey[];
@@ -31,6 +31,9 @@ function Page() {
   const fetchUpdates = useServerFn(listRequestUpdatesFn);
   const updateStatus = useServerFn(updateRequestStatusFn);
   const decide = useServerFn(decideSupplyRequestFn);
+  const approveAndOrder = useServerFn(approveAndOrderSupplyRequestFn);
+  const receive = useServerFn(receiveSupplyRequestFn);
+  const receiveAndComplete = useServerFn(receiveAndCompleteSupplyRequestFn);
   const fetchBudgetImpact = useServerFn(getSupplyRequestBudgetImpactFn);
   const releaseCommitment = useServerFn(releaseSupplyRequestCommitmentFn);
   const queryClient = useQueryClient();
@@ -70,7 +73,9 @@ function Page() {
     enabled: !!active && !!selected,
   });
 
-  async function transition(status: SupplyRequestStatus, staffMessage: string, internalNote: string) {
+  // Phase 7C.0: the drawer's action follows the organization's workflow profile. Compound
+  // actions run in one database transaction; the database enforces the profile.
+  async function transition(action: AdminDrawerAction, staffMessage: string, internalNote: string) {
     if (!selected || !active || submitting.current) return;
     submitting.current = true;
     setBusy(true);
@@ -83,14 +88,19 @@ function Page() {
       internalNote: internalNote.trim() || null,
     };
     try {
-      const pending = selected.lifecycleStatus === "submitted" || selected.lifecycleStatus === "under_review";
-      if (pending && (status === "approved" || status === "denied")) {
-        // Decide exactly the version this screen rendered. If the request changed, the
-        // server rejects the decision and the refresh below shows the latest details;
-        // the admin must review and choose again.
-        await decide({ data: { ...data, decision: status, expectedUpdatedAt: selected.updatedAt } });
+      // Decisions name exactly the version this screen rendered. If the request changed, the
+      // server rejects the decision and the refresh below shows the latest details; the admin
+      // must review and choose again.
+      if (action === "approve" || action === "decline") {
+        await decide({ data: { ...data, decision: action === "approve" ? "approved" : "denied", expectedUpdatedAt: selected.updatedAt } });
+      } else if (action === "approve_and_order") {
+        await approveAndOrder({ data: { ...data, expectedUpdatedAt: selected.updatedAt } });
+      } else if (action === "mark_received") {
+        await receive({ data });
+      } else if (action === "receive_and_complete") {
+        await receiveAndComplete({ data });
       } else {
-        await updateStatus({ data: { ...data, status } });
+        await updateStatus({ data: { ...data, status: action === "mark_ordered" ? "ordered" : "completed" } });
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["org", organizationId, "requests"] }),
@@ -99,8 +109,7 @@ function Page() {
         queryClient.invalidateQueries({ queryKey: ["budget-purchasing", organizationId] }),
       ]);
       setSelection(null);
-      setFeedback(status === "approved" ? "Request approved. Staff can see the decision."
-        : status === "denied" ? "Request declined. Your reason is visible to staff." : "Request updated.");
+      setFeedback(adminActionFeedback(action));
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : "The request could not be updated.");
       await queryClient.invalidateQueries({ queryKey: ["org", organizationId, "requests"] });
@@ -139,6 +148,9 @@ function Page() {
   }
 
   const requests = dashboard.data?.queues[queue] ?? [];
+  const workflowProfile = dashboard.data?.workflowProfile ?? DEFAULT_REQUEST_WORKFLOW_PROFILE;
+  // A profile hides only empty optional queues; the open queue always stays reachable.
+  const visibleQueues = dashboard.data ? visibleAdminQueues(workflowProfile, dashboard.data.summary, queue) : [];
   return (
     <div className="min-h-screen bg-[#f5f7f9] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
@@ -153,7 +165,7 @@ function Page() {
         </header>
         {feedback && <p role="status" className="mt-4 rounded-lg border border-[#cbe2d5] bg-[#f0f8f3] p-3 text-sm text-[#286443]">{feedback}</p>}
         <div className="mt-5">
-          {dashboard.data && <AdminQueueTabs active={queue} summary={dashboard.data.summary} onChange={setQueue} />}
+          {dashboard.data && <AdminQueueTabs active={queue} summary={dashboard.data.summary} queues={visibleQueues} onChange={setQueue} />}
         </div>
         <section id="request-queue" role="tabpanel" aria-labelledby={dashboard.data ? "queue-" + queue : "active-queue-heading"} className="mt-5">
           <div className="mb-3 flex items-center justify-between gap-4">
@@ -169,7 +181,7 @@ function Page() {
           </div>}
         </section>
       </div>
-      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} budgetImpact={budgetImpact.data} loadingBudgetImpact={budgetImpact.isLoading} budgetImpactError={budgetImpact.isError} onRetryBudgetImpact={() => void budgetImpact.refetch()} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} onReleaseCommitment={release} />}
+      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} budgetImpact={budgetImpact.data} loadingBudgetImpact={budgetImpact.isLoading} budgetImpactError={budgetImpact.isError} onRetryBudgetImpact={() => void budgetImpact.refetch()} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} onReleaseCommitment={release} workflowProfile={workflowProfile} />}
     </div>
   );
 }
