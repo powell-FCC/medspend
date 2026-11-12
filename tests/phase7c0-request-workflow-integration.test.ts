@@ -510,3 +510,88 @@ test(
     assert.equal(digest.sections.underReview.items.length, 0);
   },
 );
+
+// Review fix: a stale Approve or Decline must answer at once with the non-retryable stale-screen
+// error. SQLSTATE 40001 made PostgREST retry the call indefinitely (the request hung). The client
+// here aborts after 5 s and the test after 20 s, so a regression fails fast instead of hanging.
+const timedClient = (sub: string) =>
+  createClient<Database>(REST_URL, "local-publishable-key", {
+    global: {
+      headers: { Authorization: `Bearer ${signToken({ role: "authenticated", sub })}` },
+      fetch: (input, init) =>
+        stripRestPrefix(input, { ...init, signal: AbortSignal.timeout(5000) }),
+    },
+    auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
+  });
+
+for (const [label, decision, note] of [
+  ["Approve", "approved", null],
+  ["Decline", "denied", "Use the stock in the cage"],
+] as const) {
+  test(
+    `stale ${label} through PostgREST answers immediately with 55000 and writes nothing`,
+    { skip, timeout: 20000 },
+    async () => {
+      const requestId = await submit(`Stale ${label}`);
+      const seen = (await request(requestId)).updated_at;
+      // The requester changes the request after the admin opened it.
+      await must(
+        staff.rpc("update_submitted_supply_request", {
+          _organization_id: ORG,
+          _request_id: requestId,
+          _request_type: "reorder",
+          _team_id: null,
+          _location_id: null,
+          _notes: "Changed after review opened",
+          _items: [{ freeTextItem: `Stale ${label}`, quantity: 3 }],
+        } as never),
+      );
+      assert.notEqual((await request(requestId)).updated_at, seen);
+      const started = Date.now();
+      const { error } = await timedClient(ADMIN).rpc("decide_supply_request", {
+        _organization_id: ORG,
+        _request_id: requestId,
+        _decision: decision,
+        ...(note ? { _staff_visible_note: note } : {}),
+        _expected_updated_at: seen,
+      });
+      const elapsed = Date.now() - started;
+      assert.ok(error, "the stale decision must be refused");
+      assert.equal(
+        error.code,
+        "55000",
+        `expected the non-retryable stale-screen code, got ${error.code}: ${error.message}`,
+      );
+      assert.match(error.message, /This request changed while you were reviewing it/);
+      assert.ok(elapsed < 2000, `stale ${label} took ${elapsed} ms`);
+      assert.equal((await request(requestId)).status, "submitted");
+      assert.deepEqual(
+        (await history(requestId)).map((row) => row.status_to),
+        [null],
+      );
+      assert.deepEqual(await events(requestId), ["request_submitted"]);
+      assert.equal(
+        (
+          await must(
+            service
+              .from("supply_request_commitments")
+              .select("id")
+              .eq("supply_request_id", requestId),
+          )
+        ).length,
+        0,
+      );
+      // The refreshed screen decides normally.
+      await must(
+        admin.rpc("decide_supply_request", {
+          _organization_id: ORG,
+          _request_id: requestId,
+          _decision: decision,
+          ...(note ? { _staff_visible_note: note } : {}),
+          _expected_updated_at: (await request(requestId)).updated_at,
+        }),
+      );
+      assert.equal((await request(requestId)).status, decision);
+    },
+  );
+}

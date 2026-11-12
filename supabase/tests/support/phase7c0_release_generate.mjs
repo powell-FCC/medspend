@@ -42,8 +42,10 @@ const NEW_FUNCTIONS = [
   "receive_supply_request",
   "update_organization_request_workflow_settings",
 ];
-// Recreated with compound_action appended to its result (same arguments, body and access).
-const CHANGED_FUNCTIONS = ["list_staff_supply_request_updates"];
+// Changed by this release: decide_supply_request (20261112110000: the stale-screen refusal is
+// SQLSTATE 55000 instead of 40001; body otherwise identical) and list_staff_supply_request_updates
+// (7C.0: compound_action appended to its result; same arguments, filter and access).
+const CHANGED_FUNCTIONS = ["decide_supply_request", "list_staff_supply_request_updates"];
 const NEW_TABLES = ["organization_request_workflow_settings"];
 // supply_request_updates gains the nullable compound_action column.
 const CHANGED_TABLES = ["supply_request_updates"];
@@ -235,7 +237,8 @@ const changedTableCheck = (rows, message) =>
   END IF;`,
   ).join("\n");
 
-const precheck = `-- Phase 7C.0 production PRECHECK. Run BEFORE 20261112120000_phase7c0_request_workflow_profiles.sql.
+const precheck = `-- Phase 7C.0 production PRECHECK. Run BEFORE 20261112110000_decide_stale_screen_sqlstate.sql and
+-- 20261112120000_phase7c0_request_workflow_profiles.sql.
 --
 -- Safe for the Supabase SQL Editor: no psql meta-commands, no transaction control, and no
 -- writes (one read-only DO block of assertions, then one SELECT). Paste the whole file and run
@@ -274,7 +277,7 @@ ${NEW_FUNCTIONS.map((name, i) => `                  '${name}'${i < NEW_FUNCTIONS
   -- Every function this phase builds on or must leave alone is exactly as reviewed.
 ${functionLoop(pinnedPairs, "%: function is missing or differs from the reviewed production state: %")}
 
-  -- The function this phase recreates, as reviewed before the migration.
+  -- The functions this release changes, as reviewed before the migrations.
 ${functionLoop(changedPre, "%: function is missing or differs from the reviewed production state: %")}
 
 ${foundationChecks}
@@ -295,7 +298,8 @@ function tableHash(table) {
 
 const newTriggerPairs = NEW_TRIGGERS.map((key) => [key, value(post, "trigger", key)]);
 const newConstraintPairs = NEW_CONSTRAINTS.map((key) => [key, value(post, "constraint", key)]);
-const postcheck = `-- Phase 7C.0 production POSTCHECK. Run AFTER 20261112120000_phase7c0_request_workflow_profiles.sql.
+const postcheck = `-- Phase 7C.0 production POSTCHECK. Run AFTER 20261112110000_decide_stale_screen_sqlstate.sql and
+-- 20261112120000_phase7c0_request_workflow_profiles.sql.
 --
 -- Safe for the Supabase SQL Editor: no psql meta-commands, no transaction control, and no
 -- writes (one read-only DO block of assertions, then one SELECT). Paste the whole file and run
@@ -318,7 +322,8 @@ BEGIN
   -- EXECUTE).
 ${functionLoop(newPairs, "%: Phase 7C.0 function is missing or differs from the reviewed migration: %")}
 
-  -- The recreated staff history projection (compound_action appended; same access).
+  -- The changed functions: decide_supply_request (stale screen 55000) and the staff history
+  -- projection (compound_action appended; same access).
 ${functionLoop(changedPost, "%: Phase 7C.0 function is missing or differs from the reviewed migration: %")}
 
   -- Everything else the precheck pinned is unchanged.

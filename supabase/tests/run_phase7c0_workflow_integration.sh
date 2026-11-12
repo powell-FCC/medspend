@@ -6,6 +6,9 @@
 # runs the real notification cycle (src/notifications/worker.ts + supabase-store.ts) with a
 # locally signed service-role JWT and the in-memory fake email provider.
 #
+# Container logs are capped (10 MB each): a stale decision regression makes PostgREST retry in a
+# tight loop, and uncapped logs can fill the disk before the containers are removed.
+#
 # Nothing here reads .env files, talks to a hosted project or contacts an email provider. Both
 # containers listen on 127.0.0.1 only and are removed when the script exits.
 #
@@ -27,7 +30,7 @@ export PGPASSWORD=postgres PGHOST=127.0.0.1 PGPORT="$db_port" PGOPTIONS="-c clie
 cleanup() { docker rm -f "$rest_container" "$db_container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-docker run -d --name "$db_container" -e POSTGRES_PASSWORD=postgres \
+docker run -d --log-opt max-size=10m --log-opt max-file=1 --name "$db_container" -e POSTGRES_PASSWORD=postgres \
   -p "127.0.0.1:$db_port:5432" -p "127.0.0.1:$rest_port:3000" \
   public.ecr.aws/supabase/postgres:17.6.1.167 >/dev/null
 for _ in $(seq 1 60); do
@@ -42,7 +45,7 @@ for migration in "$root"/supabase/migrations/*.sql; do
 done
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$root/supabase/tests/integration/phase7c0_workflow_fixture.sql" >/dev/null
 
-docker run -d --name "$rest_container" --network "container:$db_container" \
+docker run -d --log-opt max-size=10m --log-opt max-file=1 --name "$rest_container" --network "container:$db_container" \
   -e PGRST_DB_URI="postgres://authenticator:local-test-only@127.0.0.1:5432/postgres" \
   -e PGRST_DB_SCHEMAS=public -e PGRST_DB_ANON_ROLE=anon \
   -e PGRST_JWT_SECRET="$jwt_secret" -e PGRST_SERVER_PORT=3000 \

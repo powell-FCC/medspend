@@ -28,6 +28,7 @@ container="medspend_7c0_release_$$"
 port="${MEDSPEND_7C0_RELEASE_PORT:-55645}"
 work="$(mktemp -d)"
 export PGPASSWORD=postgres PGHOST=127.0.0.1 PGPORT="$port" PGOPTIONS="-c client_min_messages=warning"
+fix="20261112110000_decide_stale_screen_sqlstate.sql"
 migration="20261112120000_phase7c0_request_workflow_profiles.sql"
 rewrite="$root/supabase/tests/support/studio_sql_editor_rewrite.mjs"
 release="$root/supabase/release/phase7c0"
@@ -37,17 +38,19 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 cd "$root"
 
-for file in "supabase/migrations/$migration" "$release"/*.sql; do
+for file in "supabase/migrations/$fix" "supabase/migrations/$migration" "$release"/*.sql; do
   [ -z "$(node "$rewrite" "$file" --tables)" ] || fail "the SQL Editor would append RLS statements to $file"
   cmp -s "$file" <(node "$rewrite" "$file") || fail "the SQL Editor would rewrite $file"
 done
-grep -qi "create[[:space:]]\+temp" "supabase/migrations/$migration" && fail "the 7C.0 migration creates temp tables"
-python3 - "supabase/migrations/$migration" <<'PY' || fail "statements follow the final COMMIT"
+for file in "supabase/migrations/$fix" "supabase/migrations/$migration"; do
+  grep -qi "create[[:space:]]\+temp" "$file" && fail "$file creates temp tables"
+  python3 - "$file" <<'PY' || fail "statements follow the final COMMIT in $file"
 import re, sys
 text = open(sys.argv[1]).read()
 tail = text[text.rindex("\nCOMMIT;") + len("\nCOMMIT;"):]
 sys.exit(0 if re.sub(r"--[^\n]*", "", tail).strip() == "" else 1)
 PY
+done
 echo "ok - the SQL Editor sends the 7C.0 migration and release files unchanged; nothing follows COMMIT"
 
 docker run -d --name "$container" -e POSTGRES_PASSWORD=postgres -p "127.0.0.1:$port:5432" \
@@ -59,7 +62,7 @@ done
 sleep 5
 psql -q -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -f supabase/tests/integration/local_stack_setup.sql >/dev/null
 for file in supabase/migrations/*.sql; do
-  [[ "$(basename "$file")" < "$migration" ]] || continue
+  [[ "$(basename "$file")" < "$fix" ]] || continue
   psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$file" >/dev/null
 done
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f supabase/tests/integration/phase6c4_batch_intake_fixture.sql >/dev/null
@@ -113,23 +116,27 @@ grep -q '^count | public functions | 161$' "$work/pre.txt" && grep -q '^count | 
   || fail "pre counts are not the 6C.3 production baseline"
 echo "ok - precheck passed on the 6C.3 baseline (161/51/193/58/81) with requests, decisions, events, memberships, budgets and invoices"
 
-python3 - "supabase/migrations/$migration" "$work/broken.sql" <<'PY'
+for name in "$fix" "$migration"; do
+  python3 - "supabase/migrations/$name" "$work/broken.sql" <<'PY'
 import sys
 text = open(sys.argv[1]).read()
 marker = "\nCOMMIT;\n"
 assert text.count(marker) == 1
 open(sys.argv[2], "w").write(text.replace(marker, "\nDO $induced$ BEGIN RAISE EXCEPTION 'induced failure before COMMIT'; END $induced$;\nCOMMIT;\n"))
 PY
-expect_failure "induced failure before COMMIT" "induced failure before COMMIT" editor "$work/broken.sql"
-[ "$(objects)" = "0" ] || fail "partial 7C.0 objects survived the failed migration"
-cmp -s "$work/pre.txt" <(fingerprint) || fail "the failed migration left changes behind"
+  expect_failure "induced failure before COMMIT ($name)" "induced failure before COMMIT" editor "$work/broken.sql"
+  [ "$(objects)" = "0" ] || fail "partial 7C.0 objects survived the failed migration"
+  cmp -s "$work/pre.txt" <(fingerprint) || fail "the failed $name left changes behind"
+done
 readonly_editor "$release/precheck.sql" > "$work/pre_again.txt"
-cmp -s "$work/pre.txt" "$work/pre_again.txt" || fail "precheck changed after the failed attempt"
-echo "ok - induced failure rolled back completely; precheck passes again"
+cmp -s "$work/pre.txt" "$work/pre_again.txt" || fail "precheck changed after the failed attempts"
+echo "ok - induced failures in both migrations rolled back completely; precheck passes again"
 
-out="$(editor "supabase/migrations/$migration" 2>&1)" || fail "the migration failed: $out"
-[ -z "$out" ] || fail "the migration printed output: $out"
-echo "ok - migration (as the SQL Editor sends it) returned success with no output"
+for name in "$fix" "$migration"; do
+  out="$(editor "supabase/migrations/$name" 2>&1)" || fail "$name failed: $out"
+  [ -z "$out" ] || fail "$name printed output: $out"
+done
+echo "ok - both migrations (as the SQL Editor sends them, in order) returned success with no output"
 
 readonly_editor "$release/postcheck.sql" > "$work/post.txt"
 cmp -s "$work/post.txt" <(fingerprint) || fail "postcheck output is not exactly the fingerprint"
@@ -138,11 +145,12 @@ node supabase/tests/support/phase7c0_release_generate.mjs --pre "$work/pre.txt" 
   || fail "precheck.sql / postcheck.sql are not what the generator produces from fingerprint.sql on this database"
 echo "ok - precheck.sql and postcheck.sql are exactly what the generator produces from fingerprint.sql"
 
+expect_failure "second application of the stale-screen fix" "decide_supply_request no longer raises 40001" editor "supabase/migrations/$fix"
 expect_failure "second application" "Phase 7C.0 workflow profile objects already exist unexpectedly" editor "supabase/migrations/$migration"
 expect_failure "precheck after the migration" "precheck: Phase 7C.0 objects already exist" readonly_editor "$release/precheck.sql"
 cmp -s "$work/post.txt" <(fingerprint) || fail "the refused reapplication changed something"
 
-new_functions='approve_and_order_supply_request|apply_supply_request_receipt|get_organization_request_workflow_settings|get_request_workflow_profile|guard_supply_request_update_compound_action|mark_supply_request_compound_action|organization_request_workflow_profile|receive_and_complete_supply_request|receive_supply_request|update_organization_request_workflow_settings|list_staff_supply_request_updates'
+new_functions='approve_and_order_supply_request|apply_supply_request_receipt|get_organization_request_workflow_settings|get_request_workflow_profile|guard_supply_request_update_compound_action|mark_supply_request_compound_action|organization_request_workflow_profile|receive_and_complete_supply_request|receive_supply_request|update_organization_request_workflow_settings|list_staff_supply_request_updates|decide_supply_request'
 strip() { grep -v -E "^(function|overloads) \| ($new_functions) \| " "$1" \
   | grep -v -E "^(table|policies|grants) \| organization_request_workflow_settings \| " \
   | grep -v -E "^table \| supply_request_updates \| " \
@@ -156,7 +164,11 @@ delta() { echo $(( $(grep -F "count | public $1 |" "$work/post.txt" | awk -F' [|
 [ "$(delta functions)" = "10" ] && [ "$(delta tables)" = "1" ] && [ "$(delta indexes)" = "1" ] \
   && [ "$(delta policies)" = "0" ] && [ "$(delta triggers)" = "2" ] \
   || fail "unexpected object deltas: functions $(delta functions) tables $(delta tables) indexes $(delta indexes) policies $(delta policies) triggers $(delta triggers)"
-for prefix in 'function | submit_supply_request' 'function | decide_supply_request' 'function | transition_supply_request' \
+[ "$(grep -F 'function | decide_supply_request |' "$work/pre.txt")" != "$(grep -F 'function | decide_supply_request |' "$work/post.txt")" ] \
+  || fail "decide_supply_request was expected to change (stale-screen SQLSTATE)"
+grep -F 'function | decide_supply_request |' "$work/post.txt" | grep -q 'secdef=true authenticated=true anon=false service_role=true public=false$' \
+  || fail "decide_supply_request access changed"
+for prefix in 'function | submit_supply_request' 'function | transition_supply_request' \
   'function | apply_supply_request_transition' 'function | create_supply_request_commitment' 'function | is_org_admin' 'function | has_org_role' \
   'function | capture_supply_request_decision_notification' 'function | notification_approver_digest_content' 'function | dispatch_notification_events' \
   'function | post_reviewed_invoice' 'function | get_budget_purchasing_overview' 'function | move_inventory_stock' \
@@ -171,11 +183,11 @@ for prefix in 'function | submit_supply_request' 'function | decide_supply_reque
   if echo "$before" | grep -q ' | absent$'; then fail "$prefix is absent before the migration"; fi
   [ "$before" = "$(grep -F "$prefix |" "$work/post.txt")" ] || fail "$prefix changed"
 done
-[ "$(grep -c '^function | ' "$work/pre.txt")" = "54" ] || fail "expected 54 function pins (10 new, 1 recreated, 43 existing), got $(grep -c '^function | ' "$work/pre.txt")"
+[ "$(grep -c '^function | ' "$work/pre.txt")" = "54" ] || fail "expected 54 function pins (10 new, 2 changed, 42 unchanged), got $(grep -c '^function | ' "$work/pre.txt")"
 grep -q '^rows | organization_request_workflow_settings count | 0$' "$work/post.txt" \
   && grep -q '^rows | supply_request_updates with compound_action | 0$' "$work/post.txt" \
   || fail "the migration wrote settings or compound markers"
-echo "ok - pre/post differ only in documented lines: +10 functions, list_staff_supply_request_updates recreated, +1 table (no client access), +1 column, +1 index, +2 triggers; no request, history, notification, membership, budget, invoice or inventory row changed"
+echo "ok - pre/post differ only in documented lines: +10 functions, decide_supply_request (stale screen 55000) and list_staff_supply_request_updates changed, +1 table (no client access), +1 column, +1 index, +2 triggers; no request, history, notification, membership, budget, invoice or inventory row changed"
 
 # After the release: no organization has a settings row, so every organization is Detailed.
 psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<'SQL'
@@ -203,6 +215,15 @@ expect_failure "Receive & Complete before any profile is chosen" "Receive & Comp
 [ "$(q "SELECT (SELECT count(*) FROM public.organization_request_workflow_settings) + (SELECT count(*) FROM public.supply_request_updates WHERE compound_action IS NOT NULL)")" = "0" ] \
   || fail "the release created settings or compound markers"
 echo "ok - after the release every organization is Detailed: compound actions refused, the plain lifecycle and one Approved event unchanged"
+
+# After the release a stale decision is refused at once with the non-retryable 55000.
+stale="$(q "SELECT id FROM public.supply_requests WHERE organization_id = '6c3e0000-0000-4000-8000-000000000101' AND status = 'submitted' ORDER BY created_at, id LIMIT 1")"
+[ -n "$stale" ] || fail "no submitted request to test a stale decision"
+started=$(date +%s)
+out="$(admin_sql "DO \$stale\$ BEGIN PERFORM public.decide_supply_request('6c3e0000-0000-4000-8000-000000000101', '$stale', 'approved', NULL, NULL, '2000-01-01'); EXCEPTION WHEN SQLSTATE '55000' THEN RAISE WARNING 'stale-55000'; END \$stale\$;" 2>&1 || true)"
+[ $(( $(date +%s) - started )) -lt 3 ] || fail "the stale decision did not answer promptly"
+echo "$out" | grep -q 'stale-55000' || fail "a stale decision did not raise 55000: $out"
+echo "ok - after the release a stale decision raises 55000 immediately"
 echo "--- documented pre/post differences"
 diff "$work/pre.txt" "$work/post.txt" | grep -E "^[<>]" | grep -v -E '^[<>] (function|overloads|index|constraint) \| ' || true
 echo "phase7c0_release_check: all checks passed"

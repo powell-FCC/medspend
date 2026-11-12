@@ -74,6 +74,12 @@ test("precheck and postcheck end with exactly the shared fingerprint SELECT", ()
     );
   }
   assert.match(postcheck, /supply_request_updates\.supply_request_updates_compound_action_guard/);
+  // decide_supply_request is pinned at its reviewed body before, and at the 55000 body after.
+  const decidePin = (text: string) =>
+    text.match(/\('decide_supply_request', '([0-9a-f]{32}) /)?.[1];
+  assert.ok(
+    decidePin(precheck) && decidePin(postcheck) && decidePin(precheck) !== decidePin(postcheck),
+  );
   assert.match(postcheck, /supply_request_updates\.supply_request_updates_compound_action_check/);
   assert.match(
     postcheck,
@@ -115,4 +121,9 @@ test("release README documents the order, the deltas, FC Cincinnati and the repo
   assert.match(readme, /approval → order duration is intentionally 0/);
   assert.match(readme, /receipt → completion duration is intentionally 0/);
   assert.match(readme, /Migrate first/);
+  assert.match(
+    readme,
+    /20261112110000_decide_stale_screen_sqlstate\.sql`\*\*, then \*\*`20261112120000_phase7c0_request_workflow_profiles\.sql`/,
+  );
+  assert.match(readme, /from SQLSTATE `40001` to `55000`/);
 });

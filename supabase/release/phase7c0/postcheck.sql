@@ -1,4 +1,5 @@
--- Phase 7C.0 production POSTCHECK. Run AFTER 20261112120000_phase7c0_request_workflow_profiles.sql.
+-- Phase 7C.0 production POSTCHECK. Run AFTER 20261112110000_decide_stale_screen_sqlstate.sql and
+-- 20261112120000_phase7c0_request_workflow_profiles.sql.
 --
 -- Safe for the Supabase SQL Editor: no psql meta-commands, no transaction control, and no
 -- writes (one read-only DO block of assertions, then one SELECT). Paste the whole file and run
@@ -54,7 +55,8 @@ BEGIN
     RAISE EXCEPTION '%: Phase 7C.0 function is missing or differs from the reviewed migration: %', _stage, _mismatch;
   END LOOP;
 
-  -- The recreated staff history projection (compound_action appended; same access).
+  -- The changed functions: decide_supply_request (stale screen 55000) and the staff history
+  -- projection (compound_action appended; same access).
   FOR _mismatch IN
     SELECT format('%s=%s', expected.name, coalesce((
       SELECT md5(pg_get_functiondef(p.oid)) || ' secdef=' || p.prosecdef
@@ -66,6 +68,7 @@ BEGIN
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = expected.name ORDER BY p.oid LIMIT 1), 'absent'))
     FROM (VALUES
+      ('decide_supply_request', '5077d52fa376b1ab3670fe9ae1408bf3 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('list_staff_supply_request_updates', '72c7a5822b48a825f61b7bba7c58f326 secdef=true authenticated=true anon=false service_role=true public=false')
     ) AS expected(name, value)
     WHERE coalesce((
@@ -101,7 +104,6 @@ BEGIN
       ('complete_notification_delivery', '85dd835bb5cde4d6d3b6f9bdc94d1cf9 secdef=true authenticated=false anon=false service_role=true public=false'),
       ('create_invoice_upload_batch', '9950f42a67c3dc033e8d03f17c6bf11d secdef=true authenticated=true anon=false service_role=true public=false'),
       ('create_supply_request_commitment', 'd74eab8279a2a5eedc21801a57d14e95 secdef=true authenticated=false anon=false service_role=true public=false'),
-      ('decide_supply_request', '17f05c0ff76d128f2e3a3b7c3126b2f9 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('delete_invoice_permanently', 'ac77d1b05aa44675b295936021189673 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('dispatch_notification_events', '19acbcfd83c3231ca6576d852d1d504b secdef=true authenticated=false anon=false service_role=true public=false'),
       ('enqueue_due_notification_digests', '87c085467e21e4bdb54437145422e57f secdef=true authenticated=false anon=false service_role=true public=false'),
