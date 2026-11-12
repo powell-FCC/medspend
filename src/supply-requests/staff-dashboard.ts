@@ -1,4 +1,5 @@
 import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
+import { deliveredToLabel } from "./receiving.ts";
 import {
   COMPOUND_ACTION_LABELS,
   DEFAULT_REQUEST_WORKFLOW_PROFILE,
@@ -76,6 +77,8 @@ export type StaffRequestTimelineItem = {
   label: string;
   occurredAt: string;
   message: string | null;
+  // Phase 7C: e.g. "Delivered to First Team ATR" (from the receipt's name snapshot).
+  destination?: string | null;
 };
 
 export type StaffRequestDetailViewModel = StaffRequestViewModel & {
@@ -181,6 +184,9 @@ export type StaffRequestUpdateRow = {
   created_at: string;
   // Phase 7C.0: set on every canonical row one bundled action wrote.
   compound_action?: CompoundAction | null;
+  // Phase 7C: the receipt's destination (name snapshot), on the received row.
+  receiving_destination?: string | null;
+  receiving_destination_kind?: string | null;
 };
 
 const STAFF_COMPOUND_LABELS: Readonly<Record<CompoundAction, string>> = {
@@ -213,11 +219,20 @@ export function buildStaffRequestTimeline(
         update.compound_action && update.canonicalRows.length > 1
           ? STAFF_COMPOUND_LABELS[update.compound_action]
           : translateStaffRequestStatus(update.status_to, profile).label;
+      const receipt = update.canonicalRows.find((row) => row.receiving_destination);
       return [
         {
           label,
           occurredAt: update.created_at,
           message: update.staff_visible_note,
+          ...(receipt?.receiving_destination
+            ? {
+                destination: deliveredToLabel(
+                  receipt.receiving_destination,
+                  receipt.receiving_destination_kind,
+                ),
+              }
+            : {}),
         },
       ];
     }),

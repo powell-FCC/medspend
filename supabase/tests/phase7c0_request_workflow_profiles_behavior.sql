@@ -115,7 +115,7 @@ BEGIN
   FOREACH _fn IN ARRAY ARRAY[
     'public.organization_request_workflow_profile(uuid)',
     'public.mark_supply_request_compound_action(uuid, uuid, text, public.supply_request_status[])',
-    'public.apply_supply_request_receipt(uuid, uuid, text, text)',
+    'public.apply_supply_request_receipt(uuid, uuid, uuid, text, text, text)',
     'public.guard_supply_request_update_compound_action()'] LOOP
     PERFORM pg_temp.assert(NOT has_function_privilege('authenticated', _fn, 'EXECUTE')
       AND NOT has_function_privilege('anon', _fn, 'EXECUTE')
@@ -125,9 +125,9 @@ BEGIN
     'public.get_request_workflow_profile(uuid)',
     'public.get_organization_request_workflow_settings(uuid)',
     'public.update_organization_request_workflow_settings(uuid, text)',
-    'public.receive_supply_request(uuid, uuid, text, text)',
+    'public.receive_supply_request(uuid, uuid, text, text, uuid)',
     'public.approve_and_order_supply_request(uuid, uuid, text, text, timestamptz)',
-    'public.receive_and_complete_supply_request(uuid, uuid, text, text)'] LOOP
+    'public.receive_and_complete_supply_request(uuid, uuid, text, text, uuid)'] LOOP
     PERFORM pg_temp.assert(has_function_privilege('authenticated', _fn, 'EXECUTE'), _fn || ' executable by authenticated');
     PERFORM pg_temp.assert(NOT has_function_privilege('anon', _fn, 'EXECUTE'), _fn || ' not executable by anon');
     PERFORM pg_temp.assert(NOT has_function_privilege('service_role', _fn, 'EXECUTE'), _fn || ' not granted to service_role');
@@ -135,13 +135,13 @@ BEGIN
   FOREACH _fn IN ARRAY ARRAY[
     'public.organization_request_workflow_profile(uuid)',
     'public.mark_supply_request_compound_action(uuid, uuid, text, public.supply_request_status[])',
-    'public.apply_supply_request_receipt(uuid, uuid, text, text)',
+    'public.apply_supply_request_receipt(uuid, uuid, uuid, text, text, text)',
     'public.get_request_workflow_profile(uuid)',
     'public.get_organization_request_workflow_settings(uuid)',
     'public.update_organization_request_workflow_settings(uuid, text)',
-    'public.receive_supply_request(uuid, uuid, text, text)',
+    'public.receive_supply_request(uuid, uuid, text, text, uuid)',
     'public.approve_and_order_supply_request(uuid, uuid, text, text, timestamptz)',
-    'public.receive_and_complete_supply_request(uuid, uuid, text, text)'] LOOP
+    'public.receive_and_complete_supply_request(uuid, uuid, text, text, uuid)'] LOOP
     PERFORM pg_temp.assert((SELECT p.prosecdef AND p.proconfig::text LIKE '%search_path=pg_catalog, public, pg_temp%'
                             FROM pg_proc p WHERE p.oid = _fn::regprocedure), _fn || ' security definer with pinned search_path');
   END LOOP;
@@ -163,7 +163,7 @@ BEGIN
   FOREACH _fn IN ARRAY ARRAY[
     'public.update_organization_request_workflow_settings(uuid, text)',
     'public.approve_and_order_supply_request(uuid, uuid, text, text, timestamptz)',
-    'public.receive_and_complete_supply_request(uuid, uuid, text, text)'] LOOP
+    'public.receive_and_complete_supply_request(uuid, uuid, text, text, uuid)'] LOOP
     PERFORM pg_temp.assert(position('is_org_admin' IN pg_get_functiondef(_fn::regprocedure)) > 0
       AND position('''owner''' IN pg_get_functiondef(_fn::regprocedure)) = 0
       AND position('''admin''' IN pg_get_functiondef(_fn::regprocedure)) = 0, _fn || ' uses is_org_admin');
@@ -180,7 +180,7 @@ SELECT pg_temp.expect_error('SELECT count(*) FROM public.organization_request_wo
 SELECT pg_temp.expect_error($$INSERT INTO public.organization_request_workflow_settings (organization_id, workflow_profile)
   VALUES ('7c000000-0000-4000-8000-000000000101', 'lean')$$, 'permission denied');
 SELECT pg_temp.expect_error($$SELECT public.organization_request_workflow_profile('7c000000-0000-4000-8000-000000000101')$$, 'permission denied');
-SELECT pg_temp.expect_error($$SELECT public.apply_supply_request_receipt('7c000000-0000-4000-8000-000000000101', gen_random_uuid())$$, 'permission denied');
+SELECT pg_temp.expect_error($$SELECT public.apply_supply_request_receipt('7c000000-0000-4000-8000-000000000101', gen_random_uuid(), gen_random_uuid())$$, 'permission denied');
 SELECT pg_temp.expect_error($$SELECT public.mark_supply_request_compound_action('7c000000-0000-4000-8000-000000000101', gen_random_uuid(), 'approve_and_order', ARRAY['ordered']::public.supply_request_status[])$$, 'permission denied');
 SET LOCAL ROLE anon;
 SELECT pg_temp.expect_error($$SELECT public.get_request_workflow_profile('7c000000-0000-4000-8000-000000000101')$$, 'permission denied');
@@ -259,7 +259,7 @@ DECLARE
 BEGIN
   PERFORM public.decide_supply_request(pg_temp.o(1), pg_temp.v('detailed_full'), 'approved', NULL, NULL, pg_temp.version(pg_temp.v('detailed_full')));
   PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('detailed_full'), 'ordered', NULL, 'Ordered');
-  _result := public.receive_supply_request(pg_temp.o(1), pg_temp.v('detailed_full'), 'Arrived', 'Internal: dock 2');
+  _result := public.receive_supply_request(pg_temp.o(1), pg_temp.v('detailed_full'), 'Arrived', 'Internal: dock 2', (SELECT id FROM public.list_receiving_destinations(pg_temp.o(1)) WHERE kind = 'unassigned'));
   PERFORM pg_temp.assert(_result ->> 'status' = 'received' AND NOT (_result ->> 'alreadyApplied')::boolean
     AND _result ->> 'receivedAt' IS NOT NULL, 'Mark Received through the shared receive path');
   _result := public.receive_supply_request(pg_temp.o(1), pg_temp.v('detailed_full'), 'Again', NULL);
@@ -271,7 +271,7 @@ BEGIN
   PERFORM public.decide_supply_request(pg_temp.o(1), pg_temp.v('legacy_approved'), 'approved', NULL, NULL, pg_temp.version(pg_temp.v('legacy_approved')));
   PERFORM public.decide_supply_request(pg_temp.o(1), pg_temp.v('legacy_received'), 'approved', NULL, NULL, pg_temp.version(pg_temp.v('legacy_received')));
   PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('legacy_received'), 'ordered');
-  PERFORM public.receive_supply_request(pg_temp.o(1), pg_temp.v('legacy_received'));
+  PERFORM public.receive_supply_request(pg_temp.o(1), pg_temp.v('legacy_received'), NULL, NULL, (SELECT id FROM public.list_receiving_destinations(pg_temp.o(1)) WHERE kind = 'unassigned'));
 
   -- Compound actions are refused under Detailed, before anything is written.
   PERFORM pg_temp.expect_error($$SELECT public.approve_and_order_supply_request('7c000000-0000-4000-8000-000000000101', pg_temp.v('detailed_gate'), NULL, NULL, pg_temp.version(pg_temp.v('detailed_gate')))$$,
@@ -449,7 +449,8 @@ BEGIN
   -- Not awaiting delivery yet.
   PERFORM pg_temp.expect_error($$SELECT public.receive_and_complete_supply_request('7c000000-0000-4000-8000-000000000101', pg_temp.v('lean_stale'))$$,
     'not awaiting delivery');
-  _result := public.receive_and_complete_supply_request(pg_temp.o(1), pg_temp.v('lean_submitted'), 'In the training room cage', 'Internal: box 3 of 3');
+  _result := public.receive_and_complete_supply_request(pg_temp.o(1), pg_temp.v('lean_submitted'), 'In the training room cage', 'Internal: box 3 of 3',
+    (SELECT id FROM public.list_receiving_destinations(pg_temp.o(1)) WHERE kind = 'unassigned'));
   PERFORM pg_temp.assert(_result ->> 'status' = 'completed' AND _result ->> 'receivedAt' IS NOT NULL
     AND _result ->> 'compoundAction' = 'receive_and_complete' AND _result -> 'transitions' = '["received", "completed"]'::jsonb,
     'Receive & Complete from ordered: ' || _result::text);
@@ -459,8 +460,9 @@ BEGIN
   _result := public.receive_and_complete_supply_request(pg_temp.o(1), pg_temp.v('legacy_received'), NULL, NULL);
   PERFORM pg_temp.assert(_result -> 'transitions' = '["completed"]'::jsonb AND _result -> 'compoundAction' = 'null'::jsonb,
     'Receive & Complete from received: ' || _result::text);
-  -- Plain transitions still work in Lean for valid canonical states (nothing is stranded).
-  PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('legacy_approved'), 'received');
+  -- Plain actions still work in Lean for valid canonical states (nothing is stranded). Phase 7C:
+  -- Mark Received is the receive action (with a destination), not the generic transition.
+  PERFORM public.receive_supply_request(pg_temp.o(1), pg_temp.v('legacy_approved'), NULL, NULL, (SELECT id FROM public.list_receiving_destinations(pg_temp.o(1)) WHERE kind = 'unassigned'));
   PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('legacy_approved'), 'completed');
   -- Denied requests cannot be received.
   PERFORM pg_temp.expect_error($$SELECT public.receive_and_complete_supply_request('7c000000-0000-4000-8000-000000000101', pg_temp.v('lean_correct'))$$,
@@ -509,7 +511,7 @@ BEGIN
   PERFORM pg_temp.expect_error($$SELECT public.receive_and_complete_supply_request('7c000000-0000-4000-8000-000000000101', pg_temp.v('standard'))$$,
     'not awaiting delivery');
   PERFORM public.transition_supply_request(pg_temp.o(1), pg_temp.v('standard'), 'ordered', NULL, 'Ordered');
-  PERFORM public.receive_and_complete_supply_request(pg_temp.o(1), pg_temp.v('standard'), 'Ready in the cage', NULL);
+  PERFORM public.receive_and_complete_supply_request(pg_temp.o(1), pg_temp.v('standard'), 'Ready in the cage', NULL, (SELECT id FROM public.list_receiving_destinations(pg_temp.o(1)) WHERE kind = 'unassigned'));
 END
 $phase7c0_standard$;
 RESET ROLE;

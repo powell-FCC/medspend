@@ -347,7 +347,23 @@ test(
     await transition(reversalId, "ordered", "Ordered");
     await transition(reversalId, "denied", "Vendor discontinued it", "INTERNAL-REVERSAL");
     await transition(lifecycleId, "ordered", "Ordered");
-    await transition(lifecycleId, "received", "Arrived");
+    // Phase 7C: receiving goes through the receive action, which records a destination.
+    const destinations = (await must(
+      admin.rpc("list_receiving_destinations" as never, { _organization_id: ORG } as never),
+    )) as { id: string; kind: string }[];
+    await must(
+      admin.rpc(
+        "receive_supply_request" as never,
+        {
+          _organization_id: ORG,
+          _request_id: lifecycleId,
+          _staff_visible_note: "Arrived",
+          _inventory_location_id: destinations.find(
+            (destination) => destination.kind === "unassigned",
+          )?.id,
+        } as never,
+      ),
+    );
     await transition(lifecycleId, "completed", "Picked up");
     const second = new FakeEmailProvider();
     await cycle(second);

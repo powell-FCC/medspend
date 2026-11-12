@@ -123,7 +123,8 @@ wait
 echo "ok - two Approve & Order calls at once: one applies, the other is alreadyApplied"
 
 # 4. Two Receive & Complete calls at once (on request 3).
-session "$admin" "BEGIN; SELECT public.receive_and_complete_supply_request('$org', '$r3', 'In the cage', NULL); SELECT pg_sleep(3); COMMIT;" > "$work/4a" 2>&1 &
+# Phase 7C: the receipt names a destination (Unassigned).
+session "$admin" "BEGIN; SELECT public.receive_and_complete_supply_request('$org', '$r3', 'In the cage', NULL, (SELECT id FROM public.list_receiving_destinations('$org') WHERE kind = 'unassigned')); SELECT pg_sleep(3); COMMIT;" > "$work/4a" 2>&1 &
 sleep 1
 session "$owner" "SELECT public.receive_and_complete_supply_request('$org', '$r3', NULL, NULL) ->> 'alreadyApplied';" > "$work/4b" 2>&1 \
   || fail "second Receive & Complete failed: $(cat "$work/4b")"

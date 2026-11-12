@@ -280,7 +280,8 @@ test("the drawer and route dispatch actions without adding confirmation dialogs"
   assert.match(detail, /adminPrimaryAction\(workflowProfile, request\.lifecycleStatus\)/);
   assert.match(
     detail,
-    /onTransition\(declining \? "decline" : action\.kind, staffMessage, internalNote\)/,
+    // Phase 7C: receiving actions also pass the chosen destination.
+    /onTransition\(\s*declining \? "decline" : action\.kind,\s*staffMessage,\s*internalNote,\s*needsDestination \? destinationId : undefined,?\s*\)/,
   );
   assert.doesNotMatch(detail, /AlertDialog|window\.confirm|confirm\(/);
   const transition = between(route, "async function transition(", "async function release(");
@@ -288,10 +289,10 @@ test("the drawer and route dispatch actions without adding confirmation dialogs"
     transition,
     /action === "approve_and_order"\) \{\s+await approveAndOrder\(\{ data: \{ \.\.\.data, expectedUpdatedAt: selected\.updatedAt \} \}\)/,
   );
-  assert.match(transition, /action === "mark_received"\) \{\s+await receive\(\{ data \}\)/);
+  // Phase 7C: both receiving actions send the destination through the same branch.
   assert.match(
     transition,
-    /action === "receive_and_complete"\) \{\s+await receiveAndComplete\(\{ data \}\)/,
+    /action === "mark_received" \|\| action === "receive_and_complete"\) \{[\s\S]*?await \(action === "mark_received" \? receive : receiveAndComplete\)\(\{ data: \{ \.\.\.data, inventoryLocationId \} \}\)/,
   );
   assert.match(route, /visibleAdminQueues\(workflowProfile, dashboard\.data\.summary, queue\)/);
   assert.match(route, /workflowProfile=\{workflowProfile\}/);

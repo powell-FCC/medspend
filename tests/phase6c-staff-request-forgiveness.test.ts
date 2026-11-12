@@ -658,7 +658,8 @@ test("SQL behavioral coverage proves decide_supply_request is the exclusive deci
     "Canonical decline from submitted failed",
     "approved -> ordered -> received -> completed regressed",
     "Denial after approval no longer releases its commitment",
-    "Invalid supply request transition: approved to received",
+    // Phase 7C: the generic transition never receives (a receipt records its destination).
+    "Use the receiving action to choose a receiving destination.",
     "Invalid supply request transition: denied to approved",
   ]) {
     assert.ok(behavior.includes(marker), marker);

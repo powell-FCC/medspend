@@ -33,6 +33,11 @@ export function RequestDetailTimeline({ items }: { items: StaffRequestTimelineIt
                 {date.format(new Date(item.occurredAt))}
               </time>
             </div>
+            {item.destination && (
+              <p className="mt-1 text-sm text-[#4f5c6c]" data-testid="timeline-destination">
+                {item.destination}
+              </p>
+            )}
             {item.message && (
               <p className="mt-1 text-sm leading-6 text-[#4f5c6c] [overflow-wrap:anywhere]">
                 {item.message}

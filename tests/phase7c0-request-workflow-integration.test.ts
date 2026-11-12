@@ -123,6 +123,15 @@ async function cycle(provider: FakeEmailProvider) {
     maxBatches: 50,
   });
 }
+// Phase 7C: every receipt names a receiving destination; these tests use Unassigned.
+async function unassigned(): Promise<string> {
+  const destinations = (await must(
+    admin.rpc("list_receiving_destinations" as never, { _organization_id: ORG } as never),
+  )) as { id: string; kind: string }[];
+  const found = destinations.find((destination) => destination.kind === "unassigned");
+  assert.ok(found, "Unassigned destination");
+  return found.id;
+}
 const setProfile = (client: SupabaseClient<Database>, profile: string, organizationId = ORG) =>
   must(
     client.rpc("update_organization_request_workflow_settings", {
@@ -360,7 +369,8 @@ test(
         _organization_id: ORG,
         _request_id: ordered.id,
         _staff_visible_note: "In the cage",
-      }),
+        _inventory_location_id: await unassigned(),
+      } as never),
     )) as Record<string, unknown>;
     assert.equal(result.status, "completed");
     assert.equal(result.compoundAction, "receive_and_complete");
@@ -444,7 +454,11 @@ test(
       /Receive & Complete is not enabled/,
     );
     const received = (await must(
-      admin.rpc("receive_supply_request", { _organization_id: ORG, _request_id: requestId }),
+      admin.rpc("receive_supply_request", {
+        _organization_id: ORG,
+        _request_id: requestId,
+        _inventory_location_id: await unassigned(),
+      } as never),
     )) as Record<string, unknown>;
     assert.equal(received.status, "received");
     const again = (await must(

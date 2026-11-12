@@ -23,6 +23,8 @@ export const adminWorkflowActionSchema = z.object({
   staffVisibleNote: z.string().trim().max(5000).nullable().optional(),
   internalNote: z.string().trim().max(5000).nullable().optional(),
   expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
+  // Phase 7C: the receiving destination (an active inventory location of the organization).
+  inventoryLocationId: z.string().uuid().optional(),
 });
 
 export function requestItemIsCustom(item: SupplyRequestItemViewModel): boolean {

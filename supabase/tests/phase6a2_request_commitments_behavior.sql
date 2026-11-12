@@ -152,7 +152,9 @@ SELECT pg_catalog.set_config('request.jwt.claim.sub', '6a2a0000-0000-4000-8000-0
 
 -- Ordered, received, and completed keep the commitment active.
 SELECT public.transition_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000701', 'ordered');
-SELECT public.transition_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000701', 'received');
+-- Phase 7C: receiving goes through the receive action, which records a destination.
+SELECT public.receive_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000701', NULL, NULL,
+  (SELECT id FROM public.list_receiving_destinations('6a2a0000-0000-4000-8000-000000000101') WHERE kind = 'unassigned'));
 SELECT public.transition_supply_request('6a2a0000-0000-4000-8000-000000000101', '6a2a0000-0000-4000-8000-000000000701', 'completed');
 DO $phase6a2_completed_active$
 BEGIN
