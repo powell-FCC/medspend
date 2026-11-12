@@ -17,6 +17,7 @@ import {
 } from "@/supply-requests/validation";
 import { adminRequestDecisionSchema, adminWorkflowActionSchema, trustedRequestPackage } from "@/supply-requests/admin-request-inbox";
 import {
+  adminQueueCardAction,
   parseCompoundAction,
   parseRequestWorkflowProfile,
   type RequestWorkflowProfile,
@@ -672,7 +673,8 @@ export const getAdminSupplyRequestDashboardFn = createServerFn({ method: "POST" 
         requestTypeLabel: translateAdminRequestType(row.request_type),
         queueGroup: translation.queueGroup,
         statusLabel: translation.statusLabel,
-        nextAction: translation.nextAction,
+        // Phase 7C.0: the card's action follows the organization's profile (same source as the drawer).
+        nextAction: adminQueueCardAction(workflowProfile, lifecycleStatus),
         lifecycleStatus,
         submittedAt: row.created_at,
         updatedAt: row.updated_at,

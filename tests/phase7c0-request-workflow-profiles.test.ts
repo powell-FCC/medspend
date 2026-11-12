@@ -24,6 +24,7 @@ import {
   REQUEST_WORKFLOW_PROFILES,
   REQUEST_WORKFLOW_PROFILE_OPTIONS,
   adminActionFeedback,
+  adminQueueCardAction,
   adminPrimaryAction,
   collapseCompoundUpdates,
   parseCompoundAction,
@@ -68,6 +69,7 @@ writeFileSync(
   import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
   export { RequestWorkflowSettingsForm } from "@/components/settings/RequestWorkflowSettings";
   export { AdminQueueTabs } from "@/components/admin/supply-requests/AdminQueueTabs";
+  export { AdminRequestCard } from "@/components/admin/supply-requests/AdminRequestCard";
   export function render(component, props) {
     return renderToStaticMarkup(
       createElement(QueryClientProvider, { client: new QueryClient() }, createElement(component, props)));
@@ -604,4 +606,111 @@ test("queue tabs render only the profile's tabs", () => {
     render(ui.AdminQueueTabs, { active: "needsReview", summary: emptySummary, onChange: () => {} }),
   );
   assert.match(all, /Awaiting Order.*Ready for Staff/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Queue cards (review fix): the card names the same action as the drawer
+
+const cardRequest = (status: SupplyRequestStatus, profile: RequestWorkflowProfile) => ({
+  id: "00000000-0000-4000-8000-000000000101",
+  itemCount: 1,
+  items: [
+    {
+      id: "i1",
+      productId: null,
+      inventoryItemId: null,
+      vendorProductId: null,
+      catalogVendorProductId: null,
+      name: "Athletic tape",
+      quantity: 2,
+      unit: null,
+    },
+  ],
+  itemName: "Athletic tape",
+  quantity: 2,
+  unit: null,
+  requesterName: "Staff member",
+  requesterEmail: null,
+  team: null,
+  location: null,
+  requestTypeLabel: "Supply Request",
+  queueGroup: "AWAITING_DELIVERY",
+  statusLabel: "Ordered",
+  nextAction: adminQueueCardAction(profile, status),
+  lifecycleStatus: status,
+  submittedAt: "2026-11-12T14:00:00.000Z",
+  updatedAt: "2026-11-12T14:00:00.000Z",
+  ageInDays: 0,
+  staffNote: null,
+  latestStaffMessage: null,
+  latestInternalNote: null,
+  latestUpdateAt: "2026-11-12T14:00:00.000Z",
+  hasExistingProduct: false,
+  isNewItem: true,
+});
+const cardButton = (status: SupplyRequestStatus, profile: RequestWorkflowProfile) => {
+  const html = render(ui.AdminRequestCard, {
+    request: cardRequest(status, profile),
+    onOpen: () => {},
+  });
+  return [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]).at(-1);
+};
+
+test("ordered queue card names Receive & Complete in Lean and Standard, Mark Received in Detailed", () => {
+  assert.equal(cardButton("ordered", "lean"), "Receive &amp; Complete");
+  assert.equal(cardButton("ordered", "standard"), "Receive &amp; Complete");
+  assert.equal(cardButton("ordered", "detailed"), "Mark Received");
+});
+
+test("card and drawer agree for every open status in every profile; older requests keep a plain action", () => {
+  for (const profile of REQUEST_WORKFLOW_PROFILES) {
+    for (const status of ["approved", "ordered", "received"] as const) {
+      assert.equal(
+        adminQueueCardAction(profile, status),
+        adminPrimaryAction(profile, status)?.label,
+        `${profile} ${status}`,
+      );
+    }
+    assert.equal(adminQueueCardAction(profile, "submitted"), "View Request");
+    assert.equal(adminQueueCardAction(profile, "completed"), null);
+  }
+  // Resurfaced queues in Lean: an approved request still says Mark Ordered, a received one Complete Request.
+  assert.equal(cardButton("approved", "lean"), "Mark Ordered");
+  assert.equal(cardButton("received", "lean"), "Complete Request");
+  assert.equal(cardButton("received", "standard"), "Complete Request");
+  // The dashboard builds the card label from the profile, not the static translation.
+  const server = read("src/lib/supply-requests.functions.ts");
+  assert.match(server, /nextAction: adminQueueCardAction\(workflowProfile, lifecycleStatus\)/);
+  assert.doesNotMatch(server, /nextAction: translation\.nextAction/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Stale-screen SQLSTATE (review fix)
+
+test("decide_supply_request stale screens return non-retryable 55000; nothing else in its body changes", () => {
+  const fix = read("supabase/migrations/20261112110000_decide_stale_screen_sqlstate.sql");
+  const original = read("supabase/migrations/20261009120000_phase6c_staff_request_forgiveness.sql");
+  const body = (text: string, header: string) =>
+    text
+      .slice(text.indexOf(header), text.indexOf("\n$$;", text.indexOf(header)))
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ");
+  const before = body(original, "CREATE FUNCTION public.decide_supply_request(");
+  const after = body(fix, "CREATE OR REPLACE FUNCTION public.decide_supply_request(");
+  assert.equal(
+    after.replace("CREATE OR REPLACE FUNCTION", "CREATE FUNCTION").replace("'55000'", "'40001'"),
+    before,
+  );
+  assert.doesNotMatch(after, /'40001'/);
+  assert.equal(fix.match(/^BEGIN;$/gm)?.length, 1);
+  assert.equal(fix.match(/^COMMIT;$/gm)?.length, 1);
+  assert.match(
+    fix,
+    /GRANT EXECUTE ON FUNCTION public\.decide_supply_request\(\s+uuid, uuid, public\.supply_request_status, text, text, timestamptz\s+\) TO authenticated;/,
+  );
+  // Sorts before 7C.0, so it can ship on its own or together with 7C.0.
+  assert.ok(
+    "20261112110000_decide_stale_screen_sqlstate.sql" <
+      "20261112120000_phase7c0_request_workflow_profiles.sql",
+  );
 });

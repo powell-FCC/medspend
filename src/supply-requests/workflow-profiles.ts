@@ -134,6 +134,16 @@ export function adminPrimaryAction(
   }
 }
 
+// The queue card's button. Pending requests open the drawer to decide; every other open status
+// names the drawer's primary action, so the card and drawer always agree for the profile.
+export function adminQueueCardAction(
+  profile: RequestWorkflowProfile,
+  status: SupplyRequestStatus,
+): string | null {
+  if (status === "submitted" || status === "under_review") return "View Request";
+  return adminPrimaryAction(profile, status)?.label ?? null;
+}
+
 export function adminActionFeedback(kind: AdminWorkflowActionKind | "decline"): string {
   switch (kind) {
     case "approve":
