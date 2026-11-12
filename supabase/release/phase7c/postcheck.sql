@@ -29,7 +29,7 @@ BEGIN
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = expected.name ORDER BY p.oid LIMIT 1), 'absent'))
     FROM (VALUES
-      ('guard_supply_request_receipt_immutable', '6d727bc5c01f5c1a9b988e53a55c22f1 secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('guard_supply_request_receipt_immutable', 'e2ba21e8fbb1f7b945183a8901d27130 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('list_receiving_destinations', 'ca61f97f6e3b1c064c4849c63ca61e5d secdef=true authenticated=true anon=false service_role=false public=false'),
       ('list_supply_request_receipts', 'a5a36e2adff30450f22c7287dd261294 secdef=true authenticated=true anon=false service_role=false public=false')
     ) AS expected(name, value)

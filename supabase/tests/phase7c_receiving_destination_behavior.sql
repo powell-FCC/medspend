@@ -433,4 +433,30 @@ END
 $phase7c_reads$;
 RESET ROLE;
 
+-- ============================================================================================
+-- Deleting a user account that received requests keeps every receipt and clears only the actor
+-- (received_by ON DELETE SET NULL); every other change to a receipt is still refused.
+-- ============================================================================================
+DO $phase7c_user_deletion$
+DECLARE
+  _before jsonb;
+  _ids uuid[];
+BEGIN
+  SELECT jsonb_agg(to_jsonb(r) - 'received_by' ORDER BY r.id), array_agg(r.id) INTO _before, _ids
+  FROM public.supply_request_receipts r WHERE r.received_by = pg_temp.u(2);
+  PERFORM pg_temp.assert(cardinality(_ids) > 0, 'the admin has receipts to keep');
+  PERFORM pg_temp.expect_error($$UPDATE public.supply_request_receipts SET received_by = NULL, destination_name_snapshot = 'Moved' WHERE received_by = pg_temp.u(2)$$,
+    'A receipt cannot be changed after it is recorded');
+  PERFORM pg_temp.expect_error($$UPDATE public.supply_request_receipts SET received_by = pg_temp.u(1) WHERE received_by = pg_temp.u(2)$$,
+    'A receipt cannot be changed after it is recorded');
+  DELETE FROM auth.users WHERE id = pg_temp.u(2);
+  PERFORM pg_temp.assert(
+    (SELECT jsonb_agg(to_jsonb(r) - 'received_by' ORDER BY r.id) FROM public.supply_request_receipts r WHERE r.id = ANY(_ids)) = _before
+    AND (SELECT bool_and(received_by IS NULL) FROM public.supply_request_receipts WHERE id = ANY(_ids)),
+    'user deletion kept every receipt unchanged except the cleared actor');
+  PERFORM pg_temp.expect_error($$UPDATE public.supply_request_receipts SET destination_name_snapshot = 'Moved' WHERE received_by IS NULL$$,
+    'A receipt cannot be changed after it is recorded');
+END
+$phase7c_user_deletion$;
+
 ROLLBACK;

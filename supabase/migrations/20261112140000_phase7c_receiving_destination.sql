@@ -101,13 +101,19 @@ CREATE INDEX supply_request_receipts_org_location_idx
 CREATE INDEX supply_request_receipts_org_received_idx
   ON public.supply_request_receipts (organization_id, received_at DESC);
 
--- A receipt is history: it never changes after it is written.
+-- A receipt is history: it never changes after it is written. The one exception is the
+-- received_by foreign key's own ON DELETE SET NULL action, so deleting a user account keeps the
+-- receipt (actor cleared, as on supply_request_updates.author_id) instead of failing.
 CREATE FUNCTION public.guard_supply_request_receipt_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
+  IF OLD.received_by IS NOT NULL AND NEW.received_by IS NULL
+     AND (to_jsonb(NEW) - 'received_by') = (to_jsonb(OLD) - 'received_by') THEN
+    RETURN NEW;
+  END IF;
   RAISE EXCEPTION 'A receipt cannot be changed after it is recorded' USING ERRCODE = '55000';
 END;
 $$;
