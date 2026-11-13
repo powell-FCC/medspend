@@ -14,10 +14,17 @@ import {
 } from "@/components/ui/dialog";
 import { workspaceQueryKey } from "@/inventory/workspace";
 import type { InventoryItemRef, LocationAdjustmentReason } from "@/types/inventory";
-import { ItemLocationsDialog } from "../ItemLocationsDialog";
+import { ItemLocationsDialog, type MoveStockPrefill } from "../ItemLocationsDialog";
+import { replenishmentQueryKey } from "@/inventory/replenishment";
 import { QuantityAdjustmentDialog } from "../QuantityAdjustmentDialog";
 
-export type ItemStockAction = { kind: "move" | "adjust"; item: InventoryItemRef };
+// Phase 7D: a move opened from a replenishment recommendation carries its prefill; the owner
+// still confirms it, and only that move is recorded with the 'replenishment' source.
+export type ItemStockAction = {
+  kind: "move" | "adjust";
+  item: InventoryItemRef;
+  prefill?: MoveStockPrefill;
+};
 
 // The owner's Move and Adjust dialogs for one item. They read every location and only this
 // item's balances, so they never depend on loading the organization's whole balance set.
@@ -50,8 +57,12 @@ export function ItemStockDialogs({
   const ready = Boolean(action && locations.data && balances.data);
   const item =
     action && balances.data ? { ...action.item, quantity: balances.data.quantity } : undefined;
+  // Moves and adjustments change replenishment too (Phase 7D).
   const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: workspaceQueryKey(organizationId) });
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: workspaceQueryKey(organizationId) }),
+      queryClient.invalidateQueries({ queryKey: replenishmentQueryKey(organizationId) }),
+    ]);
 
   const loadError = locations.error ?? balances.error;
 
@@ -71,6 +82,7 @@ export function ItemStockDialogs({
         item={ready && action?.kind === "move" ? item : undefined}
         locations={locations.data?.locations ?? []}
         balances={balances.data?.balances ?? []}
+        initial={action?.kind === "move" ? action.prefill : undefined}
         onOpenChange={(open) => !open && onClose()}
         onMove={async (input) => {
           if (!itemId) return;
@@ -82,6 +94,7 @@ export function ItemStockDialogs({
               toInventoryLocationId: input.toId,
               quantity: input.quantity,
               requestKey: input.requestKey,
+              source: input.prefilled ? "replenishment" : "manual",
             },
           });
           await refresh();

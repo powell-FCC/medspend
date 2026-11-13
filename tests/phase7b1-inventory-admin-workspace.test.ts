@@ -419,7 +419,7 @@ test("routes: /inventory tabs in the query string and a location detail route", 
   assert.match(
     index,
     // Phase 7B.2 added Counts, 7B.3 Activity, and 7B.4 Overview, which /inventory now opens on.
-    /z\s*\.enum\(\["overview", "items", "locations", "counts", "activity"\]\)\s*\.catch\("overview"\)\s*\.default\("overview"\)/,
+    /z\s*\.enum\(\["overview", "items", "locations", "replenishment", "counts", "activity"\]\)\s*\.catch\("overview"\)\s*\.default\("overview"\)/,
   );
   const detail = read("src/routes/_authenticated/inventory.locations.$locationId.tsx");
   assert.match(detail, /createFileRoute\("\/_authenticated\/inventory\/locations\/\$locationId"\)/);

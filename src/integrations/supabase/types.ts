@@ -1071,6 +1071,70 @@ export type Database = {
           },
         ]
       }
+      inventory_replenishment_rules: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          enabled: boolean
+          id: string
+          inventory_item_id: string
+          inventory_location_id: string
+          minimum_quantity: number
+          organization_id: string
+          target_quantity: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          inventory_item_id: string
+          inventory_location_id: string
+          minimum_quantity: number
+          organization_id: string
+          target_quantity: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          inventory_item_id?: string
+          inventory_location_id?: string
+          minimum_quantity?: number
+          organization_id?: string
+          target_quantity?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_replenishment_rules_item_org_fk"
+            columns: ["inventory_item_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_replenishment_rules_location_org_fk"
+            columns: ["inventory_location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "inventory_replenishment_rules_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       inventory_transfers: {
         Row: {
           created_at: string
@@ -1081,6 +1145,7 @@ export type Database = {
           inventory_item_id: string
           organization_id: string
           quantity: number
+          source: string
           to_inventory_location_id: string
         }
         Insert: {
@@ -1092,6 +1157,7 @@ export type Database = {
           inventory_item_id: string
           organization_id: string
           quantity: number
+          source?: string
           to_inventory_location_id: string
         }
         Update: {
@@ -1103,6 +1169,7 @@ export type Database = {
           inventory_item_id?: string
           organization_id?: string
           quantity?: number
+          source?: string
           to_inventory_location_id?: string
         }
         Relationships: [
@@ -2812,6 +2879,66 @@ export type Database = {
         Args: { _attention_limit?: number; _organization_id: string }
         Returns: Json
       }
+      get_inventory_replenishment_summary: {
+        Args: { _organization_id: string }
+        Returns: Json
+      }
+      list_inventory_location_replenishment_rules: {
+        Args: {
+          _after_id?: string
+          _after_item?: string
+          _inventory_location_id: string
+          _limit?: number
+          _organization_id: string
+        }
+        Returns: Json[]
+      }
+      list_inventory_replenishment: {
+        Args: {
+          _after_id?: string
+          _after_item?: string
+          _after_location?: string
+          _after_rank?: number
+          _inventory_location_id?: string
+          _limit?: number
+          _organization_id: string
+          _view?: string
+        }
+        Returns: {
+          available_quantity: number
+          category: string
+          current_quantity: number
+          donors: Json
+          enabled: boolean
+          external_quantity: number
+          inactive_reason: string | null
+          inventory_item_id: string
+          inventory_location_id: string
+          item_active: boolean
+          item_name: string
+          item_unit: string
+          last_counted_at: string | null
+          location_active: boolean
+          location_count_state: string | null
+          location_name: string
+          minimum_quantity: number
+          move_quantity: number
+          not_stocked_here: boolean
+          open_approved_request_count: number
+          open_ordered_request_count: number
+          open_request_count: number
+          organization_quantity: number
+          other_short_location_count: number
+          rule_id: string
+          shortage_quantity: number
+          sort_item: string
+          sort_location: string
+          sort_rank: number
+          target_quantity: number
+          unassigned_quantity: number
+          updated_at: string
+        }[]
+      }
       get_inventory_workspace_location: {
         Args: { _inventory_location_id: string; _organization_id: string }
         Returns: Json
@@ -3251,6 +3378,7 @@ export type Database = {
           _inventory_item_id: string
           _organization_id: string
           _quantity: number
+          _source?: string
           _to_inventory_location_id: string
         }
         Returns: Json
@@ -3396,6 +3524,26 @@ export type Database = {
           _enabled: boolean
           _interval_days: number
           _organization_id: string
+        }
+        Returns: Json
+      }
+      set_inventory_replenishment_rule: {
+        Args: {
+          _expected_updated_at?: string
+          _inventory_item_id: string
+          _inventory_location_id: string
+          _minimum_quantity: number
+          _organization_id: string
+          _target_quantity: number
+        }
+        Returns: Json
+      }
+      set_inventory_replenishment_rule_enabled: {
+        Args: {
+          _enabled: boolean
+          _expected_updated_at: string
+          _organization_id: string
+          _rule_id: string
         }
         Returns: Json
       }

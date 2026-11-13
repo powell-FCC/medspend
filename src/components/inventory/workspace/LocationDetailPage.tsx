@@ -21,6 +21,7 @@ import { LocationHeader } from "./LocationHeader";
 import { LocationLabelsPanel } from "./LocationLabelsPanel";
 import { LocationManageDialogs, type LocationManageAction } from "./LocationManageDialogs";
 import { LocationStockTab } from "./LocationStockTab";
+import { LocationReplenishmentRules } from "./LocationReplenishmentRules";
 import { UnassignedRecentTransfers } from "./UnassignedRecentTransfers";
 import { useLocationOwnerActions } from "./useLocationOwnerActions";
 
@@ -147,6 +148,14 @@ function LocationDetail({
             <h2 className="text-lg font-semibold" data-testid="unassigned-stock-heading">
               Stock in Unassigned
             </h2>
+          )}
+          {/* Phase 7D: Minimum and Target per item at this storage location. */}
+          {storage && (
+            <LocationReplenishmentRules
+              organizationId={organizationId}
+              location={location}
+              canManage={canManage}
+            />
           )}
           <LocationStockTab
             organizationId={organizationId}
