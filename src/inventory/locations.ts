@@ -95,6 +95,23 @@ export function reconcileMoveSource(
   return { fromId: sourceIds[0] ?? "", toId: "" };
 }
 
+// Phase 7D: the Move Stock form as it opens. A replenishment prefill is used only while its
+// source still holds stock; otherwise the form opens as before (first source with stock,
+// nothing else filled). The owner still confirms the move.
+export function initialMoveForm(
+  sourceIds: string[],
+  prefill?: { fromId: string; toId: string; quantity: number },
+): { fromId: string; toId: string; quantity: string; prefilled: boolean } {
+  if (prefill && sourceIds.includes(prefill.fromId) && prefill.fromId !== prefill.toId)
+    return {
+      fromId: prefill.fromId,
+      toId: prefill.toId,
+      quantity: formatQuantity(prefill.quantity),
+      prefilled: true,
+    };
+  return { fromId: sourceIds[0] ?? "", toId: "", quantity: "", prefilled: false };
+}
+
 export function canArchiveInventoryLocation(
   location: InventoryLocation,
   balances: InventoryLocationBalance[],

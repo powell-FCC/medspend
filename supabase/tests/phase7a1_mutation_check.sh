@@ -81,8 +81,12 @@ for needle, replacement in zip(parts[::2], parts[1::2]):
         sys.exit(f"mutation target not found: {needle!r}")
     text = text.replace(needle, replacement)
 text = text.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+# Phase 7D re-created move_inventory_stock with a seventh, defaulted argument. Re-creating the
+# 7A.1 six-argument version beside it would make every six-argument call ambiguous, so the later
+# overload is dropped first (inside this rolled-back transaction).
+LATER_OVERLOADS = "DROP FUNCTION IF EXISTS public.move_inventory_stock(uuid, uuid, uuid, uuid, numeric, text, text);\n"
 body = open(suite).read().replace("BEGIN;\n", "", 1).replace("\nROLLBACK;\n", "\n")
-open(target, "w").write("BEGIN;\n" + text + "\n" + body + "\nROLLBACK;\n")
+open(target, "w").write("BEGIN;\n" + LATER_OVERLOADS + text + "\n" + body + "\nROLLBACK;\n")
 PY
   if psql -q -v ON_ERROR_STOP=1 -d "$database" -f "$work/mutant.sql" >/dev/null 2>"$work/err"; then
     echo "SURVIVED - $name"
@@ -97,8 +101,9 @@ python3 - "$work/functions.sql" "$suite" "$work/control.sql" <<'PY'
 import sys
 functions, suite, target = sys.argv[1:4]
 text = open(functions).read().replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+LATER_OVERLOADS = "DROP FUNCTION IF EXISTS public.move_inventory_stock(uuid, uuid, uuid, uuid, numeric, text, text);\n"
 body = open(suite).read().replace("BEGIN;\n", "", 1).replace("\nROLLBACK;\n", "\n")
-open(target, "w").write("BEGIN;\n" + text + "\n" + body + "\nROLLBACK;\n")
+open(target, "w").write("BEGIN;\n" + LATER_OVERLOADS + text + "\n" + body + "\nROLLBACK;\n")
 PY
 psql -q -v ON_ERROR_STOP=1 -d "$database" -f "$work/control.sql" >/dev/null || { echo "control run failed"; exit 1; }
 

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   formatQuantity,
+  initialMoveForm,
   itemLocationBreakdown,
   reconcileMoveSource,
   sortInventoryLocations,
@@ -29,6 +30,17 @@ export interface MoveStockInput {
   toId: string;
   quantity: number;
   requestKey: string;
+  // Phase 7D: true for the move the dialog was opened with from a replenishment
+  // recommendation (the owner confirmed it); false for every other move.
+  prefilled: boolean;
+}
+
+// Phase 7D: values a replenishment recommendation opens the dialog with. Nothing moves until
+// the owner presses Move stock.
+export interface MoveStockPrefill {
+  fromId: string;
+  toId: string;
+  quantity: number;
 }
 
 const newRequestKey = () =>
@@ -41,12 +53,14 @@ export function ItemLocationsDialog({
   item,
   locations,
   balances,
+  initial,
   onOpenChange,
   onMove,
 }: {
   item?: InventoryItemRef;
   locations: InventoryLocationRef[];
   balances: InventoryLocationBalance[];
+  initial?: MoveStockPrefill;
   onOpenChange: (open: boolean) => void;
   onMove: (input: MoveStockInput) => Promise<void>;
 }) {
@@ -57,6 +71,7 @@ export function ItemLocationsDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [prefillPending, setPrefillPending] = useState(false);
 
   const breakdown = useMemo(
     () => (item ? itemLocationBreakdown(item.id, locations, balances) : []),
@@ -87,10 +102,14 @@ export function ItemLocationsDialog({
 
   useEffect(() => {
     if (!item) return;
-    const firstSource = breakdown.find((entry) => entry.quantity > 0)?.location.id ?? "";
-    setFromId(firstSource);
-    setToId("");
-    setQuantity("");
+    const form = initialMoveForm(
+      breakdown.filter((entry) => entry.quantity > 0).map((entry) => entry.location.id),
+      initial,
+    );
+    setFromId(form.fromId);
+    setToId(form.toId);
+    setQuantity(form.quantity);
+    setPrefillPending(form.prefilled);
     setError("");
     setNotice("");
     setRequestKey(newRequestKey());
@@ -111,7 +130,8 @@ export function ItemLocationsDialog({
     setError("");
     setNotice("");
     try {
-      await onMove({ fromId, toId, quantity: amount, requestKey });
+      await onMove({ fromId, toId, quantity: amount, requestKey, prefilled: prefillPending });
+      setPrefillPending(false);
       const from = locations.find((location) => location.id === fromId)?.name;
       const to = locations.find((location) => location.id === toId)?.name;
       setNotice(`Moved ${formatQuantity(amount)} ${item.unit} from ${from} to ${to}.`);
