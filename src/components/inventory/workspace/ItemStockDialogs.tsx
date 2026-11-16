@@ -94,7 +94,7 @@ export function ItemStockDialogs({
               toInventoryLocationId: input.toId,
               quantity: input.quantity,
               requestKey: input.requestKey,
-              source: input.prefilled ? "replenishment" : "manual",
+              source: input.source,
             },
           });
           await refresh();

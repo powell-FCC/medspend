@@ -110,6 +110,13 @@ test(
         "move + external = shortage",
       );
       assert.ok(row.lastCountedAt, "every location was counted");
+      for (const donor of row.donors) {
+        // Every storage location in the fixture has an active rule; Unassigned never has a Minimum.
+        if (donor.isUnassigned)
+          assert.deepEqual([donor.hasActiveMinimum, donor.minimumQuantity], [false, null]);
+        else
+          assert.equal(donor.hasActiveMinimum && typeof donor.minimumQuantity === "number", true);
+      }
       assert.equal(row.locationCountState, "counted");
       assert.match(row.updatedAt, /\.\d{6}|:\d{2}[+Z]/, "versions arrive as full timestamps");
     }

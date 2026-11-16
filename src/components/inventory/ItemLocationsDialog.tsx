@@ -15,6 +15,8 @@ import {
   formatQuantity,
   initialMoveForm,
   itemLocationBreakdown,
+  moveProvenance,
+  type MoveSource,
   reconcileMoveSource,
   sortInventoryLocations,
   validateMove,
@@ -30,9 +32,9 @@ export interface MoveStockInput {
   toId: string;
   quantity: number;
   requestKey: string;
-  // Phase 7D: true for the move the dialog was opened with from a replenishment
-  // recommendation (the owner confirmed it); false for every other move.
-  prefilled: boolean;
+  // Phase 7D provenance, decided at confirmation by moveProvenance: 'replenishment' only for the
+  // first confirmed move that still goes to the recommended location.
+  source: MoveSource;
 }
 
 // Phase 7D: values a replenishment recommendation opens the dialog with. Nothing moves until
@@ -71,7 +73,11 @@ export function ItemLocationsDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [prefillPending, setPrefillPending] = useState(false);
+  // Set once when the dialog opens for an item; never edited by the form.
+  const [recommendation, setRecommendation] = useState<{
+    destinationId: string | null;
+    used: boolean;
+  }>({ destinationId: null, used: false });
 
   const breakdown = useMemo(
     () => (item ? itemLocationBreakdown(item.id, locations, balances) : []),
@@ -109,7 +115,7 @@ export function ItemLocationsDialog({
     setFromId(form.fromId);
     setToId(form.toId);
     setQuantity(form.quantity);
-    setPrefillPending(form.prefilled);
+    setRecommendation({ destinationId: form.recommendedDestinationId, used: false });
     setError("");
     setNotice("");
     setRequestKey(newRequestKey());
@@ -130,8 +136,15 @@ export function ItemLocationsDialog({
     setError("");
     setNotice("");
     try {
-      await onMove({ fromId, toId, quantity: amount, requestKey, prefilled: prefillPending });
-      setPrefillPending(false);
+      await onMove({
+        fromId,
+        toId,
+        quantity: amount,
+        requestKey,
+        source: moveProvenance(recommendation, toId),
+      });
+      // Any later move in this dialog is independent of the recommendation.
+      setRecommendation((current) => ({ ...current, used: true }));
       const from = locations.find((location) => location.id === fromId)?.name;
       const to = locations.find((location) => location.id === toId)?.name;
       setNotice(`Moved ${formatQuantity(amount)} ${item.unit} from ${from} to ${to}.`);

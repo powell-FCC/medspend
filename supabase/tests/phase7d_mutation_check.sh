@@ -94,6 +94,8 @@ mutants=(
   "ties not ordered by name|stock.spare DESC, lower(stock.name), stock.inventory_location_id|stock.spare DESC, lower(stock.name) DESC, stock.inventory_location_id"
   "more than three donors|              ORDER BY entry.ordinality LIMIT 3) listed|              ORDER BY entry.ordinality LIMIT 4) listed"
   "donor takes ignore earlier donors|            moved.move - coalesce(sum((listed.donor->>'spareQuantity')::numeric) OVER (|            moved.move - 0 * coalesce(sum((listed.donor->>'spareQuantity')::numeric) OVER ("
+  "every storage donor claims a Minimum|      'hasActiveMinimum', ranked.kind = 'storage' AND ranked.donor_minimum IS NOT NULL,|      'hasActiveMinimum', ranked.kind = 'storage',"
+  "donor Minimum not reported|      'minimumQuantity', CASE WHEN ranked.kind = 'storage' THEN trim_scale(ranked.donor_minimum) END)|      'minimumQuantity', NULL::numeric)"
   "disabled rule's Minimum kept|      ON minimum.live AND minimum.inventory_item_id|      ON minimum.inventory_item_id"
   "own spare counted as available|      coalesce(totals.spare, 0) - coalesce(own.spare, 0) AS available,|      coalesce(totals.spare, 0) AS available,"
   "archived item stays live|      (rule.enabled AND item.active AND location.active AND location.kind = 'storage') AS live|      (rule.enabled AND location.active AND location.kind = 'storage') AS live"

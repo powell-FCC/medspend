@@ -33,6 +33,12 @@ function toDonors(value: unknown): ReplenishmentDonor[] {
     name: String(donor.name),
     kind: donor.kind === "unassigned" ? "unassigned" : "storage",
     spareQuantity: num(donor.spareQuantity),
+    isUnassigned: Boolean(donor.isUnassigned),
+    hasActiveMinimum: Boolean(donor.hasActiveMinimum),
+    minimumQuantity:
+      donor.minimumQuantity === null || donor.minimumQuantity === undefined
+        ? null
+        : Number(donor.minimumQuantity),
     moveQuantity: num(donor.moveQuantity),
   }));
 }

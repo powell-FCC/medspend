@@ -30,7 +30,7 @@ BEGIN
       WHERE n.nspname = 'public' AND p.proname = expected.name ORDER BY p.oid LIMIT 1), 'absent'))
     FROM (VALUES
       ('get_inventory_replenishment_summary', '5e3abdf044a86d35b6718f31b3bbe2f4 secdef=true authenticated=true anon=false service_role=true public=false'),
-      ('inventory_replenishment_rows', '1ad3fa231609a198765b2c988014a358 secdef=false authenticated=false anon=false service_role=true public=false'),
+      ('inventory_replenishment_rows', 'ec89347e5ed1af46ba67bf60e7218525 secdef=false authenticated=false anon=false service_role=true public=false'),
       ('inventory_replenishment_rule_json', 'a802a84d1dff193ba126d533d5eb0a7d secdef=false authenticated=false anon=false service_role=true public=false'),
       ('list_inventory_location_replenishment_rules', '79f93112c2fefe2ef0af6da4f81e569a secdef=true authenticated=true anon=false service_role=true public=false'),
       ('list_inventory_replenishment', 'b2fc9c0d1ff1b417483873d675fbd5db secdef=true authenticated=true anon=false service_role=true public=false'),

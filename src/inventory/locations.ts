@@ -97,19 +97,51 @@ export function reconcileMoveSource(
 
 // Phase 7D: the Move Stock form as it opens. A replenishment prefill is used only while its
 // source still holds stock; otherwise the form opens as before (first source with stock,
-// nothing else filled). The owner still confirms the move.
+// nothing else filled). The owner still confirms the move. The recommended destination is
+// kept apart from the editable form: it decides the move's provenance at confirmation.
 export function initialMoveForm(
   sourceIds: string[],
   prefill?: { fromId: string; toId: string; quantity: number },
-): { fromId: string; toId: string; quantity: string; prefilled: boolean } {
+): {
+  fromId: string;
+  toId: string;
+  quantity: string;
+  prefilled: boolean;
+  recommendedDestinationId: string | null;
+} {
+  const recommendedDestinationId = prefill?.toId ?? null;
   if (prefill && sourceIds.includes(prefill.fromId) && prefill.fromId !== prefill.toId)
     return {
       fromId: prefill.fromId,
       toId: prefill.toId,
       quantity: formatQuantity(prefill.quantity),
       prefilled: true,
+      recommendedDestinationId,
     };
-  return { fromId: sourceIds[0] ?? "", toId: "", quantity: "", prefilled: false };
+  return {
+    fromId: sourceIds[0] ?? "",
+    toId: "",
+    quantity: "",
+    prefilled: false,
+    recommendedDestinationId,
+  };
+}
+
+export type MoveSource = "manual" | "replenishment";
+
+// Phase 7D provenance. A move is 'replenishment' only when it is the first move confirmed in a
+// dialog opened from a recommendation AND it still goes to the recommended (short) location.
+// Changing the quantity or the source keeps it a replenishment; any other destination, or any
+// later move in the same dialog, is 'manual'.
+export function moveProvenance(
+  recommendation: { destinationId: string | null; used: boolean },
+  finalDestinationId: string,
+): MoveSource {
+  return recommendation.destinationId !== null &&
+    !recommendation.used &&
+    finalDestinationId === recommendation.destinationId
+    ? "replenishment"
+    : "manual";
 }
 
 export function canArchiveInventoryLocation(

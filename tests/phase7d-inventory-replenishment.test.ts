@@ -27,7 +27,11 @@ import {
   shortageText,
   validateRuleInput,
 } from "../src/inventory/replenishment.ts";
-import { initialMoveForm, reconcileMoveSource } from "../src/inventory/locations.ts";
+import {
+  initialMoveForm,
+  moveProvenance,
+  reconcileMoveSource,
+} from "../src/inventory/locations.ts";
 import { toReplenishmentRow } from "../src/inventory/replenishment-reads.ts";
 import type {
   ReplenishmentRow,
@@ -165,6 +169,9 @@ const row = (overrides: Partial<ReplenishmentRow> = {}): ReplenishmentRow => ({
       locationId: "l-unassigned",
       name: "Unassigned",
       kind: "unassigned",
+      isUnassigned: true,
+      hasActiveMinimum: false,
+      minimumQuantity: null,
       spareQuantity: 8,
       moveQuantity: 8,
     },
@@ -200,6 +207,9 @@ test("wording: the accepted examples, in the item's own unit and never as a pack
             locationId: "u",
             name: "Unassigned",
             kind: "unassigned",
+            isUnassigned: true,
+            hasActiveMinimum: false,
+            minimumQuantity: null,
             spareQuantity: 3,
             moveQuantity: 3,
           },
@@ -207,6 +217,9 @@ test("wording: the accepted examples, in the item's own unit and never as a pack
             locationId: "a",
             name: "Academy ATR",
             kind: "storage",
+            isUnassigned: false,
+            hasActiveMinimum: true,
+            minimumQuantity: 2,
             spareQuantity: 10,
             moveQuantity: 6,
           },
@@ -214,6 +227,9 @@ test("wording: the accepted examples, in the item's own unit and never as a pack
             locationId: "c",
             name: "FCC2 ATR",
             kind: "storage",
+            isUnassigned: false,
+            hasActiveMinimum: true,
+            minimumQuantity: 2,
             spareQuantity: 10,
             moveQuantity: 0,
           },
@@ -231,6 +247,9 @@ test("wording: the accepted examples, in the item's own unit and never as a pack
             locationId: "u",
             name: "Unassigned",
             kind: "unassigned",
+            isUnassigned: true,
+            hasActiveMinimum: false,
+            minimumQuantity: null,
             spareQuantity: 2,
             moveQuantity: 2,
           },
@@ -274,13 +293,16 @@ test("wording: the accepted examples, in the item's own unit and never as a pack
             locationId: "c",
             name: "FCC2 ATR",
             kind: "storage",
+            isUnassigned: false,
+            hasActiveMinimum: true,
+            minimumQuantity: 2,
             spareQuantity: 15,
             moveQuantity: 9,
           },
         ],
       }),
     ),
-    ["FCC2 ATR: 15 BX above its Minimum"],
+    ["FCC2 ATR: 15 BX available above its Minimum"],
   );
 });
 
@@ -368,10 +390,22 @@ test("Move Stock prefill: one donor per action, kept by the reconcile step, neve
         locationId: "u",
         name: "Unassigned",
         kind: "unassigned",
+        isUnassigned: true,
+        hasActiveMinimum: false,
+        minimumQuantity: null,
         spareQuantity: 3,
         moveQuantity: 3,
       },
-      { locationId: "a", name: "Academy ATR", kind: "storage", spareQuantity: 10, moveQuantity: 6 },
+      {
+        locationId: "a",
+        name: "Academy ATR",
+        kind: "storage",
+        isUnassigned: false,
+        hasActiveMinimum: true,
+        minimumQuantity: 2,
+        spareQuantity: 10,
+        moveQuantity: 6,
+      },
     ],
   });
   assert.deepEqual(
@@ -388,46 +422,152 @@ test("Move Stock prefill: one donor per action, kept by the reconcile step, neve
 
   const prefill = { fromId: "a", toId: "l-first", quantity: 6 };
   const form = initialMoveForm(["u", "a"], prefill);
-  assert.deepEqual(form, { fromId: "a", toId: "l-first", quantity: "6", prefilled: true });
+  assert.deepEqual(form, {
+    fromId: "a",
+    toId: "l-first",
+    quantity: "6",
+    prefilled: true,
+    recommendedDestinationId: "l-first",
+  });
   // The existing reconcile step keeps a prefilled source that still has stock.
   assert.deepEqual(reconcileMoveSource({ fromId: form.fromId, toId: form.toId }, ["u", "a"]), {
     fromId: "a",
     toId: "l-first",
   });
-  // A source that has emptied since: the form opens as before, unprefilled.
+  // A source that has emptied since: the form opens as before, unprefilled, but the dialog still
+  // knows which location the recommendation is for.
   assert.deepEqual(initialMoveForm(["u"], prefill), {
     fromId: "u",
     toId: "",
     quantity: "",
     prefilled: false,
+    recommendedDestinationId: "l-first",
   });
   assert.deepEqual(initialMoveForm(["u", "a"]), {
     fromId: "u",
     toId: "",
     quantity: "",
     prefilled: false,
+    recommendedDestinationId: null,
   });
   assert.deepEqual(initialMoveForm([], prefill), {
     fromId: "",
     toId: "",
     quantity: "",
     prefilled: false,
+    recommendedDestinationId: "l-first",
   });
 
   const dialog = read("src/components/inventory/ItemLocationsDialog.tsx");
-  assert.match(dialog, /prefilled: prefillPending/);
+  assert.match(dialog, /source: moveProvenance\(recommendation, toId\)/, "decided at confirmation");
   assert.match(
     dialog,
-    /setPrefillPending\(false\)/,
-    "only the first confirmed move is the recommendation's",
+    /setRecommendation\(\(current\) => \(\{ \.\.\.current, used: true \}\)\)/,
+    "only the first confirmed move can be the recommendation's",
+  );
+  assert.match(
+    dialog,
+    /setRecommendation\(\{ destinationId: form\.recommendedDestinationId, used: false \}\)/,
+    "the recommended destination is set once when the dialog opens, apart from the form",
   );
   const stock = read("src/components/inventory/workspace/ItemStockDialogs.tsx");
-  assert.match(stock, /source: input\.prefilled \? "replenishment" : "manual"/);
+  assert.match(stock, /source: input\.source,/);
   assert.match(stock, /replenishmentQueryKey\(organizationId\)/, "moves refresh replenishment");
   assert.match(stock, /workspaceQueryKey\(organizationId\)/, "and the workspace");
   // The recommendation only opens the dialog; the owner presses Move stock.
   const tab = read("src/components/inventory/workspace/ReplenishmentTab.tsx");
   assert.doesNotMatch(tab, /moveInventoryStockFn|move_inventory_stock/);
+});
+
+test("provenance: 'replenishment' only for the first confirmed move that still goes to the recommended location", () => {
+  // Recommended A -> B, qty 5. Quantity and source are not inputs: only the destination is.
+  const opened = { destinationId: "B", used: false };
+  assert.equal(
+    moveProvenance(opened, "B"),
+    "replenishment",
+    "unchanged recommendation (A -> B, 5)",
+  );
+  assert.equal(moveProvenance(opened, "B"), "replenishment", "quantity edited (A -> B, 3)");
+  assert.equal(moveProvenance(opened, "B"), "replenishment", "source edited (C -> B)");
+  assert.equal(moveProvenance(opened, "C"), "manual", "destination edited (A -> C)");
+  assert.equal(
+    moveProvenance(opened, "unassigned"),
+    "manual",
+    "destination changed to Unassigned (C -> Unassigned)",
+  );
+  assert.equal(
+    moveProvenance({ destinationId: "B", used: true }, "B"),
+    "manual",
+    "second move in the same dialog",
+  );
+  assert.equal(
+    moveProvenance({ destinationId: null, used: false }, "B"),
+    "manual",
+    "dialog not opened from a recommendation",
+  );
+});
+
+test("donor wording is truthful: active Minimum, no Minimum (no rule or disabled), Unassigned", () => {
+  const base = row({ itemUnit: "BX" });
+  const lines = donorContext({
+    ...base,
+    donors: [
+      {
+        locationId: "u",
+        name: "Unassigned",
+        kind: "unassigned",
+        spareQuantity: 4,
+        isUnassigned: true,
+        hasActiveMinimum: false,
+        minimumQuantity: null,
+        moveQuantity: 4,
+      },
+      {
+        locationId: "b",
+        name: "Bench",
+        kind: "storage",
+        spareQuantity: 10,
+        isUnassigned: false,
+        hasActiveMinimum: true,
+        minimumQuantity: 5,
+        moveQuantity: 5,
+      },
+      {
+        locationId: "f",
+        name: "FCC2 ATR",
+        kind: "storage",
+        spareQuantity: 11,
+        isUnassigned: false,
+        hasActiveMinimum: false,
+        minimumQuantity: null,
+        moveQuantity: 0,
+      },
+    ],
+  });
+  assert.deepEqual(lines, [
+    "Unassigned: 4 BX (not physically counted)",
+    "Bench: 10 BX available above its Minimum",
+    "FCC2 ATR: 11 BX available · no Minimum set",
+  ]);
+  assert.doesNotMatch(lines[2], /above its Minimum/);
+  assert.doesNotMatch(lines[0], /Minimum/, "Unassigned never implies a Minimum");
+  // A disabled donor rule arrives from the database exactly like no rule.
+  const disabled = donorContext({
+    ...base,
+    donors: [
+      {
+        locationId: "c",
+        name: "Academy ATR",
+        kind: "storage",
+        spareQuantity: 7,
+        isUnassigned: false,
+        hasActiveMinimum: false,
+        minimumQuantity: null,
+        moveQuantity: 7,
+      },
+    ],
+  });
+  assert.deepEqual(disabled, ["Academy ATR: 7 BX available · no Minimum set"]);
 });
 
 test("rows from the database keep the version string exactly (microseconds)", () => {
@@ -459,6 +599,9 @@ test("rows from the database keep the version string exactly (microseconds)", ()
         locationId: "u",
         name: "Unassigned",
         kind: "unassigned",
+        isUnassigned: true,
+        hasActiveMinimum: false,
+        minimumQuantity: null,
         spareQuantity: 0.25,
         moveQuantity: 0.25,
       },
@@ -644,6 +787,9 @@ const rows: ReplenishmentRow[] = [
         locationId: "u",
         name: "Unassigned",
         kind: "unassigned",
+        isUnassigned: true,
+        hasActiveMinimum: false,
+        minimumQuantity: null,
         spareQuantity: 20,
         moveQuantity: 9,
       },
@@ -909,7 +1055,15 @@ test("rule form and location rules: Minimum and Target wording, create picker, r
   assert.match(text(edit), /Minimum \(BX\).*Target \(BX\)/);
   assert.doesNotMatch(text(edit) + create, /\bpar\b/i);
 
-  const location = { id: "l-first", name: "First Team ATR", kind: "storage", active: true };
+  const location = {
+    id: "l-first",
+    name: "First Team ATR",
+    kind: "storage",
+    isUnassigned: false,
+    hasActiveMinimum: true,
+    minimumQuantity: 2,
+    active: true,
+  };
   const owner = render(ui.LocationReplenishmentRulesView, {
     location,
     rows: [row()],
@@ -938,6 +1092,31 @@ test("rule form and location rules: Minimum and Target wording, create picker, r
     render(ui.LocationReplenishmentRulesView, { location, rows: [], canManage: true, onAdd: noop }),
   );
   assert.match(none, /No item has a Minimum and Target at First Team ATR yet\./);
+});
+
+test("rendered donor context: a location without a Minimum is never shown as above one", () => {
+  const html = render(ui.ReplenishmentRowCard, {
+    row: row({
+      donors: [
+        {
+          locationId: "f",
+          name: "FCC2 ATR",
+          kind: "storage",
+          spareQuantity: 11,
+          isUnassigned: false,
+          hasActiveMinimum: false,
+          minimumQuantity: null,
+          moveQuantity: 8,
+        },
+      ],
+      moveQuantity: 8,
+    }),
+    canManage: false,
+    now,
+  });
+  const words = text(html);
+  assert.match(words, /FCC2 ATR: 11 BX available · no Minimum set/);
+  assert.doesNotMatch(words, /above its Minimum/);
 });
 
 test("phone width: cards wrap long names and nothing has a fixed width", () => {

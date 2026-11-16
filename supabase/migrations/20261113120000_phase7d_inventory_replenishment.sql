@@ -25,6 +25,8 @@
 --   shortage       target - current when below minimum, else 0
 --   spare          Unassigned: its whole balance. Another active storage location:
 --                  max(0, balance - that location's enabled minimum), minimum 0 without a rule.
+--                  Each donor carries isUnassigned, hasActiveMinimum and minimumQuantity (null
+--                  without an active Minimum) so the screen can say why it can give that much.
 --                  The rule's own location never donates to itself.
 --   available      sum of spare over every other active location
 --   move           min(shortage, available);  external = shortage - move
@@ -492,6 +494,7 @@ AS $$
   ),
   stock AS (
     SELECT balance.inventory_item_id, balance.inventory_location_id, balance.quantity, location.kind, location.name,
+      minimum.minimum_quantity AS donor_minimum,
       CASE WHEN location.kind = 'unassigned' THEN balance.quantity
            ELSE greatest(0, balance.quantity - coalesce(minimum.minimum_quantity, 0)) END AS spare
     FROM public.inventory_location_balances balance
@@ -515,8 +518,14 @@ AS $$
     FROM stock WHERE stock.spare > 0
   ),
   candidates AS (
+    -- Each donor says why it can give what it gives: Unassigned (its whole balance), a storage
+    -- location with an active Minimum (the balance above it), or a storage location with no
+    -- active Minimum (no rule, or a disabled one: its whole balance).
     SELECT ranked.inventory_item_id, jsonb_agg(jsonb_build_object('locationId', ranked.inventory_location_id,
-      'name', ranked.name, 'kind', ranked.kind, 'spareQuantity', trim_scale(ranked.spare)) ORDER BY ranked.position) AS donors
+      'name', ranked.name, 'kind', ranked.kind, 'spareQuantity', trim_scale(ranked.spare),
+      'isUnassigned', ranked.kind = 'unassigned',
+      'hasActiveMinimum', ranked.kind = 'storage' AND ranked.donor_minimum IS NOT NULL,
+      'minimumQuantity', CASE WHEN ranked.kind = 'storage' THEN trim_scale(ranked.donor_minimum) END) ORDER BY ranked.position) AS donors
     FROM ranked WHERE ranked.position <= 4 GROUP BY ranked.inventory_item_id
   ),
   calculated AS (

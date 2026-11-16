@@ -23,6 +23,12 @@ export interface ReplenishmentDonor {
   name: string;
   kind: "unassigned" | "storage";
   spareQuantity: number;
+  // Why it can give that much (from the database): Unassigned gives its whole balance; a
+  // storage location with an active Minimum gives what is above it; one without an active
+  // Minimum (no rule, or a disabled one) can give everything, down to zero.
+  isUnassigned: boolean;
+  hasActiveMinimum: boolean;
+  minimumQuantity: number | null;
   // The part of the move this donor covers, in donor order (0 when earlier donors cover it).
   moveQuantity: number;
 }

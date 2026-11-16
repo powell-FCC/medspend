@@ -637,5 +637,35 @@ SELECT pg_temp.eq(pg_temp.calc(501, 'first')->>'current_quantity', '10', 'Tape@F
 SELECT pg_temp.eq(pg_temp.donor_names(pg_temp.calc(501, 'academy')), 'Unassigned=10,FCC2 ATR=17,First Team ATR=5', 'donors follow live balances (First now spares 10 - 5)');
 SELECT pg_temp.eq((pg_temp.calc(501, 'academy')->>'other_short_location_count')::int, 0, 'Academy is now the only short Tape location');
 
+-- ---------------------------------------------------------------------------------------
+-- 10. Donor metadata explains each donor's capacity; the math is unchanged. Spec item 510:
+--     Bench 15 with an active Minimum 5 (10 available), Academy 11 with no rule (11),
+--     FCC2 7 with a disabled rule (Minimum 3 ignored: 7). Short at First (0 <= 2, Target 40).
+-- ---------------------------------------------------------------------------------------
+INSERT INTO public.inventory_items (id, organization_id, name, unit, quantity, active)
+VALUES ('7d000000-0000-4000-8000-000000000510', '7d000000-0000-4000-8000-000000000101', 'P7D Spec', 'BX', 0, true);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.as_user('7d000000-0000-4000-8000-000000000001');
+SELECT pg_temp.put(510, pg_temp.loc('bench'), 15), pg_temp.put(510, pg_temp.loc('academy'), 11), pg_temp.put(510, pg_temp.loc('fcc2'), 7);
+SELECT public.set_inventory_replenishment_rule('7d000000-0000-4000-8000-000000000101', pg_temp.item(510), pg_temp.loc(l), mn, tg)
+FROM (VALUES ('first', 2, 40), ('bench', 5, 20), ('fcc2', 3, 10)) AS r(l, mn, tg);
+SELECT public.set_inventory_replenishment_rule_enabled('7d000000-0000-4000-8000-000000000101', pg_temp.rule_id(510, 'fcc2'),
+  false, pg_temp.rule_ts(510, 'fcc2'));
+RESET ROLE;
+SELECT pg_temp.eq((SELECT string_agg(concat_ws(':', d->>'name', d->>'spareQuantity', d->>'moveQuantity', d->>'isUnassigned',
+    d->>'hasActiveMinimum', coalesce(d->>'minimumQuantity', 'null')), ', ' ORDER BY o)
+  FROM jsonb_array_elements(pg_temp.calc(510, 'first')->'donors') WITH ORDINALITY e(d, o)),
+  'Academy ATR:11:11:false:false:null, Bench:10:10:false:true:5, FCC2 ATR:7:7:false:false:null',
+  'donors explain capacity: no rule (whole balance), active Minimum 5 (15 - 5), disabled rule (no Minimum)');
+SELECT pg_temp.eq(pg_temp.calc(510, 'first')->>'category' || ' ' || (pg_temp.calc(510, 'first')->>'move_quantity')
+  || ' ' || (pg_temp.calc(510, 'first')->>'external_quantity'), 'partly_covered 28 12', 'spec math: move 28, purchasing 12');
+SELECT pg_temp.eq((SELECT concat_ws(':', d->>'kind', d->>'isUnassigned', d->>'hasActiveMinimum', coalesce(d->>'minimumQuantity', 'null'))
+  FROM jsonb_array_elements(pg_temp.calc(501, 'academy')->'donors') d WHERE d->>'name' = 'Unassigned'),
+  'unassigned:true:false:null', 'Unassigned is marked as Unassigned and never as having a Minimum');
+SELECT pg_temp.eq((SELECT bool_and((d->>'hasActiveMinimum')::boolean = (d->>'minimumQuantity' IS NOT NULL)
+    AND NOT ((d->>'isUnassigned')::boolean AND (d->>'hasActiveMinimum')::boolean))
+  FROM public.inventory_replenishment_rows('7d000000-0000-4000-8000-000000000101') r, jsonb_array_elements(r.donors) d), true,
+  'hasActiveMinimum and minimumQuantity always agree; Unassigned never has a Minimum');
+
 SET CONSTRAINTS ALL IMMEDIATE;
 ROLLBACK;

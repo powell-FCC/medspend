@@ -66,13 +66,16 @@ export function recommendationText(row: ReplenishmentRow): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-// Stock elsewhere that could be moved here. Unassigned is never physically counted.
+// Stock elsewhere that could be moved here, and why that much: Unassigned is never physically
+// counted; a location with an active Minimum keeps it; a location without one (no rule, or a
+// disabled rule) has no protection and could be emptied.
 export function donorContext(row: ReplenishmentRow): string[] {
-  return row.donors.map((donor) =>
-    donor.kind === "unassigned"
-      ? `Unassigned: ${quantityWithUnit(donor.spareQuantity, row.itemUnit)} (not physically counted)`
-      : `${donor.name}: ${quantityWithUnit(donor.spareQuantity, row.itemUnit)} above its Minimum`,
-  );
+  return row.donors.map((donor) => {
+    const amount = quantityWithUnit(donor.spareQuantity, row.itemUnit);
+    if (donor.isUnassigned) return `Unassigned: ${amount} (not physically counted)`;
+    if (donor.hasActiveMinimum) return `${donor.name}: ${amount} available above its Minimum`;
+    return `${donor.name}: ${amount} available · no Minimum set`;
+  });
 }
 
 // One donor per Move Stock action, in donor order. The owner still confirms the move.
