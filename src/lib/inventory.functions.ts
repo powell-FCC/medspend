@@ -400,6 +400,9 @@ export const moveInventoryStockFn = createServerFn({ method: "POST" })
         toInventoryLocationId: uuid,
         quantity: z.number().finite().positive(),
         requestKey: z.string().trim().min(1).max(200),
+        // Phase 7D: 'replenishment' when the owner confirmed the move from a replenishment
+        // recommendation; every other move is 'manual'.
+        source: z.enum(["manual", "replenishment"]).default("manual"),
       })
       .parse(value),
   )
@@ -412,6 +415,7 @@ export const moveInventoryStockFn = createServerFn({ method: "POST" })
       _to_inventory_location_id: data.toInventoryLocationId,
       _quantity: data.quantity,
       _idempotency_key: data.requestKey,
+      _source: data.source,
     });
     if (error) throw new Error(error.message);
     const values = result as { transferId: string; replayed: boolean };

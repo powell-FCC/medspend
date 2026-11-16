@@ -9,10 +9,12 @@ import { InventoryOverviewTab } from "./InventoryOverviewTab";
 import { ItemsTab } from "./ItemsTab";
 import { LocationsTab } from "./LocationsTab";
 import { ReadOnlyBadge } from "./ReadOnlyBadge";
+import { ReplenishmentTab } from "./ReplenishmentTab";
 
 // Phase 7B.1 Inventory workspace. Owners manage inventory; admins see the same information
 // read-only. Overview (7B.4), Counts (7B.2) and Activity (7B.3: transfers and manual
-// adjustments) are read-only for both. /inventory opens on Overview.
+// adjustments) are read-only for both. Replenishment (7D): owners manage rules and open a
+// prefilled Move Stock; admins read. /inventory opens on Overview.
 export function InventoryWorkspacePage({
   tab,
   onTabChange,
@@ -59,13 +61,14 @@ export function InventoryWorkspacePage({
         onValueChange={(value) => onTabChange(value as WorkspaceTab)}
         className="mt-6"
       >
-        {/* Five tabs are wider than a phone. The strip scrolls inside its own box so the page
+        {/* Six tabs are wider than a phone. The strip scrolls inside its own box so the page
             never does; where it fits, nothing changes. */}
         <div className="max-w-full overflow-x-auto" data-testid="inventory-tabs-scroller">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="items">Items</TabsTrigger>
             <TabsTrigger value="locations">Locations</TabsTrigger>
+            <TabsTrigger value="replenishment">Replenishment</TabsTrigger>
             <TabsTrigger value="counts">Counts</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
@@ -78,6 +81,9 @@ export function InventoryWorkspacePage({
         </TabsContent>
         <TabsContent value="locations" className="mt-4">
           <LocationsTab organizationId={active.organizationId} canManage={access.canManage} />
+        </TabsContent>
+        <TabsContent value="replenishment" className="mt-4">
+          <ReplenishmentTab organizationId={active.organizationId} canManage={access.canManage} />
         </TabsContent>
         <TabsContent value="counts" className="mt-4">
           <CountHistoryPanel organizationId={active.organizationId} />

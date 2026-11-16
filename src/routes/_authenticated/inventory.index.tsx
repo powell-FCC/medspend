@@ -6,7 +6,7 @@ import { InventoryWorkspacePage } from "@/components/inventory/workspace/Invento
 // links that name a tab keep working, and an unknown tab falls back to Overview.
 const inventorySearchSchema = z.object({
   tab: z
-    .enum(["overview", "items", "locations", "counts", "activity"])
+    .enum(["overview", "items", "locations", "replenishment", "counts", "activity"])
     .catch("overview")
     .default("overview"),
 });

@@ -171,7 +171,7 @@ BEGIN
     AND position('inventory_transfers' IN pg_get_functiondef('public.apply_supply_request_receipt(uuid, uuid, uuid, text, text, text)'::regprocedure)) = 0,
     'the receipt path never mutates inventory');
   PERFORM pg_temp.assert(position('supply_request_receipts' IN pg_get_functiondef('public.post_reviewed_invoice(uuid, uuid)'::regprocedure)) = 0
-    AND position('supply_request_receipts' IN pg_get_functiondef('public.move_inventory_stock(uuid, uuid, uuid, uuid, numeric, text)'::regprocedure)) = 0,
+    AND position('supply_request_receipts' IN pg_get_functiondef((SELECT p.oid FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'move_inventory_stock'))) = 0,
     'invoice posting and stock moves are untouched');
   -- Authority is is_org_admin, never a literal role.
   FOREACH _fn IN ARRAY ARRAY['public.list_receiving_destinations(uuid)', 'public.receive_supply_request(uuid, uuid, text, text, uuid)',

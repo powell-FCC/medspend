@@ -139,7 +139,7 @@ test("the full Inventory page keeps its five-tab strip inside a width-limited sc
   const tabs = [...strip.matchAll(/<button[^>]*role="tab"[^>]*>([^<]*)<\/button>/g)].map(
     (m) => m[1],
   );
-  assert.deepEqual(tabs, ["Overview", "Items", "Locations", "Counts", "Activity"]);
+  assert.deepEqual(tabs, ["Overview", "Items", "Locations", "Replenishment", "Counts", "Activity"]);
   assert.match(
     tablist[0],
     /class="[^"]*inline-flex[^"]*h-9[^"]*"/,
@@ -149,7 +149,7 @@ test("the full Inventory page keeps its five-tab strip inside a width-limited sc
 
 test("the active tab keeps its state and styling for every tab, owner and admin alike", () => {
   for (const role of ["owner", "admin"]) {
-    for (const tab of ["overview", "items", "locations", "counts", "activity"]) {
+    for (const tab of ["overview", "items", "locations", "replenishment", "counts", "activity"]) {
       const html = renderPage(tab, role);
       // The top-level strip only (Activity holds its own Transfers | Adjustments tabs).
       const start = html.indexOf('data-testid="inventory-tabs-scroller"');

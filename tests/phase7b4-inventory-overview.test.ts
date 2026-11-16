@@ -256,11 +256,18 @@ test("the overview: owner or admin only, organization-scoped, stable, Unassigned
 // Routes, navigation and server functions.
 // ---------------------------------------------------------------------------------------
 test("Overview is first and /inventory opens on it; older tab links keep working", () => {
-  assert.deepEqual(workspaceTabs, ["overview", "items", "locations", "counts", "activity"]);
+  assert.deepEqual(workspaceTabs, [
+    "overview",
+    "items",
+    "locations",
+    "replenishment",
+    "counts",
+    "activity",
+  ]);
   const route = read("src/routes/_authenticated/inventory.index.tsx");
   assert.match(
     route,
-    /z\s*\.enum\(\["overview", "items", "locations", "counts", "activity"\]\)\s*\.catch\("overview"\)\s*\.default\("overview"\)/,
+    /z\s*\.enum\(\["overview", "items", "locations", "replenishment", "counts", "activity"\]\)\s*\.catch\("overview"\)\s*\.default\("overview"\)/,
   );
   const page = read("src/components/inventory/workspace/InventoryWorkspacePage.tsx");
   assert.match(
