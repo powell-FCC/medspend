@@ -49,6 +49,9 @@ VALUES
   ('bc000000-0000-4000-8000-000000000404', 'bc000000-0000-4000-8000-000000000101', 'Ice', true, true, true),
   ('bc000000-0000-4000-8000-000000000405', 'bc000000-0000-4000-8000-000000000102', 'Other Tape', true, true, true);
 
+-- Phase 7E: these fixtures write posted invoices and their lines directly (as postgres), the
+-- way post_reviewed_invoice does. The posted-document guards accept that only in its context.
+SELECT set_config('sportspend.financial_context', 'post', true);
 -- Spend fixtures. Totals use the canonical resolution: explicit total, else line items.
 INSERT INTO public.invoices (id, organization_id, vendor_id, vendor_name, invoice_number, invoice_date, currency_code, processing_status, posted_at, invoice_total)
 VALUES
@@ -169,6 +172,7 @@ GRANT SELECT ON commitment_state_before TO authenticated;
 
 GRANT EXECUTE ON FUNCTION pg_temp.observe(uuid, uuid, uuid, date, numeric, text, text, text, boolean) TO authenticated;
 
+SELECT set_config('sportspend.financial_context', '', true);
 SET LOCAL ROLE authenticated;
 
 -- Owner: financial summary, attention, recent purchases.

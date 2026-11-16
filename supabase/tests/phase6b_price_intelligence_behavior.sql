@@ -47,6 +47,10 @@ VALUES
   ('6b000000-0000-4000-8000-000000000403', '6b000000-0000-4000-8000-000000000101', '6b000000-0000-4000-8000-000000000301', '6b000000-0000-4000-8000-000000000202', 'ZERO-TAPE', 'each', 'each', true),
   ('6b000000-0000-4000-8000-000000000404', '6b000000-0000-4000-8000-000000000102', '6b000000-0000-4000-8000-000000000303', '6b000000-0000-4000-8000-000000000203', 'OTHER-TAPE', 'each', 'each', true);
 
+-- Phase 7E: these fixtures write posted invoices and their lines directly (as postgres), the
+-- way post_reviewed_invoice does. The posted-document guards accept that only in its context.
+SELECT set_config('sportspend.financial_context', 'post', true);
+
 -- Twenty-five valid USD observations exercise summary math, vendor grouping, exact
 -- canonical identity, and the 20-row history bound. Prices and dates increase together.
 DO $phase6b_seed_valid$
@@ -101,8 +105,9 @@ BEGIN
 END
 $phase6b_seed_valid$;
 
--- Currency and posting fixtures prove that unknown/non-USD/missing-price observations
--- never enter USD math, while an unposted row is not authoritative at all.
+-- Currency and posting fixtures prove that non-USD/missing-price observations never enter USD
+-- math, while an unposted row is not authoritative at all. (Phase 7E: an observation with no
+-- currency recorded is legacy USD and is included; it is exercised separately below.)
 DO $phase6b_seed_exclusions$
 DECLARE
   _currency text;
@@ -113,7 +118,6 @@ DECLARE
 BEGIN
   FOR _currency, _posted, _price IN
     SELECT * FROM (VALUES
-      (NULL::text, true, 666::numeric),
       ('EUR'::text, true, 777::numeric),
       ('USD'::text, true, NULL::numeric),
       ('USD'::text, false, 999::numeric)
@@ -200,6 +204,7 @@ BEGIN
 END
 $phase6b_seed_zero_baseline$;
 
+SELECT set_config('sportspend.financial_context', '', true);
 SET LOCAL ROLE authenticated;
 SELECT pg_catalog.set_config('request.jwt.claim.sub', '6b000000-0000-4000-8000-000000000002', true);
 
@@ -240,9 +245,9 @@ BEGIN
      ) THEN
     RAISE EXCEPTION 'Vendor grouping is incorrect';
   END IF;
-  IF (_result #>> '{coverage,postedObservationCount}')::integer <> 28
+  IF (_result #>> '{coverage,postedObservationCount}')::integer <> 27
      OR (_result #>> '{coverage,includedUsdObservationCount}')::integer <> 25
-     OR (_result #>> '{coverage,excludedUnknownCurrencyCount}')::integer <> 1
+     OR (_result #>> '{coverage,excludedUnknownCurrencyCount}')::integer <> 0
      OR (_result #>> '{coverage,excludedNonUsdCount}')::integer <> 1
      OR (_result #>> '{coverage,excludedMissingPriceCount}')::integer <> 1 THEN
     RAISE EXCEPTION 'Currency or authoritative-posting coverage is incorrect: %', _result -> 'coverage';
@@ -260,6 +265,65 @@ BEGIN
   END IF;
 END
 $phase6b_summary$;
+
+-- Phase 7E: a posted observation with no currency recorded is legacy USD and is included.
+RESET ROLE;
+SELECT set_config('sportspend.financial_context', 'post', true);
+DO $phase6b_seed_legacy_currency$
+DECLARE
+  _invoice_id uuid := gen_random_uuid();
+  _item_id uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO public.invoices (
+    id, organization_id, vendor_id, invoice_number, invoice_date,
+    currency_code, processing_status, posted_at
+  ) VALUES (
+    _invoice_id, '6b000000-0000-4000-8000-000000000101',
+    '6b000000-0000-4000-8000-000000000301', '6B-LEGACY', date '2026-09-01',
+    NULL, 'completed', timestamptz '2026-09-01 12:00:00+00'
+  );
+  INSERT INTO public.invoice_items (
+    id, invoice_id, organization_id, description, quantity, unit_price,
+    total_price, product_id, vendor_product_id, review_status
+  ) VALUES (
+    _item_id, _invoice_id, '6b000000-0000-4000-8000-000000000101',
+    'Canonical Tape', 1, 666, 666,
+    '6b000000-0000-4000-8000-000000000201',
+    '6b000000-0000-4000-8000-000000000401', 'approved'
+  );
+  INSERT INTO public.inventory_price_history (
+    organization_id, product_id, vendor_id, vendor_product_id, invoice_id,
+    invoice_item_id, purchase_date, quantity, package_size, unit_of_measure,
+    unit_price, extended_price
+  ) VALUES (
+    '6b000000-0000-4000-8000-000000000101',
+    '6b000000-0000-4000-8000-000000000201',
+    '6b000000-0000-4000-8000-000000000301',
+    '6b000000-0000-4000-8000-000000000401', _invoice_id, _item_id,
+    date '2026-09-01', 1, 'case of 12', 'case', 666, 666
+  );
+END
+$phase6b_seed_legacy_currency$;
+SELECT set_config('sportspend.financial_context', '', true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('request.jwt.claim.sub', '6b000000-0000-4000-8000-000000000002', true);
+
+DO $phase6b_legacy_currency$
+DECLARE _result jsonb;
+BEGIN
+  _result := public.get_product_price_intelligence(
+    '6b000000-0000-4000-8000-000000000101',
+    '6b000000-0000-4000-8000-000000000201'
+  );
+  IF (_result #>> '{summary,latestPrice}')::numeric <> 666
+     OR (_result #>> '{summary,observationCount}')::integer <> 26
+     OR (_result #>> '{coverage,postedObservationCount}')::integer <> 28
+     OR (_result #>> '{coverage,excludedUnknownCurrencyCount}')::integer <> 0
+     OR (_result #>> '{coverage,excludedNonUsdCount}')::integer <> 1 THEN
+    RAISE EXCEPTION 'Legacy no-currency observation should be included as USD: %', _result;
+  END IF;
+END
+$phase6b_legacy_currency$;
 
 DO $phase6b_zero_and_identity$
 DECLARE _result jsonb;
