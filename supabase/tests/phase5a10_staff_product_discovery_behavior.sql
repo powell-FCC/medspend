@@ -111,6 +111,9 @@ WHERE request.id::text LIKE '5a10b000-0000-4000-8000-0000000007%';
 -- with Ice Bag Small (neither counts). B: posted invoice with its own Ice Bag Small, plus one
 -- legacy-style line (predating the composite product FK) that names A's Ice Bag Small: an
 -- organization filter must keep it out of A.
+-- Phase 7E: these fixtures write posted invoices and their lines directly (as postgres), the
+-- way post_reviewed_invoice does. The posted-document guards accept that only in its context.
+SELECT set_config('sportspend.financial_context', 'post', true);
 INSERT INTO public.invoices (id, organization_id, invoice_number, invoice_date, posted_at, processing_status, document_type) VALUES
   ('5a10b000-0000-4000-8000-000000000801', '5a10b000-0000-4000-8000-000000000101', 'A-1', current_date - 10, now() - interval '9 days', 'completed', 'INVOICE'),
   ('5a10b000-0000-4000-8000-000000000802', '5a10b000-0000-4000-8000-000000000101', 'A-2', current_date - 5, NULL, 'review_required', 'INVOICE'),
@@ -124,6 +127,7 @@ INSERT INTO public.invoice_items (invoice_id, organization_id, description, quan
 ALTER TABLE public.invoice_items DROP CONSTRAINT invoice_items_product_org_fk;
 INSERT INTO public.invoice_items (invoice_id, organization_id, description, quantity, product_id) VALUES
   ('5a10b000-0000-4000-8000-000000000811', '5a10b000-0000-4000-8000-000000000102', 'Legacy line', 1, '5a10b000-0000-4000-8000-000000000501');
+SELECT set_config('sportspend.financial_context', '', true);
 
 -- Organization B Saved Item for user 04 (a member of both organizations).
 INSERT INTO public.staff_saved_products (organization_id, user_id, catalog_vendor_product_id)
@@ -368,6 +372,9 @@ INSERT INTO public.products (id, organization_id, name, description, active, sta
   ('5a10b000-0000-4000-8000-000000000521', '5a10b000-0000-4000-8000-000000000101', 'Zinc Oxide Tape Aaa', NULL, true, true),
   ('5a10b000-0000-4000-8000-000000000522', '5a10b000-0000-4000-8000-000000000101', 'Zinc Oxide Tape Bbb', NULL, true, true),
   ('5a10b000-0000-4000-8000-000000000523', '5a10b000-0000-4000-8000-000000000101', 'Strapping Roll', 'zinc oxide', true, true);
+-- Phase 7E: these fixtures write posted invoices and their lines directly (as postgres), the
+-- way post_reviewed_invoice does. The posted-document guards accept that only in its context.
+SELECT set_config('sportspend.financial_context', 'post', true);
 INSERT INTO public.invoices (id, organization_id, invoice_number, invoice_date, posted_at, processing_status, document_type) VALUES
   ('5a10b000-0000-4000-8000-000000000804', '5a10b000-0000-4000-8000-000000000101', 'A-4', current_date - 20, now() - interval '19 days', 'completed', 'INVOICE'),
   ('5a10b000-0000-4000-8000-000000000805', '5a10b000-0000-4000-8000-000000000101', 'A-5', current_date - 1, now(), 'completed', 'INVOICE');
@@ -375,6 +382,7 @@ INSERT INTO public.invoice_items (invoice_id, organization_id, description, quan
   ('5a10b000-0000-4000-8000-000000000801', '5a10b000-0000-4000-8000-000000000101', 'Zinc', 1, '5a10b000-0000-4000-8000-000000000522'),
   ('5a10b000-0000-4000-8000-000000000804', '5a10b000-0000-4000-8000-000000000101', 'Zinc', 1, '5a10b000-0000-4000-8000-000000000522'),
   ('5a10b000-0000-4000-8000-000000000805', '5a10b000-0000-4000-8000-000000000101', 'Zinc', 1, '5a10b000-0000-4000-8000-000000000521');
+SELECT set_config('sportspend.financial_context', '', true);
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '5a10b000-0000-4000-8000-000000000003', true);
 

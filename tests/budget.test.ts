@@ -17,7 +17,9 @@ const exports: any = {};
 new Function('require', 'exports', compiled)(createRequire(path), exports);
 const summary = { budget_id: 'budget', budget_name: 'Operating 2026', period_start: '2026-01-01', period_end: '2026-12-31', budget_amount: 1000, actual_spend: 250, committed_spend: 100, available_amount: 650, remaining_amount: 750, posted_invoice_count: 2, active_commitment_count: 1, incomplete_commitment_count: 0 };
 const scope = (value: typeof summary) => ({ id: value.budget_id, label: value.budget_name, periodStart: value.period_start, periodEnd: value.period_end, budgetIds: [value.budget_id],
-  budgetAmount: value.budget_amount, actualSpend: value.actual_spend, committedSpend: value.committed_spend, availableAmount: value.available_amount,
+  budgetAmount: value.budget_amount, actualSpend: value.actual_spend, committedSpend: value.committed_spend,
+  // Phase 7E: Remaining = Budget − Spent; open commitments are shown separately, never subtracted.
+  remainingAmount: value.budget_amount - value.actual_spend, openCommitmentAmount: value.committed_spend, openCommitmentCount: value.active_commitment_count,
   postedInvoiceCount: value.posted_invoice_count, activeCommitmentCount: value.active_commitment_count, incompleteCommitmentCount: value.incomplete_commitment_count,
   settlementCandidateCount: 0, settlementCandidateAmount: 0 });
 const render = (value = summary) => renderToStaticMarkup(createElement(exports.FinancialSummary, { summary: scope(value), today: '2026-06-01' }));
@@ -28,7 +30,7 @@ const id = '00000000-0000-4000-8000-000000000002';
 test('no-budget state provides setup and create action', () => {
   const html = renderToStaticMarkup(createElement(exports.NoBudgetState, { action: createElement('button', null, 'Create budget') }));
   assert.match(html, /No active budget/);
-  assert.match(html, /Create a budget period to track spent, committed and available dollars/);
+  assert.match(html, /Create an organization-wide budget for a period to track posted spend against it/);
   assert.match(html, /Create budget/);
 });
 test('creation validation rejects missing, negative, invalid and reversed fields', () => {
@@ -38,16 +40,21 @@ test('creation validation rejects missing, negative, invalid and reversed fields
   }
   assert.equal(budgetInputSchema.safeParse({ ...fields, amount: -1, organizationId: org }).success, false);
 });
-test('summary renders budget, actual, committed, available, period, and counts', () => {
+test('summary renders budget, spent, remaining after posted spend, open commitments, period, and counts', () => {
   const html = render();
-  for (const text of ['Budget', 'Spent', 'Committed', 'Available', '$1,000.00', '$250.00', '$100.00', '$650.00', '2 posted invoices', 'Active / unreleased · 1 request']) assert.ok(html.includes(text), text);
+  for (const text of ['Budget', 'Spent', 'Remaining', 'After posted spend (Budget − Spent)', 'Open commitments', '$1,000.00', '$250.00', '$100.00', '$750.00', '2 posted documents', 'Approved or ordered · 1 request']) assert.ok(html.includes(text), text);
+  // Phase 7E: no precise "Available" figure (Budget − Spent − Committed) anywhere.
+  assert.doesNotMatch(html, /Available|\$650\.00/);
   assert.equal(formatUSD(12345.6), '$12,345.60');
   assert.equal(formatPeriod('2026-01-01', '2026-01-01'), 'Jan 1, 2026 – Jan 1, 2026');
 });
-test('negative available remains negative and identifies actual plus commitment overage', () => {
-  const html = render({ ...summary, actual_spend: 900, committed_spend: 200, available_amount: -100, remaining_amount: 100 });
-  assert.match(html, /-\$100\.00/);
-  assert.match(html, /Spent and committed dollars exceed this budget by \$100\.00/);
+test('commitments never make Remaining negative; only posted spend over the budget does', () => {
+  const committedOnly = render({ ...summary, actual_spend: 900, committed_spend: 200, available_amount: -100, remaining_amount: 100 });
+  assert.match(committedOnly, /\$100\.00/);
+  assert.doesNotMatch(committedOnly, /exceeds this budget/);
+  const over = render({ ...summary, actual_spend: 1100, committed_spend: 0, available_amount: -100, remaining_amount: -100 });
+  assert.match(over, /-\$100\.00/);
+  assert.match(over, /Posted spend exceeds this budget by \$100\.00/);
 });
 test('zero budgets do not display percentages or non-finite values', () => {
   for (const actual_spend of [0, 100]) {
@@ -60,7 +67,7 @@ test('zero budgets do not display percentages or non-finite values', () => {
 test('incomplete commitment warning explains that only known costs are subtracted', () => {
   const html = render({ ...summary, incomplete_commitment_count: 2, active_commitment_count: 3 });
   assert.match(html, /2 active commitments have unpriced items/);
-  assert.match(html, /Committed includes known prices only/);
+  assert.match(html, /Commitment totals include known prices only; unpriced items are not \$0 exposure/);
 });
 test('selection ignores inactive budgets and chooses current then latest start deterministically', () => {
   const b = (id: string, start: string, end: string, active = true) => ({ id, name: id, amount: 100, period_start: start, period_end: end, active });

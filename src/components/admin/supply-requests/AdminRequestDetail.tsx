@@ -264,9 +264,8 @@ function FinancialContext({ impact, loading, error, onRetry }: { impact: Request
         {impact.budgetId ? <>
           <FinancialDetail label="Budget" value={formatUSD(impact.budgetAmount!)} />
           <FinancialDetail label="Actual spend" value={formatUSD(impact.actualSpend!)} />
-          <FinancialDetail label="Committed spend" value={formatUSD(impact.committedSpend!)} />
-          <FinancialDetail label="Available budget" value={formatUSD(impact.availableAmount!)} />
-          {impact.projectedAvailableAfterApproval !== null && <FinancialDetail label="Available after approval" value={formatUSD(impact.projectedAvailableAfterApproval)} />}
+          <FinancialDetail label="Remaining after posted spend" value={formatUSD(impact.budgetAmount! - impact.actualSpend!)} />
+          <FinancialDetail label="Active commitments (not subtracted)" value={formatUSD(impact.committedSpend!)} />
         </> : <div className="col-span-2 sm:col-span-2"><dt className="text-xs text-[#697687]">Current budget</dt><dd className="mt-1 font-medium text-[#293e55]">No active budget covers today.</dd></div>}
       </dl>
       <p className="mt-3 text-xs leading-5 text-[#697687]">{pricingDescription(impact)}</p>

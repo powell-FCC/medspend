@@ -2769,6 +2769,69 @@ export type Database = {
         Args: { _organization_id: string; _budget_id: string }
         Returns: Json
       }
+      get_financial_spend_summary: {
+        Args: { _organization_id: string; _budget_id?: string | null; _as_of?: string | null }
+        Returns: Json
+      }
+      get_financial_spend_series: {
+        Args: { _organization_id: string; _from: string; _to: string }
+        Returns: Json
+      }
+      list_financial_vendor_spend: {
+        Args: { _organization_id: string; _from: string; _to: string; _limit?: number; _offset?: number }
+        Returns: Json
+      }
+      list_financial_product_spend: {
+        Args: { _organization_id: string; _from: string; _to: string; _sort?: string; _limit?: number; _offset?: number }
+        Returns: Json
+      }
+      list_financial_commitments: {
+        Args: { _organization_id: string; _from: string; _to: string; _bucket?: string; _limit?: number; _offset?: number }
+        Returns: Json
+      }
+      list_financial_spend_documents: {
+        Args: {
+          _organization_id: string
+          _from: string
+          _to: string
+          _filter?: string
+          _value?: string | null
+          _limit?: number
+          _cursor_spend_date?: string | null
+          _cursor_invoice_id?: string | null
+        }
+        Returns: Json
+      }
+      get_financial_document_detail: {
+        Args: { _organization_id: string; _invoice_id: string }
+        Returns: Json
+      }
+      list_financial_product_lines: {
+        Args: {
+          _organization_id: string
+          _product_id: string | null
+          _from: string
+          _to: string
+          _limit?: number
+          _cursor_spend_date?: string | null
+          _cursor_item_id?: string | null
+        }
+        Returns: Json
+      }
+      list_financial_document_removals: {
+        Args: { _organization_id: string; _limit?: number; _cursor_removed_at?: string | null; _cursor_id?: string | null }
+        Returns: Json
+      }
+      remove_posted_financial_document: {
+        Args: {
+          _organization_id: string
+          _source_file_id: string
+          _expected_posted_at: string
+          _confirmation: string
+          _reason: string
+        }
+        Returns: Json
+      }
       get_price_intelligence_overview: {
         Args: { _organization_id: string }
         Returns: Json

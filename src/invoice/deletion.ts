@@ -57,3 +57,13 @@ export function documentTypeLabel(type: InvoiceDocumentType): string {
     CREDIT_MEMO: 'credit memo', STATEMENT: 'statement', UNKNOWN: 'uploaded document',
   } as const)[type];
 }
+
+/**
+ * Phase 7E: document types that never post through the positive-spend path. Credit memos can't
+ * be represented truthfully yet; statements are documentary and never spend.
+ */
+export function postingBlockedReason(type: InvoiceDocumentType | string | null): string | null {
+  if (type === 'CREDIT_MEMO') return "Credit memos can't be posted yet: SportSpend can't record credits accurately.";
+  if (type === 'STATEMENT') return 'Statements are reference documents and never count as spend, so they can\'t be posted.';
+  return null;
+}

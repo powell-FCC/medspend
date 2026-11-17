@@ -229,15 +229,16 @@ test("a single-budget scope uses the canonical per-budget figures unchanged", ()
   const scope = summarizeScope([h1, h2], h1.budgetId)!;
   assert.equal(scope.actualSpend, 250);
   assert.equal(scope.committedSpend, 70);
-  assert.equal(scope.availableAmount, 680);
-  assert.equal(
-    scope.availableAmount,
-    scope.budgetAmount - scope.actualSpend - scope.committedSpend,
-  );
+  // Phase 7E: Remaining = Budget − Spent; commitments are reported, never subtracted.
+  assert.equal(scope.remainingAmount, 750);
+  assert.equal(scope.remainingAmount, scope.budgetAmount - scope.actualSpend);
+  assert.equal(scope.openCommitmentAmount, 70);
+  assert.equal(scope.openCommitmentCount, 2);
+  assert.equal("availableAmount" in scope, false);
   assert.deepEqual(scope.budgetIds, [h1.budgetId]);
 });
 
-test("non-overlapping budgets combine by summing; available = budget − spent − committed", () => {
+test("non-overlapping budgets combine by summing; remaining = budget − spent", () => {
   const options = scopeOptions([h1, h2]);
   assert.ok(
     options.some(
@@ -249,7 +250,7 @@ test("non-overlapping budgets combine by summing; available = budget − spent �
   assert.equal(combined.budgetAmount, 1500);
   assert.equal(combined.actualSpend, 350);
   assert.equal(combined.committedSpend, 80);
-  assert.equal(combined.availableAmount, 1070);
+  assert.equal(combined.remainingAmount, 1150);
   assert.equal(combined.incompleteCommitmentCount, 1);
   assert.equal(combined.postedInvoiceCount, 3);
 });
@@ -288,42 +289,33 @@ test("no budget means no financial summary rather than zero-dollar health", () =
   assert.doesNotMatch(empty, /\$0\.00/);
 });
 
-test("utilization uses spent + committed; zero budgets yield no ratio and over-budget bars stay in bounds", () => {
-  assert.equal(utilizationRatio(h1), 0.32);
+test("utilization uses posted spend only; zero budgets yield no ratio and over-budget bars stay in bounds", () => {
+  // Phase 7E: commitments are never "used" budget (open ones are approximate, received ones may
+  // already be in Spent).
+  assert.equal(utilizationRatio(h1), 0.25);
   assert.equal(utilizationRatio({ ...h1, budgetAmount: 0 }), null);
   const segments = utilizationSegments(h1);
   assert.deepEqual(
-    [segments.spent, segments.committed, segments.available].map((v) => Number(v.toFixed(6))),
-    [25, 7, 68],
+    [segments.spent, segments.remaining].map((v) => Number(v.toFixed(6))),
+    [25, 75],
   );
-  const over = utilizationSegments({
-    budgetAmount: 100,
-    actualSpend: 150,
-    committedSpend: 50,
-    availableAmount: -100,
+  const over = utilizationSegments({ budgetAmount: 100, actualSpend: 150 });
+  assert.equal(over.spent + over.remaining, 100);
+  assert.equal(over.remaining, 0);
+  assert.deepEqual(utilizationSegments({ budgetAmount: 0, actualSpend: 0 }), {
+    spent: 0,
+    remaining: 0,
   });
-  assert.equal(over.spent + over.committed + over.available, 100);
-  assert.equal(over.available, 0);
-  assert.deepEqual(
-    utilizationSegments({ budgetAmount: 0, actualSpend: 0, committedSpend: 0, availableAmount: 0 }),
-    { spent: 0, committed: 0, available: 0 },
-  );
 });
 
 test("budget status flags over-budget and ≥ 90% utilization", () => {
   assert.equal(budgetStatus(h1), "ok");
-  assert.equal(
-    budgetStatus({ ...h1, actualSpend: 850, committedSpend: 50, availableAmount: 100 }),
-    "warning",
-  );
-  assert.equal(
-    budgetStatus({ ...h1, actualSpend: 950, committedSpend: 100, availableAmount: -50 }),
-    "over",
-  );
-  assert.equal(
-    budgetStatus({ ...h1, budgetAmount: 0, actualSpend: 0, committedSpend: 0, availableAmount: 0 }),
-    "ok",
-  );
+  assert.equal(budgetStatus({ ...h1, actualSpend: 900 }), "warning");
+  // Commitments alone never raise a warning or make a budget "over".
+  assert.equal(budgetStatus({ ...h1, actualSpend: 850, committedSpend: 500 }), "ok");
+  assert.equal(budgetStatus({ ...h1, actualSpend: 950, committedSpend: 100 }), "warning");
+  assert.equal(budgetStatus({ ...h1, actualSpend: 1050 }), "over");
+  assert.equal(budgetStatus({ ...h1, budgetAmount: 0, actualSpend: 0, committedSpend: 0 }), "ok");
 });
 
 // ---------------------------------------------------------------------------
@@ -549,7 +541,7 @@ test("loading and error states are explicit and retryable", () => {
   assert.match(error, /Retry/);
 });
 
-test("financial summary renders budget, spent, committed, available and the utilization bar", () => {
+test("financial summary renders budget, spent, remaining, open commitments and the utilization bar", () => {
   const rendered = html("FinancialSummary", {
     summary: summarizeScope([h1, h2], h1.budgetId),
     today,
@@ -557,50 +549,55 @@ test("financial summary renders budget, spent, committed, available and the util
   for (const text of [
     "Budget",
     "Spent",
-    "Committed",
-    "Available",
+    "Remaining",
+    "After posted spend (Budget − Spent)",
+    "Open commitments",
     "$1,000.00",
     "$250.00",
     "$70.00",
-    "$680.00",
-    "32.0% used",
-    "2 posted invoices",
-    "Active / unreleased · 2 requests",
+    "$750.00",
+    "25.0% used",
+    "2 posted documents",
+    "Approved or ordered · 2 requests",
   ])
     assert.ok(rendered.includes(text), text);
   assert.match(rendered, /width:25%/);
+  assert.doesNotMatch(rendered, /Available|\$680\.00/, "no Budget − Spent − Committed figure");
   assert.doesNotMatch(rendered, /NaN|Infinity/);
 });
 
 test("financial summary discloses overage, unpriced commitments and out-of-period scope", () => {
   const over = {
     ...summarizeScope([h1], h1.budgetId)!,
-    actualSpend: 900,
+    actualSpend: 1100,
     committedSpend: 200,
-    availableAmount: -100,
+    remainingAmount: -100,
     incompleteCommitmentCount: 2,
   };
   const rendered = html("FinancialSummary", { summary: over, today: "2028-01-01" });
-  assert.match(rendered, /exceed this budget by \$100\.00/);
+  assert.match(rendered, /Posted spend exceeds this budget by \$100\.00/);
   assert.match(rendered, /2 active commitments have unpriced items/);
   assert.match(rendered, /does not include today/);
   const zero = html("FinancialSummary", {
-    summary: { ...over, budgetAmount: 0, actualSpend: 0, committedSpend: 0, availableAmount: 0 },
+    summary: { ...over, budgetAmount: 0, actualSpend: 0, committedSpend: 0, remainingAmount: 0 },
     today,
   });
   assert.match(zero, /Zero budget/);
   assert.doesNotMatch(zero, /NaN|Infinity/);
 });
 
-test("budget table shows per-budget spent, committed, available and utilization", () => {
+test("budget table shows per-budget spent, committed, remaining and utilization", () => {
   const rendered = html("BudgetTable", { budgets: [h1, h2], scopeBudgetIds: [h1.budgetId] });
+  assert.match(rendered, /Organization-wide · spend attributed by invoice date \(UTC\)/);
+  assert.match(rendered, />Remaining</);
+  assert.doesNotMatch(rendered, />Available</);
   for (const text of [
     "H1 2027",
     "H2 2027",
-    "$680.00",
-    "$390.00",
-    "32.0%",
-    "22.0%",
+    "$750.00",
+    "$400.00",
+    "25.0%",
+    "20.0%",
     "On track",
     "in view",
     "unpriced",
@@ -746,8 +743,8 @@ test("settlement: a candidate in scope renders an operational warning with exact
   });
   assert.match(rendered, /data-notice="settlement"/);
   assert.match(rendered, /\$40\.00 of commitments may need settlement/);
-  assert.match(rendered, /1 request in Committed is already received or completed/);
-  assert.match(rendered, /Available includes it, so it may be conservative/);
+  assert.match(rendered, /1 request is already received or completed/);
+  assert.match(rendered, /It is not\s+subtracted from Remaining because the purchase may already be in Spent/);
   assert.match(rendered, /Review commitments to settle/);
   assert.doesNotMatch(
     rendered,
@@ -758,19 +755,19 @@ test("settlement: a candidate in scope renders an operational warning with exact
   assert.doesNotMatch(renderSummary([h1Settle, h2], h2.budgetId), /may need settlement/);
 });
 
-test("settlement: canonical Committed and Available are unchanged by the warning", () => {
+test("settlement: Remaining is Budget − Spent and received commitments are split out, never subtracted", () => {
   const scope = summarizeScope([h1Settle, h2], h1Settle.budgetId)!;
   assert.equal(scope.committedSpend, 70);
-  assert.equal(scope.availableAmount, 680);
-  assert.equal(
-    scope.availableAmount,
-    scope.budgetAmount - scope.actualSpend - scope.committedSpend,
-  );
+  assert.equal(scope.remainingAmount, 750);
+  assert.equal(scope.remainingAmount, scope.budgetAmount - scope.actualSpend);
+  // Open = active commitments minus the received-not-settled ones.
+  assert.equal(scope.openCommitmentAmount, 30);
+  assert.equal(scope.openCommitmentCount, 1);
   const rendered = renderSummary([h1Settle, h2], h1Settle.budgetId);
-  assert.match(rendered, />\$70\.00</);
-  assert.match(rendered, />\$680\.00</);
-  assert.doesNotMatch(rendered, /\$640\.00|\$720\.00|adjusted/i, "no netted or adjusted figure");
-  assert.match(rendered, /Active \/ unreleased · 2 requests/);
+  assert.match(rendered, />\$750\.00</);
+  assert.match(rendered, />\$30\.00</);
+  assert.doesNotMatch(rendered, /\$640\.00|\$680\.00|\$720\.00|adjusted/i, "no netted or adjusted figure");
+  assert.match(rendered, /Approved or ordered · 1 request/);
 });
 
 test("settlement: wording never claims the commitment is confirmed duplicate spend or invoiced", () => {
@@ -884,7 +881,7 @@ test("settlement: overlap handling is unchanged and combined scopes sum candidat
   const combined = summarizeScope([h1Settle, h2Settle], COMBINED_SCOPE)!;
   assert.equal(combined.settlementCandidateCount, 3);
   assert.equal(combined.settlementCandidateAmount, 55);
-  assert.equal(combined.availableAmount, 1070);
+  assert.equal(combined.remainingAmount, 1150);
   const annual = budget(3, {
     periodStart: "2027-01-01",
     periodEnd: "2027-12-31",

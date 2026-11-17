@@ -91,7 +91,11 @@ test('owner UI gives posted invoices stronger, document-aware permanent confirma
   assert.equal(documentTypeLabel('ORDER_CONFIRMATION'), 'order confirmation');
   assert.match(page, /Permanently delete/);
   assert.match(page, /selected\?\.posted/);
-  assert.match(page, /inventory receipts, purchasing history, price history, and spend totals/);
+  // Phase 7E: a posted document is removed (reason + typed confirmation, permanent record, source
+  // file kept) instead of deleted; drafts keep the permanent delete.
+  assert.match(page, /Remove posted/);
+  assert.match(page, /reverses its inventory receipts and price history/);
+  assert.match(page, /A permanent record of what was removed, when, by whom and why is kept/);
   assert.match(page, /After deletion, MedSpend will behave as though this document was never uploaded/);
   assert.match(page, /formatCurrency\(selected\.total\)/);
   assert.match(page, /AlertDialogCancel/);

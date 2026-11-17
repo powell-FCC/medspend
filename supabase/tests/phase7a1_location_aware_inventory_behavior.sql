@@ -61,6 +61,18 @@ LANGUAGE sql
 SECURITY DEFINER
 AS $$ SELECT id FROM public.inventory_locations WHERE organization_id = _organization AND kind = 'unassigned' $$;
 
+-- Phase 7E: posted documents leave through the audited removal path (same inventory reversal).
+CREATE FUNCTION pg_temp.remove_posted(_org uuid, _source uuid)
+RETURNS jsonb LANGUAGE sql AS $$
+  SELECT public.remove_posted_financial_document(_org, _source, invoice.posted_at,
+    COALESCE(CASE WHEN invoice.document_type IN ('ORDER_CONFIRMATION', 'PURCHASE_ORDER')
+      THEN COALESCE(NULLIF(btrim(invoice.order_number), ''), NULLIF(btrim(invoice.invoice_number), ''))
+      ELSE COALESCE(NULLIF(btrim(invoice.invoice_number), ''), NULLIF(btrim(invoice.order_number), '')) END, 'REMOVE'),
+    'Behaviour test removal of a posted document')
+  FROM public.invoices invoice WHERE invoice.organization_id = _org AND invoice.source_file_id = _source
+$$;
+GRANT EXECUTE ON FUNCTION pg_temp.remove_posted(uuid, uuid) TO authenticated;
+
 CREATE FUNCTION pg_temp.assert(_condition boolean, _message text)
 RETURNS void
 LANGUAGE plpgsql
@@ -672,7 +684,7 @@ RESET ROLE;
 INSERT INTO phase7a1_snapshots VALUES ('before_short_delete', pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101'));
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000001');
-SELECT pg_temp.expect_error($$SELECT public.delete_invoice_permanently('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000602')$$,
+SELECT pg_temp.expect_error($$SELECT pg_temp.remove_posted('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000602')$$,
   'Move 3 roll of Phase 7A.1 Athletic Tape back to Unassigned before deleting this invoice.');
 RESET ROLE;
 SELECT pg_temp.assert(pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101') = (SELECT value FROM phase7a1_snapshots WHERE name = 'before_short_delete'),
@@ -686,7 +698,7 @@ SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000001');
 SELECT public.move_inventory_stock('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000501',
   pg_temp.loc('l3'), pg_temp.unassigned('7a100000-0000-4000-8000-000000000101'), 3, 'move-refill-unassigned');
-INSERT INTO phase7a1_snapshots VALUES ('delete_702', public.delete_invoice_permanently('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000602'));
+INSERT INTO phase7a1_snapshots VALUES ('delete_702', pg_temp.remove_posted('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000602'));
 RESET ROLE;
 DO $check_delete$
 DECLARE
@@ -710,7 +722,7 @@ SELECT pg_temp.checkpoint('7a100000-0000-4000-8000-000000000502', pg_temp.loc('l
 INSERT INTO phase7a1_snapshots VALUES ('before_checkpoint_delete', pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101'));
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7a100000-0000-4000-8000-000000000001');
-SELECT pg_temp.expect_error($$SELECT public.delete_invoice_permanently('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000603')$$,
+SELECT pg_temp.expect_error($$SELECT pg_temp.remove_posted('7a100000-0000-4000-8000-000000000101', '7a100000-0000-4000-8000-000000000603')$$,
   'This invoice cannot be deleted because Phase 7A.1 Gauze was physically counted after it was received.');
 RESET ROLE;
 SELECT pg_temp.assert(pg_temp.inventory_state('7a100000-0000-4000-8000-000000000101') = (SELECT value FROM phase7a1_snapshots WHERE name = 'before_checkpoint_delete'),

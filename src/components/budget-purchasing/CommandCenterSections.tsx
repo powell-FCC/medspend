@@ -139,8 +139,8 @@ export function NoBudgetState({ action }: { action: ReactNode }) {
         No active budget
       </h2>
       <p className="mx-auto mb-5 mt-2 max-w-md text-sm text-[#697687]">
-        Create a budget period to track spent, committed and available dollars. Spend and commitment
-        figures are not shown until a budget exists.
+        Create an organization-wide budget for a period to track posted spend against it. Spend and
+        commitment figures are not shown until a budget exists.
       </p>
       {action}
     </section>
@@ -158,21 +158,21 @@ export function FinancialSummary({
 }) {
   const segments = utilizationSegments(summary);
   const ratio = utilizationRatio(summary);
-  const over = summary.availableAmount < 0;
+  const over = summary.remainingAmount < 0;
   const coversToday = summary.periodStart <= today && summary.periodEnd >= today;
   const figures: Array<[string, number, string]> = [
-    ["Budget", summary.budgetAmount, "Allocated for this period"],
+    ["Budget", summary.budgetAmount, "Organization-wide for this period"],
     [
       "Spent",
       summary.actualSpend,
-      `${summary.postedInvoiceCount.toLocaleString("en-US")} posted ${summary.postedInvoiceCount === 1 ? "invoice" : "invoices"}`,
+      `${summary.postedInvoiceCount.toLocaleString("en-US")} posted ${summary.postedInvoiceCount === 1 ? "document" : "documents"}`,
     ],
+    ["Remaining", summary.remainingAmount, "After posted spend (Budget − Spent)"],
     [
-      "Committed",
-      summary.committedSpend,
-      `Active / unreleased · ${requestCountLabel(summary.activeCommitmentCount)}`,
+      "Open commitments",
+      summary.openCommitmentAmount,
+      `Approved or ordered · ${requestCountLabel(summary.openCommitmentCount)} · priced items only`,
     ],
-    ["Available", summary.availableAmount, "Budget − spent − committed"],
   ];
   return (
     <section className={`${panel} p-5 sm:p-6`} aria-labelledby="financial-summary-title">
@@ -189,7 +189,7 @@ export function FinancialSummary({
               {label}
             </dt>
             <dd
-              className={`mt-1 whitespace-nowrap text-lg font-semibold tabular-nums tracking-tight min-[400px]:text-xl sm:text-2xl xl:text-[28px] ${label === "Available" && over ? "text-[#a83340]" : "text-[#102a49]"}`}
+              className={`mt-1 whitespace-nowrap text-lg font-semibold tabular-nums tracking-tight min-[400px]:text-xl sm:text-2xl xl:text-[28px] ${label === "Remaining" && over ? "text-[#a83340]" : "text-[#102a49]"}`}
             >
               {formatMoney(value)}
             </dd>
@@ -201,19 +201,17 @@ export function FinancialSummary({
         <div
           className="flex h-3 w-full overflow-hidden rounded-full bg-[#eef1f4]"
           role="img"
-          aria-label={`Spent ${formatMoney(summary.actualSpend)}, committed ${formatMoney(summary.committedSpend)}, available ${formatMoney(summary.availableAmount)}`}
+          aria-label={`Spent ${formatMoney(summary.actualSpend)}, remaining ${formatMoney(summary.remainingAmount)}`}
         >
           <div className="h-full bg-[#102a49]" style={{ width: `${segments.spent}%` }} />
-          <div className="h-full bg-[#e08a2e]" style={{ width: `${segments.committed}%` }} />
-          <div className="h-full bg-[#cfe3d6]" style={{ width: `${segments.available}%` }} />
+          <div className="h-full bg-[#cfe3d6]" style={{ width: `${segments.remaining}%` }} />
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#5e6d7e]">
           <Legend color="bg-[#102a49]" label="Spent" value={summary.actualSpend} />
-          <Legend color="bg-[#e08a2e]" label="Committed" value={summary.committedSpend} />
           <Legend
             color="bg-[#cfe3d6]"
-            label="Available"
-            value={Math.max(summary.availableAmount, 0)}
+            label="Remaining"
+            value={Math.max(summary.remainingAmount, 0)}
           />
           <span className="ml-auto font-medium text-[#102a49]">
             {ratio === null ? "Zero budget" : `${formatPercent(ratio * 100)} used`}
@@ -225,7 +223,7 @@ export function FinancialSummary({
       )}
       {over && (
         <p role="status" className="mt-4 text-sm text-[#a83340]">
-          Spent and committed dollars exceed this budget by {formatMoney(-summary.availableAmount)}.
+          Posted spend exceeds this budget by {formatMoney(-summary.remainingAmount)}.
         </p>
       )}
       {summary.incompleteCommitmentCount > 0 && (
@@ -235,7 +233,7 @@ export function FinancialSummary({
         >
           {summary.incompleteCommitmentCount.toLocaleString("en-US")} active{" "}
           {summary.incompleteCommitmentCount === 1 ? "commitment has" : "commitments have"} unpriced
-          items. Committed includes known prices only, so available may be overstated.
+          items. Commitment totals include known prices only; unpriced items are not $0 exposure.
         </p>
       )}
       {!coversToday && (
@@ -262,12 +260,12 @@ function SettlementNotice({ summary, onReview }: { summary: ScopeSummary; onRevi
           {formatMoney(summary.settlementCandidateAmount)} of commitments may need settlement
         </p>
         <p className="mt-0.5 text-xs leading-5">
-          {requestCountLabel(summary.settlementCandidateCount)} in Committed{" "}
+          {requestCountLabel(summary.settlementCandidateCount)}{" "}
           {summary.settlementCandidateCount === 1 ? "is" : "are"} already received or completed, but{" "}
           {summary.settlementCandidateCount === 1 ? "its commitment is" : "their commitments are"}{" "}
-          still active. Available includes {summary.settlementCandidateCount === 1 ? "it" : "them"},
-          so it may be conservative until each is reviewed. Requests are not matched to invoices
-          automatically, so this is not confirmed duplicate spend.
+          still active. {summary.settlementCandidateCount === 1 ? "It is" : "They are"} not
+          subtracted from Remaining because the purchase may already be in Spent. Requests are not
+          matched to invoices automatically, so this is not confirmed duplicate spend.
         </p>
       </div>
       {onReview && (
@@ -390,7 +388,7 @@ export function BudgetTable({
       <SectionHeading
         id="budgets-title"
         title="Budgets"
-        description="Every active budget period. Spend and commitments are attributed by date."
+        description="Every active budget period. Organization-wide · spend attributed by invoice date (UTC)."
       />
       <div className="mt-3 -mx-5 overflow-x-auto">
         <table className="w-full min-w-[700px] text-sm">
@@ -400,7 +398,7 @@ export function BudgetTable({
               <th className={`${th} text-right`}>Allocated</th>
               <th className={`${th} text-right`}>Spent</th>
               <th className={`${th} text-right`}>Committed</th>
-              <th className={`${th} text-right`}>Available</th>
+              <th className={`${th} text-right`}>Remaining</th>
               <th className={th}>Utilized</th>
               <th className={`${th} pr-5`}>Status</th>
             </tr>
@@ -447,9 +445,9 @@ export function BudgetTable({
                     )}
                   </td>
                   <td
-                    className={`${td} text-right font-medium ${budget.availableAmount < 0 ? "text-[#a83340]" : "text-[#102a49]"}`}
+                    className={`${td} text-right font-medium ${budget.actualSpend > budget.budgetAmount ? "text-[#a83340]" : "text-[#102a49]"}`}
                   >
-                    {formatMoney(budget.availableAmount)}
+                    {formatMoney(budget.budgetAmount - budget.actualSpend)}
                   </td>
                   <td className={td}>
                     {ratio === null ? (
@@ -504,8 +502,8 @@ export function BudgetLineagePanel({
           [
             ["Allocated", budget.budgetAmount],
             ["Spent", budget.actualSpend],
-            ["Committed", budget.committedSpend],
-            ["Available", budget.availableAmount],
+            ["Remaining", budget.budgetAmount - budget.actualSpend],
+            ["Active commitments", budget.committedSpend],
           ] as const
         ).map(([label, value]) => (
           <div key={label} className="rounded-lg border border-[#e2e7ec] p-3">
@@ -673,11 +671,11 @@ export function SettlementCandidatesPanel({
         across all budget periods.
       </p>
       <p className="text-xs leading-5 text-[#697687]">
-        These requests are received or completed, but their commitments are still active, so their
-        amounts remain in Committed and reduce Available. SportSpend does not match requests to
-        invoices, so check each one: if you confirm its purchase is now in posted spend, release the
-        commitment as settled from the request; otherwise leave it active. Nothing is released from
-        this page.
+        These requests are received or completed, but their commitments are still active. They are
+        never subtracted from Remaining, because the purchase may already be in posted spend.
+        SportSpend does not match requests to invoices, so check each one: if you confirm its
+        purchase is now in posted spend, release the commitment as settled from the request;
+        otherwise leave it active. Nothing is released from this page.
       </p>
       {candidates.length === 0 ? (
         <p className="text-xs text-[#7a8592]">No commitments need settlement.</p>

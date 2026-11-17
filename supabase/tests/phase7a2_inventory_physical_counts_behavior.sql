@@ -35,6 +35,18 @@ $$;
 CREATE FUNCTION pg_temp.as_user(_user_id uuid)
 RETURNS void LANGUAGE sql AS $$ SELECT pg_catalog.set_config('request.jwt.claim.sub', _user_id::text, true) $$;
 
+-- Phase 7E: posted documents leave through the audited removal path (same inventory reversal).
+CREATE FUNCTION pg_temp.remove_posted(_org uuid, _source uuid)
+RETURNS jsonb LANGUAGE sql AS $$
+  SELECT public.remove_posted_financial_document(_org, _source, invoice.posted_at,
+    COALESCE(CASE WHEN invoice.document_type IN ('ORDER_CONFIRMATION', 'PURCHASE_ORDER')
+      THEN COALESCE(NULLIF(btrim(invoice.order_number), ''), NULLIF(btrim(invoice.invoice_number), ''))
+      ELSE COALESCE(NULLIF(btrim(invoice.invoice_number), ''), NULLIF(btrim(invoice.order_number), '')) END, 'REMOVE'),
+    'Behaviour test removal of a posted document')
+  FROM public.invoices invoice WHERE invoice.organization_id = _org AND invoice.source_file_id = _source
+$$;
+GRANT EXECUTE ON FUNCTION pg_temp.remove_posted(uuid, uuid) TO authenticated;
+
 CREATE FUNCTION pg_temp.assert(_condition boolean, _message text)
 RETURNS void LANGUAGE plpgsql AS $$ BEGIN IF _condition IS NOT TRUE THEN RAISE EXCEPTION 'Check failed: %', _message; END IF; END; $$;
 
@@ -677,7 +689,7 @@ $check_zero_checkpoint$;
 INSERT INTO phase7a2_values VALUES ('before_checkpoint_delete', pg_temp.state('7a200000-0000-4000-8000-000000000101'));
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7a200000-0000-4000-8000-000000000001');
-SELECT pg_temp.expect_error($$SELECT public.delete_invoice_permanently('7a200000-0000-4000-8000-000000000101', '7a200000-0000-4000-8000-000000000601')$$,
+SELECT pg_temp.expect_error($$SELECT pg_temp.remove_posted('7a200000-0000-4000-8000-000000000101', '7a200000-0000-4000-8000-000000000601')$$,
   'This invoice cannot be deleted because Phase 7A.2 Athletic Tape was physically counted after it was received.');
 RESET ROLE;
 SELECT pg_temp.assert(pg_temp.state('7a200000-0000-4000-8000-000000000101') = pg_temp.val('before_checkpoint_delete'),

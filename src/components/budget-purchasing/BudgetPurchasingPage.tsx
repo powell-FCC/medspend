@@ -8,7 +8,8 @@ import {
   getCommandCenterOverviewFn,
   getPriceIntelligenceOverviewFn,
 } from "@/lib/budget-purchasing.functions";
-import { canAccessBudget, formatPeriod, localToday, type Budget } from "@/budget/budget";
+import { canAccessBudget, formatPeriod, utcToday, type Budget } from "@/budget/budget";
+import { SpendWorkspace } from "@/components/budget-analytics/SpendWorkspace";
 import {
   attentionItems,
   budgetsOverlap,
@@ -88,7 +89,9 @@ function CommandCenter({
   const fetchOverview = useServerFn(getCommandCenterOverviewFn);
   const fetchPrices = useServerFn(getPriceIntelligenceOverviewFn);
   const queryClient = useQueryClient();
-  const today = localToday();
+  // Phase 7E: UTC calendar day, the same day the server uses.
+  const today = utcToday();
+  const [tab, setTab] = useState<"overview" | "spend">("overview");
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [lineageBudget, setLineageBudget] = useState<BudgetRow | null>(null);
   const [priceRow, setPriceRow] = useState<PriceRow | null>(null);
@@ -125,7 +128,8 @@ function CommandCenter({
             {summary && (
               <p className="mt-1 text-sm text-[#697687]">
                 Viewing <span className="font-medium text-[#102a49]">{summary.label}</span> ·{" "}
-                {formatPeriod(summary.periodStart, summary.periodEnd)} · Organization-wide · USD
+                {formatPeriod(summary.periodStart, summary.periodEnd)} · Organization-wide · spend
+                by invoice date (UTC) · USD
               </p>
             )}
           </div>
@@ -170,71 +174,110 @@ function CommandCenter({
             )}
           </div>
         </header>
-        {budgets.length > 1 && budgetsOverlap(budgets) && (
-          <p className="text-xs text-[#697687]">
-            Some active budget periods overlap, so they are shown one at a time rather than combined
-            (combining would count the same spend twice).
-          </p>
-        )}
+        <div
+          role="tablist"
+          aria-label="Budget & Purchasing views"
+          className="flex gap-1 border-b border-[#dfe5eb]"
+        >
+          {(
+            [
+              ["overview", "Overview"],
+              ["spend", "Spend"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`budget-tab-${id}`}
+              aria-selected={tab === id}
+              aria-controls={`budget-panel-${id}`}
+              onClick={() => setTab(id)}
+              className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold ${tab === id ? "border-[#102a49] text-[#102a49]" : "border-transparent text-[#697687] hover:text-[#102a49]"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
-        {overview.isPending ? (
-          <SectionLoading label="Loading budget figures…" />
-        ) : overview.isError ? (
-          <SectionError
-            message="Budget figures could not be loaded."
-            onRetry={() => overview.refetch()}
-          />
+        {tab === "spend" ? (
+          <div role="tabpanel" id="budget-panel-spend" aria-labelledby="budget-tab-spend">
+            <SpendWorkspace organizationId={organizationId} />
+          </div>
         ) : (
-          <>
-            {summary ? (
-              <FinancialSummary
-                summary={summary}
-                today={today}
-                onReviewSettlement={() => setSettlementOpen(true)}
+          <div
+            role="tabpanel"
+            id="budget-panel-overview"
+            aria-labelledby="budget-tab-overview"
+            className="space-y-5"
+          >
+            {budgets.length > 1 && budgetsOverlap(budgets) && (
+              <p className="text-xs text-[#697687]">
+                Some active budget periods overlap, so they are shown one at a time rather than
+                combined (combining would count the same spend twice).
+              </p>
+            )}
+
+            {overview.isPending ? (
+              <SectionLoading label="Loading budget figures…" />
+            ) : overview.isError ? (
+              <SectionError
+                message="Budget figures could not be loaded."
+                onRetry={() => overview.refetch()}
               />
             ) : (
-              <NoBudgetState
-                action={<Button onClick={() => setEditor("new")}>Create budget</Button>}
+              <>
+                {summary ? (
+                  <FinancialSummary
+                    summary={summary}
+                    today={today}
+                    onReviewSettlement={() => setSettlementOpen(true)}
+                  />
+                ) : (
+                  <NoBudgetState
+                    action={<Button onClick={() => setEditor("new")}>Create budget</Button>}
+                  />
+                )}
+                <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] xl:grid-cols-[320px_minmax(0,1fr)]">
+                  <NeedsAttention
+                    items={attentionItems(overview.data, today)}
+                    renderLink={renderLink}
+                    invoiceDetailHidden={!overview.data.viewerIsOwner}
+                    actions={{ commitmentsToSettle: () => setSettlementOpen(true) }}
+                  />
+                  {budgets.length > 0 && (
+                    <BudgetTable
+                      budgets={budgets}
+                      scopeBudgetIds={summary?.budgetIds ?? []}
+                      onSelect={(id) =>
+                        setLineageBudget(budgets.find((b) => b.budgetId === id) ?? null)
+                      }
+                    />
+                  )}
+                </div>
+              </>
+            )}
+
+            {prices.isPending ? (
+              <SectionLoading label="Loading price intelligence…" />
+            ) : prices.isError ? (
+              <SectionError
+                message="Price intelligence could not be loaded."
+                onRetry={() => prices.refetch()}
+              />
+            ) : (
+              <PriceIntelligenceTable
+                overview={prices.data}
+                today={today}
+                selectedProductId={priceRow?.productId}
+                onSelect={setPriceRow}
               />
             )}
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] xl:grid-cols-[320px_minmax(0,1fr)]">
-              <NeedsAttention
-                items={attentionItems(overview.data, today)}
-                renderLink={renderLink}
-                invoiceDetailHidden={!overview.data.viewerIsOwner}
-                actions={{ commitmentsToSettle: () => setSettlementOpen(true) }}
-              />
-              {budgets.length > 0 && (
-                <BudgetTable
-                  budgets={budgets}
-                  scopeBudgetIds={summary?.budgetIds ?? []}
-                  onSelect={(id) =>
-                    setLineageBudget(budgets.find((b) => b.budgetId === id) ?? null)
-                  }
-                />
-              )}
-            </div>
-          </>
-        )}
 
-        {prices.isPending ? (
-          <SectionLoading label="Loading price intelligence…" />
-        ) : prices.isError ? (
-          <SectionError
-            message="Price intelligence could not be loaded."
-            onRetry={() => prices.refetch()}
-          />
-        ) : (
-          <PriceIntelligenceTable
-            overview={prices.data}
-            today={today}
-            selectedProductId={priceRow?.productId}
-            onSelect={setPriceRow}
-          />
-        )}
-
-        {overview.data?.recentPurchases && (
-          <RecentPurchasing purchases={overview.data.recentPurchases} renderLink={renderLink} />
+            {overview.data?.recentPurchases && (
+              <RecentPurchasing purchases={overview.data.recentPurchases} renderLink={renderLink} />
+            )}
+          </div>
         )}
       </div>
 
