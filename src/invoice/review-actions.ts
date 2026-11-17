@@ -93,6 +93,10 @@ export function toInvoiceReviewError(
   if (code === "23502" && message.startsWith("Match or create a product for every invoice line")) {
     return new InvoiceReviewError("rejected", message);
   }
+  // Phase 7E: credit memos and statements are refused by the posting function itself.
+  if (code === "22023" && /^(Credit memos can't be posted|Statements are reference documents)/.test(message)) {
+    return new InvoiceReviewError("rejected", message);
+  }
   if (code === "42501")
     return new InvoiceReviewError("forbidden", "Forbidden: owner access required");
   if (code === "23505" && message.includes("inventory_items_org_vendor_sku_unique")) {

@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useActiveOrg } from '@/hooks/use-active-org';
 import { describeInvoiceLineReview } from '@/invoice/line-match';
+import { postingBlockedReason } from '@/invoice/deletion';
 import { approveInvoiceFn, confirmInvoiceItemProductFn, createProductFromInvoiceItemFn, deleteInvoiceItemFn, getInvoiceReviewFn, matchInvoiceItemToCatalogFn, saveInvoiceHeaderFn, saveInvoiceItemFn, searchInvoiceCatalogFn, unlinkInvoiceItemProductFn } from '@/lib/invoice-processing.functions';
 import type { InvoiceHeaderInput, InvoiceItemInput, InvoiceMatchResult, ReviewItem } from '@/types/invoice-processing';
 import { InvoiceHeaderForm } from './InvoiceHeaderForm';
@@ -169,6 +170,13 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
           <AlertDescription>The line items or subtotal, tax, shipping, and total do not reconcile within rounding tolerance.</AlertDescription>
         </Alert>
       )}
+      {postingBlockedReason(data.header.documentType) && (
+        <Alert className="mb-5 border-amber-200 bg-amber-50/50">
+          <AlertCircle className="text-amber-700" />
+          <AlertTitle>This document can't be posted.</AlertTitle>
+          <AlertDescription>{postingBlockedReason(data.header.documentType)} Change the document type if it was misclassified.</AlertDescription>
+        </Alert>
+      )}
       {data.header.documentType === 'UNKNOWN' && (
         <Alert className="mb-5 border-amber-200 bg-amber-50/50">
           <AlertCircle className="text-amber-700" />
@@ -272,7 +280,7 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
               {unresolvedCount ? `${unresolvedCount} line item${unresolvedCount === 1 ? '' : 's'} must be matched to a product before approval.` : 'Every line has a product identity. Approval is final and posts the received stock.'}
             </p>
           </div>
-          <Button size="lg" disabled={submitting || !data.items.length || !data.header.vendorName || unresolvedCount > 0} onClick={approveInvoice}>
+          <Button size="lg" disabled={submitting || !data.items.length || !data.header.vendorName || unresolvedCount > 0 || Boolean(postingBlockedReason(data.header.documentType))} onClick={approveInvoice}>
             {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Approve invoice
           </Button>
         </div>

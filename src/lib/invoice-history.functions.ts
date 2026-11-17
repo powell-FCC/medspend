@@ -3,12 +3,26 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware';
 import type { Database } from '@/integrations/supabase/types';
-import type { DeleteInvoiceResult, InvoiceHistoryRow, PurchaseHistoryRow, VendorHistoryRow } from '@/types/invoice-history';
+import type { DeleteInvoiceResult, InvoiceHistoryRow, PurchaseHistoryRow, RemovePostedDocumentResult, VendorHistoryRow } from '@/types/invoice-history';
 import type { ProcessingStatus } from '@/types/invoice-processing';
 import { getInvoiceDeletionEligibility, type InvoiceDocumentType } from '@/invoice/deletion';
 
 const input = z.object({ organizationId: z.string().uuid() });
 const deleteInput = z.object({ organizationId: z.string().uuid(), invoiceId: z.string().uuid() }).strict();
+const removeInput = z.object({
+  organizationId: z.string().uuid(), invoiceId: z.string().uuid(), expectedPostedAt: z.string().min(1),
+  confirmation: z.string().max(200), reason: z.string().trim().min(10).max(1000),
+}).strict();
+
+// Same rule as remove_posted_financial_document: the document number, or REMOVE without one.
+function removalConfirmationFor(invoice: { document_type: string | null; invoice_number: string | null; order_number: string | null } | undefined) {
+  const clean = (value: string | null | undefined) => value?.trim() || null;
+  if (!invoice) return 'REMOVE';
+  const number = invoice.document_type === 'ORDER_CONFIRMATION' || invoice.document_type === 'PURCHASE_ORDER'
+    ? clean(invoice.order_number) ?? clean(invoice.invoice_number)
+    : clean(invoice.invoice_number) ?? clean(invoice.order_number);
+  return number ?? 'REMOVE';
+}
 
 async function assertOwner(db: SupabaseClient<Database>, userId: string, organizationId: string) {
   const { data, error } = await db.from('organization_memberships').select('role')
@@ -51,6 +65,7 @@ export const listInvoiceHistoryFn = createServerFn({ method: 'POST' }).middlewar
         documentDate: documentType === 'ORDER_CONFIRMATION' || documentType === 'PURCHASE_ORDER' ? structured?.order_date ?? null : structured?.invoice_date ?? null,
         total: structured?.invoice_total ?? structured?.total_amount ?? null,
         posted: Boolean(structured?.posted_at || structured?.processing_status === 'completed' || status === 'completed'),
+        postedAt: structured?.posted_at ?? null, removalConfirmation: removalConfirmationFor(structured),
         deletionEligibility: getInvoiceDeletionEligibility({ status, processingStatus: structured?.processing_status ?? null, postedAt: structured?.posted_at ?? null }) };
     });
     return rows;
@@ -66,6 +81,7 @@ export const deleteInvoiceFn = createServerFn({ method: 'POST' }).middleware([re
       if (/currently being processed/i.test(error.message)) throw new Error('This document is currently being processed. Try again when processing is complete.');
       if (/inventory.*negative|history.*(?:begin|become).*negative|provenance is incomplete/i.test(error.message)) throw new Error(error.message);
       if (/owner access required/i.test(error.message)) throw new Error('Only organization owners can permanently delete documents.');
+      if (/must be removed with a recorded reason/i.test(error.message)) throw new Error('This document is posted. Remove it with a recorded reason instead.');
       throw new Error('Invoice deletion could not be completed. No changes were made.');
     }
     const result = deleted as { storagePath?: unknown } | null;
@@ -78,6 +94,26 @@ export const deleteInvoiceFn = createServerFn({ method: 'POST' }).middleware([re
       storageDeleted,
       warning: storageDeleted ? null : 'Document deleted, but its uploaded file could not be removed.',
     } satisfies DeleteInvoiceResult;
+  });
+
+// Phase 7E: a posted document leaves only through the audited removal. Its source PDF is kept
+// (the storage delete policy refuses it), so this never calls storage.remove.
+export const removePostedDocumentFn = createServerFn({ method: 'POST' }).middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => removeInput.parse(value)).handler(async ({ data, context }) => {
+    await assertOwner(context.supabase, context.userId, data.organizationId);
+    const { data: removed, error } = await context.supabase.rpc('remove_posted_financial_document', {
+      _organization_id: data.organizationId, _source_file_id: data.invoiceId, _expected_posted_at: data.expectedPostedAt,
+      _confirmation: data.confirmation, _reason: data.reason,
+    });
+    if (error) {
+      if (error.code === '22023' || error.code === '55000') throw new Error(error.message);
+      if (/inventory.*negative|history.*(?:begin|become).*negative|provenance is incomplete|physically counted|back to Unassigned/i.test(error.message)) throw new Error(error.message);
+      if (error.code === '42501' || /owner access required/i.test(error.message)) throw new Error('Only organization owners can remove posted documents.');
+      throw new Error('The posted document could not be removed. No changes were made.');
+    }
+    const result = removed as { removalId?: unknown } | null;
+    if (!result || typeof result.removalId !== 'string') throw new Error('The removal did not return its record.');
+    return { removed: true, removalId: result.removalId, sourceFileRetained: true } satisfies RemovePostedDocumentResult;
   });
 
 export const listPurchaseHistoryFn = createServerFn({ method: 'POST' }).middleware([requireSupabaseAuth])

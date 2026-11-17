@@ -21,10 +21,8 @@ export const formatPeriod = (start: string, end: string) => {
   const formatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
   return `${formatter.format(new Date(start))} – ${formatter.format(new Date(end))}`;
 };
-export const localToday = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
+// Phase 7E: financial dates are UTC calendar days everywhere (server and browser agree).
+export const utcToday = (now: Date = new Date()) => now.toISOString().slice(0, 10);
 // Current periods first, then latest start, latest end, and ID for stable ties.
 export function selectActiveBudget(budgets: Budget[], today: string) {
   return budgets.filter((b) => b.active).sort((a, b) => {

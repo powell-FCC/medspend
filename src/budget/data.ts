@@ -28,6 +28,11 @@ export async function saveBudget(db: SupabaseClient<Database>, userId: string, i
     ? db.from('organization_budgets').update(fields).eq('organization_id', organizationId).eq('id', id).eq('active', true)
     : db.from('organization_budgets').insert({ ...fields, organization_id: organizationId, active: true });
   const { data, error } = await query.select('id').single();
-  if (error) throw new Error(error.code === '23505' ? 'An active budget already exists for this exact period. Choose another period or edit that budget.' : error.message);
+  if (error) {
+    if (error.code === '23505') throw new Error('An active budget already exists for this exact period. Choose another period or edit that budget.');
+    // Phase 7E: one active organization-wide budget may cover any date; the guard names the overlap.
+    if (error.code === '23P01') throw new Error(error.message);
+    throw new Error(error.message);
+  }
   return data;
 }

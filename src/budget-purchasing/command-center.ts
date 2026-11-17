@@ -174,7 +174,11 @@ export type ScopeSummary = {
   budgetAmount: number;
   actualSpend: number;
   committedSpend: number;
-  availableAmount: number;
+  /** Phase 7E canonical headline: Budget − Spent (commitments are never subtracted). */
+  remainingAmount: number;
+  /** Active commitments whose request is approved or ordered (committed − received). */
+  openCommitmentAmount: number;
+  openCommitmentCount: number;
   postedInvoiceCount: number;
   activeCommitmentCount: number;
   incompleteCommitmentCount: number;
@@ -250,7 +254,9 @@ export function summarizeScope(budgets: BudgetRow[], scopeId: string | null): Sc
       budgetAmount: b.budgetAmount,
       actualSpend: b.actualSpend,
       committedSpend: b.committedSpend,
-      availableAmount: b.availableAmount,
+      remainingAmount: b.budgetAmount - b.actualSpend,
+      openCommitmentAmount: b.committedSpend - b.settlementCandidateAmount,
+      openCommitmentCount: b.activeCommitmentCount - b.settlementCandidateCount,
       postedInvoiceCount: b.postedInvoiceCount,
       activeCommitmentCount: b.activeCommitmentCount,
       incompleteCommitmentCount: b.incompleteCommitmentCount,
@@ -273,7 +279,9 @@ export function summarizeScope(budgets: BudgetRow[], scopeId: string | null): Sc
     budgetAmount,
     actualSpend,
     committedSpend,
-    availableAmount: budgetAmount - actualSpend - committedSpend,
+    remainingAmount: budgetAmount - actualSpend,
+    openCommitmentAmount: committedSpend - sum((b) => b.settlementCandidateAmount),
+    openCommitmentCount: sum((b) => b.activeCommitmentCount - b.settlementCandidateCount),
     postedInvoiceCount: sum((b) => b.postedInvoiceCount),
     activeCommitmentCount: sum((b) => b.activeCommitmentCount),
     incompleteCommitmentCount: sum((b) => b.incompleteCommitmentCount),
@@ -291,33 +299,32 @@ export const BUDGET_WARNING_THRESHOLD = 0.9;
 type Amounts = {
   budgetAmount: number;
   actualSpend: number;
-  committedSpend: number;
-  availableAmount: number;
 };
 
-/** Share of the budget consumed by spend plus commitments; null for a zero budget. */
+/**
+ * Share of the budget used by posted spend; null for a zero budget. Phase 7E: commitments are
+ * not "used" (open ones are approximate and received ones may already be in Spent).
+ */
 export function utilizationRatio(row: Amounts): number | null {
-  return row.budgetAmount > 0 ? (row.actualSpend + row.committedSpend) / row.budgetAmount : null;
+  return row.budgetAmount > 0 ? row.actualSpend / row.budgetAmount : null;
 }
 
 /**
- * Bar segment widths (0–100). When spend plus commitments exceed the budget, the bar is
- * scaled to the larger total so the overage stays visible instead of overflowing.
+ * Bar segment widths (0–100) for Spent and Remaining. Over budget, the bar is scaled to Spent
+ * so the overage stays visible instead of overflowing.
  */
 export function utilizationSegments(row: Amounts) {
-  const used = row.actualSpend + row.committedSpend;
-  const denominator = Math.max(row.budgetAmount, used);
-  if (denominator <= 0) return { spent: 0, committed: 0, available: 0 };
+  const denominator = Math.max(row.budgetAmount, row.actualSpend);
+  if (denominator <= 0) return { spent: 0, remaining: 0 };
   return {
     spent: (Math.max(row.actualSpend, 0) / denominator) * 100,
-    committed: (Math.max(row.committedSpend, 0) / denominator) * 100,
-    available: (Math.max(row.availableAmount, 0) / denominator) * 100,
+    remaining: (Math.max(row.budgetAmount - row.actualSpend, 0) / denominator) * 100,
   };
 }
 
 export type BudgetStatus = "over" | "warning" | "ok";
 export function budgetStatus(row: Amounts): BudgetStatus {
-  if (row.availableAmount < 0) return "over";
+  if (row.actualSpend > row.budgetAmount) return "over";
   const ratio = utilizationRatio(row);
   return ratio !== null && ratio >= BUDGET_WARNING_THRESHOLD ? "warning" : "ok";
 }
@@ -415,7 +422,7 @@ export function attentionItems(overview: CommandCenterOverview, today: string): 
       label: "Unpriced commitments",
       count: attention.unpricedCommitmentCount,
       amount: null,
-      detail: "Active commitments missing some item prices; available budget may be overstated",
+      detail: "Active commitments missing some item prices; their exposure is not fully known",
       href: "/supply-requests",
     },
   );
@@ -428,7 +435,7 @@ export function attentionItems(overview: CommandCenterOverview, today: string): 
     href: SETTLEMENT_ANCHOR,
     prominent: attention.commitmentsToSettleCount > 0,
   };
-  // While non-zero it leads the list: it is the one item that affects how to read Available.
+  // While non-zero it leads the list: these may already be in Spent.
   return settle.prominent
     ? [settle, ...items]
     : [...items.slice(0, -1), settle, ...items.slice(-1)];

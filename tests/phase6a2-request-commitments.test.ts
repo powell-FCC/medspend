@@ -224,14 +224,15 @@ test("no request-to-invoice heuristic or purchasing workflow is introduced", () 
 });
 
 test("admin detail shows dense budget context and an explicit release workflow", () => {
+  // Phase 7E: Remaining after posted spend replaces Available; commitments are not subtracted.
   for (const label of [
     "Estimated request cost",
     "Actual spend",
-    "Committed spend",
-    "Available budget",
-    "Available after approval",
+    "Remaining after posted spend",
+    "Active commitments \\(not subtracted\\)",
   ])
     assert.match(detail, new RegExp(label));
+  assert.doesNotMatch(detail, /Available budget|Available after approval/);
   assert.match(detail, /Release Commitment/);
   assert.match(detail, /SportSpend does not match invoices to requests automatically/);
   assert.match(route, /getSupplyRequestBudgetImpactFn/);
@@ -253,10 +254,12 @@ test("staff request UX remains free of commitment accounting", () => {
 });
 
 test("the budget view extends 6A.1 with four metrics and incomplete-pricing disclosure", () => {
-  for (const label of ["Budget", "Spent", "Committed", "Available"])
+  // Phase 7E: Budget, Spent, Remaining (Budget − Spent) and Open commitments; no Available.
+  for (const label of ["Budget", "Spent", "Remaining", "Open commitments"])
     assert.match(budgetOverview, new RegExp(`["']${label}["']`));
+  assert.doesNotMatch(budgetOverview, /["']Available["']/);
   assert.match(budgetOverview, /incompleteCommitmentCount/);
-  assert.match(budgetOverview, /Committed includes known prices only/);
+  assert.match(budgetOverview, /Commitment totals include known prices only/);
 });
 
 test("generated Supabase types expose the new tables and RPCs", () => {
