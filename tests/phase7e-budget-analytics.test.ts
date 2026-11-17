@@ -601,7 +601,6 @@ test("vendor and product tables reconcile, compare prices only within a unit, an
               lineCount: 1,
               minUnitPrice: 17850,
               maxUnitPrice: 17850,
-              latestUnitPrice: 17850,
             },
             {
               unitOfMeasure: "bx",
@@ -610,7 +609,6 @@ test("vendor and product tables reconcile, compare prices only within a unit, an
               lineCount: 1,
               minUnitPrice: 40,
               maxUnitPrice: 50,
-              latestUnitPrice: 50,
             },
           ],
         },

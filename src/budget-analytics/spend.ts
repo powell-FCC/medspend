@@ -188,7 +188,6 @@ const unitGroupSchema = z
     lineCount: count,
     minUnitPrice: z.number().nullable(),
     maxUnitPrice: z.number().nullable(),
-    latestUnitPrice: z.number().nullable(),
   })
   .strict();
 

@@ -100,7 +100,9 @@ INSERT INTO public.products (id, organization_id, name, approved, active, staff_
   ('7e000000-0000-4000-8000-000000000403', '7e000000-0000-4000-8000-000000000102', 'P7E Other Tape', true, true, true, NULL);
 
 INSERT INTO public.organization_budgets (id, organization_id, name, period_start, period_end, amount, active) VALUES
-  ('7e000000-0000-4000-8000-000000000901', '7e000000-0000-4000-8000-000000000101', 'Tape', '2026-01-01', '2026-12-31', 50000, true);
+  ('7e000000-0000-4000-8000-000000000901', '7e000000-0000-4000-8000-000000000101', 'Tape', '2026-01-01', '2026-12-31', 50000, true),
+  -- An inactive budget never covers spend.
+  ('7e000000-0000-4000-8000-000000000900', '7e000000-0000-4000-8000-000000000101', '2025 (inactive)', '2025-01-01', '2025-12-31', 1000, false);
 
 -- Posted documents written directly, as post_reviewed_invoice writes them.
 SELECT set_config('sportspend.financial_context', 'post', true);
@@ -434,7 +436,8 @@ INSERT INTO public.organization_budgets (id, organization_id, name, period_start
   ('7e000000-0000-4000-8000-000000000913', '7e000000-0000-4000-8000-000000000101', 'Five ahead', '2026-01-01', '2026-04-10', 49121.45, false),
   ('7e000000-0000-4000-8000-000000000914', '7e000000-0000-4000-8000-000000000101', 'Ninety percent', '2026-01-01', '2026-04-10', 21831.75, false),
   ('7e000000-0000-4000-8000-000000000915', '7e000000-0000-4000-8000-000000000101', 'Over', '2026-01-01', '2026-04-10', 19000, false),
-  ('7e000000-0000-4000-8000-000000000916', '7e000000-0000-4000-8000-000000000101', 'Zero', '2026-01-01', '2026-04-10', 0, false);
+  ('7e000000-0000-4000-8000-000000000916', '7e000000-0000-4000-8000-000000000101', 'Zero', '2026-01-01', '2026-04-10', 0, false),
+  ('7e000000-0000-4000-8000-000000000918', '7e000000-0000-4000-8000-000000000101', 'Eighty five percent', '2026-01-01', '2026-04-10', 23200, false);
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('7e000000-0000-4000-8000-000000000001');
 DO $pace$
@@ -455,6 +458,8 @@ BEGIN
   PERFORM pg_temp.assert(pg_temp.signal(_s, 'budget_near_limit') IS NOT NULL, '90% used is near limit');
   PERFORM pg_temp.assert(pg_temp.signal(_s, 'budget_over') IS NULL, 'not over');
   PERFORM pg_temp.eq(_s #>> '{pace,band}', 'behind', 'last day: elapsed 100%, spent 90% is 10 points behind');
+  _s := public.get_financial_spend_summary('7e000000-0000-4000-8000-000000000101', '7e000000-0000-4000-8000-000000000918', '2026-04-10');
+  PERFORM pg_temp.assert(pg_temp.signal(_s, 'budget_near_limit') IS NULL, '85% used is not near the limit');
   _s := public.get_financial_spend_summary('7e000000-0000-4000-8000-000000000101', '7e000000-0000-4000-8000-000000000915', '2026-04-11');
   PERFORM pg_temp.eq(_s #>> '{pace,state}', 'ended', 'after the end');
   PERFORM pg_temp.assert(_s #> '{pace,band}' = 'null'::jsonb, 'no pace wording after the end');
@@ -610,7 +615,11 @@ SELECT pg_temp.assert(COALESCE(current_setting('sportspend.financial_context', t
 SELECT pg_temp.expect_error($$UPDATE public.invoices SET invoice_total = 1 WHERE id = '7e000000-0000-4000-8000-000000000b20'$$,
   'Posted documents can''t be changed', '55000');
 SELECT pg_temp.keep('after_post', public.get_financial_spend_summary('7e000000-0000-4000-8000-000000000101', '7e000000-0000-4000-8000-000000000901', '2026-11-16'));
+SELECT pg_temp.keep('prices_after_post', public.get_price_intelligence_overview('7e000000-0000-4000-8000-000000000101'));
 RESET ROLE;
+SELECT pg_temp.assert(EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.val('prices_after_post') -> 'rows') r
+  WHERE r ->> 'productId' = '7e000000-0000-4000-8000-000000000401'),
+  'Price Intelligence includes a posting with no currency recorded (legacy USD)');
 SELECT pg_temp.eq(pg_temp.num(pg_temp.val('after_post'), '{spent}'), 20152.86, 'real postings count (250 + 10)');
 SELECT pg_temp.assert((SELECT posted_at IS NULL FROM public.invoices WHERE id = '7e000000-0000-4000-8000-000000000b21'), 'credit memo still draft');
 SELECT pg_temp.eq((SELECT quantity FROM public.inventory_items WHERE product_id = '7e000000-0000-4000-8000-000000000401'), 5::numeric, 'receipt landed');

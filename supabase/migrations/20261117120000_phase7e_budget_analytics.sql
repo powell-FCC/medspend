@@ -885,7 +885,9 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
-SET search_path = public
+-- No SET clause on purpose: a plain STABLE SQL function is inlined into its caller, so the
+-- caller's filters reach the invoices scan and lines are summed only for the documents that
+-- survive. Every object is schema-qualified; no client can execute it.
 AS $$
   WITH documents AS (
     SELECT
@@ -899,24 +901,23 @@ AS $$
       AND (_from IS NULL OR COALESCE(invoice.invoice_date, (invoice.posted_at AT TIME ZONE 'UTC')::date) >= _from)
       AND (_to IS NULL OR COALESCE(invoice.invoice_date, (invoice.posted_at AT TIME ZONE 'UTC')::date) <= _to)
   ),
-  lines AS (
-    SELECT item.invoice_id, sum(item.total_price) AS lines_total, count(*)::integer AS line_count
-    FROM public.invoice_items item
-    JOIN documents document ON document.id = item.invoice_id
-    WHERE item.organization_id = _organization_id
-    GROUP BY item.invoice_id
-  ),
+  -- Lines are a one-row LEFT JOIN LATERAL aggregate: inlined into a caller that never reads the
+  -- line columns, the planner removes the join. The amount reads lines (a lazy scalar subquery)
+  -- only when no header total exists.
   resolved AS (
     SELECT
       document.*,
       line.lines_total AS lines_total_value,
       COALESCE(line.line_count, 0) AS line_count_value,
-      COALESCE(document.invoice_total, document.total_amount, document.total, line.lines_total, 0)::numeric AS amount_value,
+      COALESCE(document.invoice_total, document.total_amount, document.total,
+        (SELECT sum(item.total_price) FROM public.invoice_items item
+          WHERE item.invoice_id = document.id AND item.organization_id = _organization_id), 0)::numeric AS amount_value,
       CASE
         WHEN document.invoice_total IS NOT NULL THEN 'invoice_total'
         WHEN document.total_amount IS NOT NULL THEN 'total_amount'
         WHEN document.total IS NOT NULL THEN 'total'
-        WHEN line.lines_total IS NOT NULL THEN 'lines'
+        WHEN EXISTS (SELECT 1 FROM public.invoice_items item
+          WHERE item.invoice_id = document.id AND item.organization_id = _organization_id) THEN 'lines'
         ELSE 'zero'
       END AS amount_basis_value,
       CASE
@@ -925,7 +926,11 @@ AS $$
         WHEN document.currency_basis_value = 'other' THEN 'non_usd'
       END AS exclusion_value
     FROM documents document
-    LEFT JOIN lines line ON line.invoice_id = document.id
+    LEFT JOIN LATERAL (
+      SELECT sum(item.total_price) AS lines_total, count(*)::integer AS line_count
+      FROM public.invoice_items item
+      WHERE item.invoice_id = document.id AND item.organization_id = _organization_id
+    ) line ON true
   )
   SELECT
     resolved.id,
@@ -989,6 +994,8 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
+-- Deliberately NOT inlined (SET clause): inlined into the product aggregates, the planner's
+-- row estimates collapse and it chooses nested loops over 250,000 lines (benchmark: 0.3 s -> 9 s).
 SET search_path = public
 AS $$
   SELECT
@@ -1627,6 +1634,10 @@ BEGIN
     months AS (
       SELECT month_start::date AS month_start
       FROM generate_series(date_trunc('month', _from), date_trunc('month', _to), interval '1 month') month_start
+    ),
+    monthly AS (
+      SELECT date_trunc('month', spend_date)::date AS month_start, sum(amount) AS amount, count(*) AS document_count
+      FROM docs GROUP BY 1
     )
     SELECT jsonb_build_object(
       'from', _from,
@@ -1645,10 +1656,11 @@ BEGIN
         SELECT jsonb_agg(jsonb_build_object(
           'month', to_char(month.month_start, 'YYYY-MM'),
           'monthStart', month.month_start,
-          'amount', COALESCE((SELECT sum(amount) FROM docs WHERE date_trunc('month', spend_date) = month.month_start), 0),
-          'documentCount', (SELECT count(*) FROM docs WHERE date_trunc('month', spend_date) = month.month_start)
+          'amount', COALESCE(monthly.amount, 0),
+          'documentCount', COALESCE(monthly.document_count, 0)
         ) ORDER BY month.month_start)
         FROM months month
+        LEFT JOIN monthly ON monthly.month_start = month.month_start
       )
     )
   );
@@ -1759,7 +1771,8 @@ BEGIN
       SELECT * FROM public.financial_spend_rows(_organization_id, _from, _to) WHERE counted
     ),
     lines AS MATERIALIZED (
-      SELECT line.*,
+      SELECT line.product_id, line.invoice_id, line.vendor_id, line.spend_date, line.total_price,
+        line.quantity, line.unit_of_measure, line.package_size, line.uom_key, line.package_key,
         COALESCE(line.unit_price, line.total_price / NULLIF(line.quantity, 0)) AS effective_unit_price
       FROM public.financial_spend_line_rows(_organization_id, _from, _to) line
     ),
@@ -1771,21 +1784,36 @@ BEGIN
         sum(quantity) AS quantity,
         count(*) AS line_count,
         min(effective_unit_price) AS min_unit_price,
-        max(effective_unit_price) AS max_unit_price,
-        (array_agg(effective_unit_price ORDER BY spend_date DESC, invoice_id DESC, invoice_item_id DESC))[1] AS latest_unit_price
+        max(effective_unit_price) AS max_unit_price
       FROM lines
       GROUP BY product_id, uom_key, package_key
     ),
+    -- Plain hash aggregates (no DISTINCT aggregates, which sort every line).
+    per_document AS (
+      SELECT product_id, invoice_id, vendor_id, sum(total_price) AS spend, count(*) AS line_count,
+        max(spend_date) AS last_date
+      FROM lines
+      GROUP BY product_id, invoice_id, vendor_id
+    ),
+    per_vendor AS (
+      SELECT product_id, count(*) AS vendor_count
+      FROM (SELECT product_id, vendor_id FROM per_document GROUP BY product_id, vendor_id) pairs
+      GROUP BY product_id
+    ),
     products AS (
       SELECT
-        line.product_id,
-        sum(line.total_price) AS spend,
-        count(*) AS line_count,
-        count(DISTINCT line.invoice_id) AS document_count,
-        count(DISTINCT line.vendor_id) AS vendor_count,
-        max(line.spend_date) AS last_date
-      FROM lines line
-      GROUP BY line.product_id
+        document.product_id,
+        sum(document.spend) AS spend,
+        sum(document.line_count) AS line_count,
+        count(*) AS document_count,
+        max(vendor.vendor_count) AS vendor_count,
+        max(document.last_date) AS last_date
+      FROM per_document document
+      -- A sentinel key keeps this a hash join ("lines without a product" have no product id).
+      JOIN per_vendor vendor
+        ON COALESCE(vendor.product_id, '00000000-0000-0000-0000-000000000000'::uuid)
+         = COALESCE(document.product_id, '00000000-0000-0000-0000-000000000000'::uuid)
+      GROUP BY document.product_id
     ),
     named AS (
       SELECT products.*, COALESCE(product.name, 'Lines without a product') AS product_name
@@ -1835,8 +1863,7 @@ BEGIN
               'quantity', grp.quantity,
               'lineCount', grp.line_count,
               'minUnitPrice', grp.min_unit_price,
-              'maxUnitPrice', grp.max_unit_price,
-              'latestUnitPrice', grp.latest_unit_price
+              'maxUnitPrice', grp.max_unit_price
             ) ORDER BY grp.quantity DESC, grp.uom_key NULLS LAST, grp.package_key NULLS LAST)
             FROM unit_groups grp
             WHERE grp.product_id IS NOT DISTINCT FROM page.product_id
@@ -2504,10 +2531,21 @@ BEGIN
       commitment.bucket = 'received_not_settled' AS settlement_candidate
     FROM public.financial_commitment_rows(_organization_id, NULL, NULL) commitment
   ),
+  -- The newest 50 posted documents come straight off invoices_org_posted_spend_idx; only those
+  -- are resolved, and the first 8 that count as spend are shown.
   recent_invoices AS (
     SELECT document.*
-    FROM public.financial_spend_rows(_organization_id, NULL, NULL) document
-    WHERE _is_owner AND document.counted
+    FROM (
+      SELECT invoice.id
+      FROM public.invoices invoice
+      WHERE _is_owner
+        AND invoice.organization_id = _organization_id
+        AND invoice.posted_at IS NOT NULL
+      ORDER BY COALESCE(invoice.invoice_date, (invoice.posted_at AT TIME ZONE 'UTC')::date) DESC
+      LIMIT 50
+    ) candidate
+    CROSS JOIN LATERAL public.financial_spend_rows(_organization_id, NULL, NULL, candidate.id) document
+    WHERE document.counted
     ORDER BY document.spend_date DESC, document.posted_at DESC, document.invoice_id DESC
     LIMIT 8
   )
