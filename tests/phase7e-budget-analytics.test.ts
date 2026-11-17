@@ -721,3 +721,20 @@ test("the migration and behaviour suite cover the locked 7E decisions", () => {
   ])
     assert.match(behavior, pattern);
 });
+
+test("post_reviewed_invoice keeps the 7A.1 body apart from the document-type refusal and posting context", () => {
+  const extract = (sql: string) => {
+    const start = sql.indexOf("CREATE OR REPLACE FUNCTION public.post_reviewed_invoice(");
+    return sql.slice(start, sql.indexOf("$function$;", start));
+  };
+  const before = extract(
+    read("../supabase/migrations/20261021120000_phase7a1_location_aware_inventory.sql"),
+  );
+  const after = extract(migration)
+    .replace(
+      /\n {2}-- Phase 7E: credits and statements never post[\s\S]*?PERFORM set_config\('sportspend\.financial_context', 'post', true\);\n/,
+      "",
+    )
+    .replace("  PERFORM set_config('sportspend.financial_context', '', true);\n\n", "");
+  assert.equal(after, before);
+});

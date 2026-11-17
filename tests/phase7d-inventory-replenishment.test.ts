@@ -683,8 +683,11 @@ test("no silent operational changes: 7D never creates requests, purchases, notif
 });
 
 test("migration: one additive file, RLS and grants, owner-only writes, owner+admin reads", () => {
+  // Later phases add their own migrations; 7D itself is one file after 7C.
   const later = readdir("supabase/migrations").filter(
-    (name) => name > "20261112140000_phase7c_receiving_destination.sql",
+    (name) =>
+      name > "20261112140000_phase7c_receiving_destination.sql" &&
+      name <= "20261113120000_phase7d_inventory_replenishment.sql",
   );
   assert.deepEqual(later, ["20261113120000_phase7d_inventory_replenishment.sql"]);
   assert.match(migration, /^BEGIN;$/m);

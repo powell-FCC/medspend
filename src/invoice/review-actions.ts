@@ -94,7 +94,10 @@ export function toInvoiceReviewError(
     return new InvoiceReviewError("rejected", message);
   }
   // Phase 7E: credit memos and statements are refused by the posting function itself.
-  if (code === "22023" && /^(Credit memos can't be posted|Statements are reference documents)/.test(message)) {
+  if (
+    code === "22023" &&
+    /^(Credit memos can't be posted|Statements are reference documents)/.test(message)
+  ) {
     return new InvoiceReviewError("rejected", message);
   }
   if (code === "42501")

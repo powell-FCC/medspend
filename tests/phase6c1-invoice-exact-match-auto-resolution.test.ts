@@ -239,7 +239,13 @@ test("migration is new, ordered after Phase 6C, transactional, and guarded", () 
   const redefinedBy: Record<string, string[]> = {
     confirm_invoice_item_product: [betaHardening],
     create_product_from_invoice_item: [betaHardening],
-    post_reviewed_invoice: [betaHardening, "20261021120000_phase7a1_location_aware_inventory.sql"],
+    // Phase 7E adds only the credit-memo/statement refusal and the posting context for the
+    // posted-document guards; tests/phase7e-budget-analytics.test.ts holds the rest to 7A.1.
+    post_reviewed_invoice: [
+      betaHardening,
+      "20261021120000_phase7a1_location_aware_inventory.sql",
+      "20261117120000_phase7e_budget_analytics.sql",
+    ],
     adopt_catalog_vendor_product: ["20261019120000_catalog_vendor_management.sql"],
   };
   for (const later of migrations.slice(migrations.indexOf(migrationName) + 1)) {
