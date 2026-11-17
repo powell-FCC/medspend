@@ -286,7 +286,14 @@ export function CumulativeSpendChart({
   series: SpendSeries;
   budgetAmount: number | null;
 }) {
-  const points = cumulativeChartPoints(series, budgetAmount);
+  // A time axis (milliseconds), so the gap between Jan 14 and Oct 12 is drawn to scale and
+  // the even-pace reference stays a straight line.
+  const points = cumulativeChartPoints(series, budgetAmount).map((p) => ({
+    ...p,
+    t: Date.parse(`${p.date}T00:00:00Z`),
+  }));
+  const dayOf = (t: number) => new Date(t).toISOString().slice(0, 10);
+  const monthTicks = series.months.map((m) => Date.parse(`${m.monthStart}T00:00:00Z`));
   return (
     <section
       className={`${panel} p-5`}
@@ -311,8 +318,12 @@ export function CumulativeSpendChart({
           <ComposedChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="#eef1f4" vertical={false} />
             <XAxis
-              dataKey="date"
-              tickFormatter={(d: string) => formatUtcDay(d).replace(/, \d{4}$/, "")}
+              dataKey="t"
+              type="number"
+              scale="time"
+              domain={["dataMin", "dataMax"]}
+              ticks={monthTicks}
+              tickFormatter={(t: number) => formatMonthLabel(dayOf(t))}
               tick={{ fontSize: 11 }}
               minTickGap={24}
             />
@@ -326,7 +337,7 @@ export function CumulativeSpendChart({
                 formatUsd(value),
                 name === "even" ? "Even pace" : "Spent to date",
               ]}
-              labelFormatter={(label: string) => formatUtcDay(label)}
+              labelFormatter={(t: number) => formatUtcDay(dayOf(t))}
             />
             <Area
               type="stepAfter"
