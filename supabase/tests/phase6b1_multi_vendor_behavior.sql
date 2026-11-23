@@ -109,7 +109,7 @@ FROM unnest(ARRAY[
   'MV Catalog', 'MV Catalog Disagree', 'MV Catalog Source Only', 'MV Catalog Quantity', 'MV Malformed',
   'MV Ambiguous', 'MV Non USD', 'MV Age 180', 'MV Age 181', 'Increase Age 180', 'Increase Age 181',
   'Age 90', 'Age 91', 'Age 180', 'Age 181', 'MV Order Confirmation', 'Ambiguous Repeat',
-  'Unmapped Rising', 'Unit Switch']) name;
+  'Unmapped Rising', 'Unit Switch', 'Missing Price']) name;
 INSERT INTO public.products (organization_id, name, approved, active, staff_requestable)
 VALUES ('6b100000-0000-4000-8000-000000000102', 'P6B1 Other Org Tape', true, true, true);
 
@@ -296,6 +296,9 @@ SELECT pg_temp.obs('Unmapped Rising', 1, 'UR-1', 'ea', NULL, 12, 1, 20, 0, 'INVO
 SELECT pg_temp.obs('Unit Switch', 1, 'US-1', 'ea', NULL, 10, 1, 50);
 SELECT pg_temp.obs('Unit Switch', 1, 'US-1', 'bx', NULL, 99, 1, 30);
 SELECT pg_temp.obs('Unit Switch', 1, 'US-1', 'ea', NULL, 12, 1, 20);
+-- A newer line with no price: excluded everywhere (reported as missing price in coverage).
+SELECT pg_temp.obs('Missing Price', 1, 'MP-1', 'ea', NULL, 10, 1, 30);
+SELECT pg_temp.obs('Missing Price', 1, 'MP-1', 'ea', NULL, NULL, 1, 10);
 -- Organization B: never visible to A.
 SELECT pg_temp.obs('Other Org Tape', 4, 'OT-1', 'bx', '12/box', 1, 1, 5);
 
@@ -371,7 +374,7 @@ JOIN public.products p ON p.id = s.product_id;
 CREATE FUNCTION pg_temp.st(_name text)
 RETURNS phase6b1_states LANGUAGE sql STABLE AS $$ SELECT * FROM phase6b1_states WHERE name = _name $$;
 
-SELECT pg_temp.eq((SELECT count(*) FROM phase6b1_states), 41::bigint, 'every purchased product has one state (Never Purchased has none)');
+SELECT pg_temp.eq((SELECT count(*) FROM phase6b1_states), 42::bigint, 'every purchased product has one state (Never Purchased has none)');
 SELECT pg_temp.assert(NOT EXISTS (SELECT 1 FROM phase6b1_states WHERE name = 'Never Purchased'), 'a product without observations has no state');
 
 -- FC Cincinnati regression: the two false increases disappear.
@@ -483,6 +486,9 @@ SELECT pg_temp.eq((pg_temp.st('Age 180')).stale, false, 'age 180 not stale');
 SELECT pg_temp.eq((pg_temp.st('Age 181')).stale, true, 'age 181 stale');
 SELECT pg_temp.eq((pg_temp.st('Age 181')).anchor ->> 'recency', 'stale', 'age 181 recency');
 
+SELECT pg_temp.eq((pg_temp.st('Missing Price')).state, 'one_purchase', 'a line with no price is not an observation');
+SELECT pg_temp.eq((SELECT sum(missing_price_count) FROM public.price_summary_product_states('6b100000-0000-4000-8000-000000000101', pg_temp.today())),
+  1::bigint, 'summary coverage: the line with no price');
 SELECT pg_temp.eq((pg_temp.st('Unmapped Rising')).change_amount, 2::numeric, 'unmapped SKU: same-SKU change from the line SKU');
 SELECT pg_temp.eq((pg_temp.st('Unit Switch')).change_amount, 2::numeric, 'a different-unit row between is skipped (12 vs 10, never 99)');
 
@@ -515,7 +521,7 @@ SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('6b100000-0000-4000-8000-000000000001');
 SELECT pg_temp.keep('summary', public.get_price_intelligence_summary('6b100000-0000-4000-8000-000000000101'));
 RESET ROLE;
-SELECT pg_temp.eq((pg_temp.val('summary') ->> 'productCount')::int, 41, 'summary product count');
+SELECT pg_temp.eq((pg_temp.val('summary') ->> 'productCount')::int, 42, 'summary product count');
 SELECT pg_temp.eq((pg_temp.val('summary') -> 'states' ->> 'insufficient_identity')::int,
   (SELECT count(*)::int FROM phase6b1_states WHERE state = 'insufficient_identity'), 'summary state count');
 SELECT pg_temp.eq((pg_temp.val('summary') -> 'states' ->> 'comparable')::int,
@@ -562,15 +568,15 @@ SELECT pg_temp.keep('increase', pg_temp.walk('recent', 'same_sku_price_increased
 SELECT pg_temp.keep('vendor2', pg_temp.walk('recent', 'all', 50, 50, pg_temp.vendor(2)));
 SELECT pg_temp.keep('first', public.list_price_intelligence_products('6b100000-0000-4000-8000-000000000101'));
 RESET ROLE;
-SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('recent') -> 'rows'), 41, 'recent walk returns every product');
-SELECT pg_temp.eq((SELECT count(DISTINCT r ->> 'productId') FROM jsonb_array_elements(pg_temp.val('recent') -> 'rows') r), 41::bigint, 'no duplicates across pages');
+SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('recent') -> 'rows'), 42, 'recent walk returns every product');
+SELECT pg_temp.eq((SELECT count(DISTINCT r ->> 'productId') FROM jsonb_array_elements(pg_temp.val('recent') -> 'rows') r), 42::bigint, 'no duplicates across pages');
 SELECT pg_temp.assert((SELECT bool_and(a.d >= b.d) FROM (
   SELECT r -> 'lastPurchase' ->> 'purchaseDate' AS d, n
   FROM jsonb_array_elements(pg_temp.val('recent') -> 'rows') WITH ORDINALITY x(r, n)) a
   JOIN (SELECT r -> 'lastPurchase' ->> 'purchaseDate' AS d, n
   FROM jsonb_array_elements(pg_temp.val('recent') -> 'rows') WITH ORDINALITY x(r, n)) b ON b.n = a.n + 1), 'recent order is newest first');
 SELECT pg_temp.eq((pg_temp.val('recent') ->> 'calls')::int, 9, 'pages of five: nine calls');
-SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('byname') -> 'rows'), 41, 'name walk returns every product');
+SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('byname') -> 'rows'), 42, 'name walk returns every product');
 SELECT pg_temp.eq((SELECT array_agg(r ->> 'productName' ORDER BY n) FROM jsonb_array_elements(pg_temp.val('byname') -> 'rows') WITH ORDINALITY x(r, n)),
   (SELECT array_agg(p.name ORDER BY p.normalized_name, p.id) FROM public.products p JOIN phase6b1_states s ON s.product_id = p.id), 'name order');
 SELECT pg_temp.eq((SELECT array_agg(r ->> 'productId' ORDER BY r ->> 'productId') FROM jsonb_array_elements(pg_temp.val('insufficient') -> 'rows') r),
@@ -586,7 +592,7 @@ SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('stalefilter') -> 'rows'),
 SELECT pg_temp.eq((SELECT array_agg(replace(r ->> 'productName', 'P6B1 ', '') ORDER BY r ->> 'productName') FROM jsonb_array_elements(pg_temp.val('increase') -> 'rows') r),
   ARRAY['Clean Rising', 'Increase Age 180', 'Unit Switch', 'Unmapped Rising'], 'same-SKU increases: only valid same-SKU history');
 SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('vendor2') -> 'rows'), 0, 'vendor filter: no product was last bought from vendor 2');
-SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('first') -> 'rows'), 41, 'default page holds 50');
+SELECT pg_temp.eq(jsonb_array_length(pg_temp.val('first') -> 'rows'), 42, 'default page holds 50');
 SELECT pg_temp.eq((pg_temp.val('first') ->> 'exhausted')::boolean, true, 'one page is the whole list');
 SELECT pg_temp.assert((SELECT bool_and(r ? 'lastPurchase' AND r ? 'signals' AND r ? 'state' AND NOT r ? 'unitSavings' AND NOT r ? 'bestAlternative')
   FROM jsonb_array_elements(pg_temp.val('first') -> 'rows') r), 'list rows carry no savings fields');
@@ -694,7 +700,7 @@ SELECT pg_temp.eq((SELECT DISTINCT pg_temp.keys(r -> 'previous') FROM jsonb_arra
   ARRAY['invoiceId', 'invoiceNumber', 'price', 'purchaseDate'], 'old overview previous keys');
 SELECT pg_temp.eq((SELECT DISTINCT pg_temp.keys(r -> 'bestAlternative') FROM jsonb_array_elements(pg_temp.val('old_overview') -> 'rows') r WHERE r -> 'bestAlternative' <> 'null'),
   ARRAY['comparableVendorCount', 'invoiceId', 'invoiceNumber', 'packageSize', 'price', 'purchaseDate', 'unitOfMeasure', 'vendorId', 'vendorName'], 'old overview alternative keys');
-SELECT pg_temp.eq((pg_temp.val('old_overview') ->> 'productCount')::int, 41, 'old overview product count');
+SELECT pg_temp.eq((pg_temp.val('old_overview') ->> 'productCount')::int, 42, 'old overview product count');
 SELECT pg_temp.assert((SELECT bool_and(r -> 'unitSavings' = 'null' AND r -> 'recentAverage' = 'null')
   FROM jsonb_array_elements(pg_temp.val('old_overview') -> 'rows') r), 'old savings and average are always null');
 SELECT pg_temp.eq((SELECT count(*) FROM jsonb_array_elements(pg_temp.val('old_overview') -> 'rows') r WHERE (r ->> 'absoluteChange')::numeric > 0),

@@ -64,21 +64,19 @@ mutants=(
   # Cross-vendor comparability
   "cross-vendor unit equality removed|        AND p.anchor_unit_key = r ->> 'unitKey'
 |"
-  "NULL package accepted across vendors|      AND NULLIF(btrim(b.package_unit), '') IS NOT NULL
-    ), false)|      AND NULLIF(btrim(b.package_unit), '') IS NOT NULL
-    ), true)"
+  "no package evidence agrees|    WHEN _catalog_vendor_product_a IS NULL OR _catalog_vendor_product_b IS NULL THEN false|    WHEN _catalog_vendor_product_a IS NULL OR _catalog_vendor_product_b IS NULL THEN true"
   "differing package text falls back to the catalog|    WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL AND NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
       THEN lower(btrim(_package_a)) = lower(btrim(_package_b))|    WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL AND NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
         AND lower(btrim(_package_a)) = lower(btrim(_package_b))
       THEN true"
-  "catalog agreement with the invoiced unit skipped|        AND public.price_catalog_unit_agrees(a.package_quantity, a.package_description, _unit_key)
-        AND public.price_catalog_unit_agrees(b.package_quantity, b.package_description, _unit_key)
+  "catalog agreement with the invoiced unit skipped|      AND public.price_catalog_unit_agrees(a.package_quantity, a.package_description, _unit_key)
+      AND public.price_catalog_unit_agrees(b.package_quantity, b.package_description, _unit_key)
 |"
-  "source-only catalog packages accepted|        AND a.package_status = 'verified'
-        AND b.package_status = 'verified'
+  "source-only catalog packages accepted|      AND a.package_status = 'verified'
+      AND b.package_status = 'verified'
 |"
-  "catalog quantity mismatch accepted|      SELECT a.package_quantity = b.package_quantity
-        AND|      SELECT"
+  "catalog quantity mismatch accepted|    SELECT a.package_quantity = b.package_quantity
+      AND|    SELECT"
   "quantity 1 agrees with any unit|    WHEN _quantity = 1 THEN _unit_key IN ('ea', 'each')|    WHEN _quantity = 1 THEN true"
   "lower-price signal on equal prices|      CASE WHEN marked.numbers AND marked.anchor_price > marked.cheapest_price|      CASE WHEN marked.numbers AND marked.anchor_price >= marked.cheapest_price"
   "a tie ranks the other vendor|      CASE WHEN marked.anchor_price <= marked.cheapest_price THEN marked.anchor_id ELSE marked.cheapest_id END, _today)|      CASE WHEN marked.anchor_price < marked.cheapest_price THEN marked.anchor_id ELSE marked.cheapest_id END, _today)"
@@ -122,14 +120,32 @@ mutants=(
   "several SKUs show a price|        WHEN r.state IS NULL OR r.state = 'insufficient_identity' THEN NULL
         ELSE jsonb_build_object(|        WHEN r.state IS NULL THEN NULL
         ELSE jsonb_build_object("
+  # Summary counting path (price_summary_*): each must still equal price_product_state.
+  "summary counts non-USD as USD|      (invoice.currency_code IS NULL OR btrim(invoice.currency_code) = ''
+        OR upper(btrim(invoice.currency_code)) = 'USD') AS usd_basis,|      true AS usd_basis,"
+  "summary validity ignores price|            AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) >= 0
+            AND history.quantity > 0 THEN 4 ELSE 0 END)|            THEN 4 ELSE 0 END)"
+  "summary loses order confirmations|       + (CASE WHEN flag.order_confirmation THEN 8 ELSE 0 END)|       + 0"
+  "summary loses missing packages|       + (CASE WHEN NULLIF(btrim(history.package_size), '') IS NULL THEN 32 ELSE 0 END)|       + 0"
+  "summary ignores mapped SKU identities|       OR COALESCE(mk.key_count, 0) > 1
+|"
+  "summary ignores unmapped lines without a SKU|      COALESCE(bool_or(k.no_sku_n > 0) FILTER (WHERE k.valid), false) AS missing_sku,|      false AS missing_sku,"
+  "summary counts valid units as problems|      (COALESCE(sum(k.n) FILTER (WHERE k.valid AND NOT k.unit_valid), 0))::integer AS unit_problem_n|      (COALESCE(sum(k.n) FILTER (WHERE k.valid), 0))::integer AS unit_problem_n"
+  "summary freshness at 181 days|      GREATEST(_today - p.dates[1], 0) <= 180 AS rep_fresh,|      GREATEST(_today - p.dates[1], 0) <= 181 AS rep_fresh,"
+  "summary prior ignores the unit|        AND public.price_unit_key(p.units[2]) IS NOT DISTINCT FROM public.price_unit_key(p.units[1])
+|"
+  "summary increase on a stale anchor|      CASE WHEN s.state <> 'insufficient_identity' AND s.anchor_fresh AND s.anchor_unit_valid THEN CASE|      CASE WHEN s.state <> 'insufficient_identity' AND s.anchor_unit_valid THEN CASE"
+  "summary malformed units are not identity problems|        WHEN p.multiple_skus OR p.missing_sku OR p.missing_unit OR p.malformed_unit THEN 'insufficient_identity'|        WHEN p.multiple_skus OR p.missing_sku OR p.missing_unit THEN 'insufficient_identity'"
+  "summary stale anchor not marked|      (NOT d.anchor_fresh OR d.withheld IS NOT DISTINCT FROM 'stale') AS is_stale|      (d.withheld IS NOT DISTINCT FROM 'stale') AS is_stale"
+  "summary lower-price signal on equal prices|      CASE WHEN f.numbers AND f.anchor_price > f.cheapest_price THEN 'lower_comparable_price_other_vendor' END,|      CASE WHEN f.numbers AND f.anchor_price >= f.cheapest_price THEN 'lower_comparable_price_other_vendor' END,"
 )
 
 python3 - "$migration" "$work/functions.sql" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 found = re.findall(r"(CREATE (?:OR REPLACE )?FUNCTION .*?\nAS (\$\$|\$function\$)\n.*?\n\2;)", text, re.S)
-if len(found) != 17:
-    sys.exit(f"expected the migration's 17 functions, found {len(found)}")
+if len(found) != 21:
+    sys.exit(f"expected the migration's 21 functions, found {len(found)}")
 open(sys.argv[2], "w").write("\n".join(block for block, _ in found))
 PY
 
