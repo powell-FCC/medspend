@@ -218,10 +218,12 @@ BEGIN
     '6b000000-0000-4000-8000-000000000201'
   );
   _percent := (_result #>> '{summary,percentChange}')::numeric;
+  -- Phase 6B.1: the previous price is the same vendor, SKU and unit (Vendor A's 23), never
+  -- Vendor B's 24 in boxes.
   IF (_result #>> '{summary,latestPrice}')::numeric <> 25
-     OR (_result #>> '{summary,previousPrice}')::numeric <> 24
-     OR (_result #>> '{summary,absoluteChange}')::numeric <> 1
-     OR abs(_percent - (100::numeric / 24)) > 0.000001
+     OR (_result #>> '{summary,previousPrice}')::numeric <> 23
+     OR (_result #>> '{summary,absoluteChange}')::numeric <> 2
+     OR abs(_percent - (200::numeric / 23)) > 0.000001
      OR (_result #>> '{summary,historicalLow}')::numeric <> 1
      OR (_result #>> '{summary,historicalHigh}')::numeric <> 25
      OR (_result #>> '{summary,observationCount}')::integer <> 25 THEN
