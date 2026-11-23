@@ -156,7 +156,7 @@ for (const [name, org, viewer, budgetSummary] of [
         getPriceIntelligenceSummary(db, userId, org),
       );
       // Every club product is bought; 4 university products never are (fixture arithmetic).
-    assert.equal(summary.productCount, org === CLUB ? 5000 : 24996);
+      assert.equal(summary.productCount, org === CLUB ? 5000 : 24996);
       assert.ok(
         summaryMs < budgetSummary,
         `summary p95 ${summaryMs.toFixed(0)} ms (ceiling ${budgetSummary} ms)`,
