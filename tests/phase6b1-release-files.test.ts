@@ -56,7 +56,7 @@ test("the fingerprint reports per-organization price state only after the migrat
 test("the README documents order, expected differences, FC Cincinnati and the benchmark exception", () => {
   const readme = read("README.md");
   for (const phrase of [
-    "208 → 223",
+    "208 → 227",
     "207 → 209",
     "Run and enable RLS",
     "Expected differences",

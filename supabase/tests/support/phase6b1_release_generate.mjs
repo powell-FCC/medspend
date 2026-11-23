@@ -35,6 +35,7 @@ const NEW_FUNCTIONS = [
   "get_product_vendor_price_history",
   "get_supply_request_price_context",
   "list_price_intelligence_products",
+  "price_catalog_package_agreement",
   "price_catalog_unit_agrees",
   "price_name_anchors",
   "price_observation_evidence",
@@ -45,6 +46,9 @@ const NEW_FUNCTIONS = [
   "price_recent_anchors",
   "price_row_is_valid",
   "price_unit_is_valid",
+  "price_summary_flagged_invoices",
+  "price_summary_groups",
+  "price_summary_product_states",
   "price_unit_key",
 ];
 // Changed by 6B.1 with the same signatures and result keys.

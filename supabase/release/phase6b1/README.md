@@ -14,7 +14,7 @@ Locked product rules (2026-11-22): a price observation is a posted invoice or or
 
 - **Indexes** on `inventory_price_history`: `inventory_price_history_product_vendor_order_idx` (organization, product, vendor, purchase date, created, id) and `inventory_price_history_org_recent_idx` (organization, purchase date, created, id, newest first, for the keyset list).
 - **New client functions** (`authenticated` EXECUTE; owner/admin checked inside through 7E's `financial_assert_access`): `list_price_intelligence_products` (keyset pages by last purchase or product name; filters scan at most 1,000 products per call and return a cursor), `get_price_intelligence_summary`, `get_product_vendor_price_history` (product or inventory item), `get_supply_request_price_context`.
-- **New internal functions** (no client EXECUTE): `price_unit_key`, `price_unit_is_valid`, `price_recency`, `price_catalog_unit_agrees`, `price_package_agreement`, `price_row_is_valid`, `price_observation_rows`, `price_recent_anchors`, `price_name_anchors`, `price_observation_evidence`, `price_product_state` (the only implementation of the comparison rules).
+- **New internal functions** (no client EXECUTE): `price_unit_key`, `price_unit_is_valid`, `price_recency`, `price_catalog_unit_agrees`, `price_package_agreement`, `price_catalog_package_agreement`, `price_row_is_valid`, `price_observation_rows`, `price_recent_anchors`, `price_name_anchors`, `price_observation_evidence`, `price_product_state` (the canonical comparison rules), and the summary's counting path `price_summary_flagged_invoices`, `price_summary_groups`, `price_summary_product_states` (the same rules executed for counts only; the behaviour suite and the benchmark assert it equals `price_product_state` for every product).
 - **Changed functions** (same signatures, exactly the same JSON keys): `get_price_intelligence_overview` and `get_product_price_intelligence` now follow the rules above. Changes never cross SKU, vendor or unit; `bestAlternative` appears only when strictly comparable and recent; `unitSavings` and `recentAverage` are always `null`.
 
 The preflight refuses to run when 7E is missing, any 6B.1 object exists, or the database TimeZone is not UTC. No row of any table is written.
@@ -50,10 +50,10 @@ Run each file as its own query: paste the whole file, run it once, and read the 
 
 ## Expected differences (precheck → postcheck)
 
-- **New functions** (`absent` → hash): the 15 listed above. Client RPCs: `secdef=true authenticated=true anon=false service_role=true public=false`; internal ones `secdef=false authenticated=false anon=false service_role=false public=false`. Their `overloads` lines go from `0` to `1`.
+- **New functions** (`absent` → hash): the 19 listed above. Client RPCs: `secdef=true authenticated=true anon=false service_role=true public=false`; internal ones `secdef=false authenticated=false anon=false service_role=false public=false`. Their `overloads` lines go from `0` to `1`.
 - **Changed functions** (new hash, same access, one overload each): `get_price_intelligence_overview`, `get_product_price_intelligence`.
 - **New indexes**: `inventory_price_history_product_vendor_order_idx`, `inventory_price_history_org_recent_idx`.
-- **Counts**: public functions +15, indexes +2; tables, policies and triggers unchanged. On the production baseline: functions 208 → 223, tables 55, indexes 207 → 209, policies 58, triggers 89.
+- **Counts**: public functions +19, indexes +2; tables, policies and triggers unchanged. On the production baseline: functions 208 → 227, tables 55, indexes 207 → 209, policies 58, triggers 89.
 - **Price lines**: `absent` → the per-organization figures (FC Cincinnati above).
 
 Everything else must be identical, including every price history, invoice, line, upload, vendor, mapping, product, alias, catalog listing, budget, request, commitment, inventory, rule, removal, notification, organization, membership and profile hash. Real use between the precheck and the postcheck (a document posted) changes the matching `rows` lines.
@@ -72,7 +72,7 @@ Acceptance is read-only: do not post, remove or edit anything for it.
 
 ## Benchmark exception
 
-`supabase/tests/run_phase6b1_price_integration.sh` (250,000 and 1,000,000 observations through PostgREST): list pages, filtered scan chunks, product history and request context are well inside their targets at both sizes. The summary (filter counts) meets its 1 s target at 250,000 observations but takes about 4 s at 1,000,000, because it must read every observation. The list never waits for it (counts appear when it arrives). FC Cincinnati has 81 observations.
+`supabase/tests/run_phase6b1_price_integration.sh` measures every read through PostgREST at 250,000 and 1,000,000 observations. List pages, filtered scans, product history and request context are well inside their targets. The summary (filter counts) reads every observation once, in one hash-aggregated pass with one index probe per product and vendor; it builds no evidence and spills nothing to disk. At 250,000 observations it takes p50 212 ms / p95 240 ms. At 1,000,000 observations it takes p50 1,046 ms / p95 1,233 ms (an earlier run: p95 1,180 ms), down from about 3.7 s before the counting path. The 1M summary p95 modestly exceeds the original 1.0 s target but is accepted for V1 because direct SQL is exact, bounded, substantially improved from ~3.7 s, and avoiding persistent derived state is preferable at this stage. The harness asserts that the counting path equals `price_product_state` for every product at both sizes, that no sort reaches disk, and that temporary writes stay under 8 MB (587 blocks measured). The list never waits for the summary (counts appear when it arrives). FC Cincinnati has 81 observations.
 
 ## Provenance
 

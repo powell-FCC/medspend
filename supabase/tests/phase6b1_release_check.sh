@@ -182,7 +182,7 @@ expect_failure "second application" "Phase 6B.1 multi-vendor intelligence object
 expect_failure "precheck after the migration" "precheck: Phase 6B.1 objects already exist" readonly_editor "$release/precheck.sql"
 cmp -s "$work/post.txt" <(fingerprint) || fail "the refused reapplication changed something"
 
-new_functions='price_unit_key|price_unit_is_valid|price_recency|price_catalog_unit_agrees|price_package_agreement|price_row_is_valid|price_observation_rows|price_recent_anchors|price_name_anchors|price_observation_evidence|price_product_state|list_price_intelligence_products|get_price_intelligence_summary|get_product_vendor_price_history|get_supply_request_price_context'
+new_functions='price_unit_key|price_unit_is_valid|price_recency|price_catalog_unit_agrees|price_package_agreement|price_row_is_valid|price_observation_rows|price_recent_anchors|price_name_anchors|price_observation_evidence|price_product_state|price_catalog_package_agreement|price_summary_flagged_invoices|price_summary_groups|price_summary_product_states|list_price_intelligence_products|get_price_intelligence_summary|get_product_vendor_price_history|get_supply_request_price_context'
 changed_functions='get_price_intelligence_overview|get_product_price_intelligence'
 strip() { grep -v -E "^(function|overloads) \| ($new_functions|$changed_functions) \| " "$1" \
   | grep -v -E "^index \| (inventory_price_history_product_vendor_order_idx|inventory_price_history_org_recent_idx) \| " \
@@ -190,13 +190,13 @@ strip() { grep -v -E "^(function|overloads) \| ($new_functions|$changed_function
   | grep -v -E '^count \| public (functions|indexes) \| '; }
 diff <(strip "$work/pre.txt") <(strip "$work/post.txt") || fail "precheck/postcheck differ outside the documented lines"
 delta() { echo $(( $(grep -F "count | public $1 |" "$work/post.txt" | awk -F' [|] ' '{print $3}') - $(grep -F "count | public $1 |" "$work/pre.txt" | awk -F' [|] ' '{print $3}') )); }
-[ "$(delta functions)" = "15" ] && [ "$(delta tables)" = "0" ] && [ "$(delta indexes)" = "2" ] \
+[ "$(delta functions)" = "19" ] && [ "$(delta tables)" = "0" ] && [ "$(delta indexes)" = "2" ] \
   && [ "$(delta policies)" = "0" ] && [ "$(delta triggers)" = "0" ] \
   || fail "unexpected object deltas: functions $(delta functions) tables $(delta tables) indexes $(delta indexes) policies $(delta policies) triggers $(delta triggers)"
 for table in inventory_price_history invoices invoice_items vendor_products products supply_requests supply_request_items inventory_items; do
   [ "$(grep -F "rows | $table hash |" "$work/pre.txt")" = "$(grep -F "rows | $table hash |" "$work/post.txt")" ] || fail "$table changed"
 done
-echo "ok - pre/post differ only in documented lines: +15 functions, 2 changed, +2 indexes, the price line; no row changed"
+echo "ok - pre/post differ only in documented lines: +19 functions, 2 changed, +2 indexes, the price line; no row changed"
 
 expected_price="products=15 | observations=22 | insufficient_identity=5 | multiple_skus=5 | one_purchase=8 | single_vendor=2 | comparable=0 | missing_package_details=0 | incompatible_units=0 | same_sku_increases=0 | lower_comparable=0"
 grep -qF "price | $org | $expected_price" "$work/post.txt" || fail "price line: $(grep "^price | $org" "$work/post.txt")"

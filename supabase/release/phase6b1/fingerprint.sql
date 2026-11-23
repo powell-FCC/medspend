@@ -33,6 +33,10 @@ SELECT section, key, value FROM (
     ('price_name_anchors'),
     ('price_observation_evidence'),
     ('price_product_state'),
+    ('price_catalog_package_agreement'),
+    ('price_summary_flagged_invoices'),
+    ('price_summary_groups'),
+    ('price_summary_product_states'),
     ('list_price_intelligence_products'),
     ('get_price_intelligence_summary'),
     ('get_product_vendor_price_history'),
@@ -119,7 +123,8 @@ SELECT section, key, value FROM (
   SELECT 2, 'overloads', fn.name, count(p.oid)::text
   FROM (VALUES ('get_price_intelligence_overview'), ('get_product_price_intelligence'), ('price_product_state'),
                ('price_observation_rows'), ('list_price_intelligence_products'), ('get_price_intelligence_summary'),
-               ('get_product_vendor_price_history'), ('get_supply_request_price_context')) AS fn(name)
+               ('get_product_vendor_price_history'), ('get_supply_request_price_context'),
+               ('price_summary_product_states')) AS fn(name)
   LEFT JOIN pg_proc p ON p.proname = fn.name AND p.pronamespace = 'public'::regnamespace
   GROUP BY fn.name
 

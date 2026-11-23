@@ -34,20 +34,24 @@ BEGIN
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = expected.name ORDER BY p.oid LIMIT 1), 'absent'))
     FROM (VALUES
-      ('get_price_intelligence_summary', '8631d2c8937cbbd572ca58b247bfe4aa secdef=true authenticated=true anon=false service_role=true public=false'),
+      ('get_price_intelligence_summary', '67329e91e08a4fd9011a1c681a7b2aa1 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('get_product_vendor_price_history', 'ecb7918693fefa1fa1b9a2f13a3a67d0 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('get_supply_request_price_context', 'e8a43186d246e62eeded7c27cadf6ca1 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('list_price_intelligence_products', '9079e327227131398e9c5c91fb0565ec secdef=true authenticated=true anon=false service_role=true public=false'),
+      ('price_catalog_package_agreement', 'd33d918453d36e2e0d06dfa93703deaf secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_catalog_unit_agrees', '3ca196b7f2d89c42dc0b3f1ead58b3a2 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_name_anchors', '4fb0880db42390aa5c7b0a1ce7465fc3 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_observation_evidence', '15081d61dc47831f94cceeb6debf8e26 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_observation_rows', '4cd335de010bf74214349e2c8671fc2e secdef=false authenticated=false anon=false service_role=false public=false'),
-      ('price_package_agreement', '607cb3f558878ab168fa367203a9cb5c secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('price_package_agreement', '5bbdf26bb9dd166184fc71e8bcbd12e3 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_product_state', '5db90470c261d6aaa62bb7050b41fbba secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_recency', 'fb403da288c6e437f9aa519510593431 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_recent_anchors', '36886a9ddb97afefc6a562035fec27aa secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_row_is_valid', '2e85fbbe4ff80187affd0209409f950a secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_unit_is_valid', 'c2674c12ffefef577bc32592365d0860 secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('price_summary_flagged_invoices', 'b587ef4bca59e5eb23fc62de51373e2a secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('price_summary_groups', 'dc0cb0c506c16407611f3c2054b63eeb secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('price_summary_product_states', '63f42a9b2a60e1e79e29014eb8bab261 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_unit_key', '7a7e2d23bf9282f611c5475fac69d97b secdef=false authenticated=false anon=false service_role=false public=false')
     ) AS expected(name, value)
     WHERE coalesce((
@@ -254,13 +258,13 @@ BEGIN
     PERFORM set_config('request.jwt.claim.sub', '', true);
   END IF;
 
-  IF (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace) <> 223
+  IF (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace) <> 227
      OR (SELECT count(*) FROM pg_tables WHERE schemaname = 'public') <> 55
      OR (SELECT count(*) FROM pg_indexes WHERE schemaname = 'public') <> 209
      OR (SELECT count(*) FROM pg_policies WHERE schemaname = 'public') <> 58
      OR (SELECT count(*) FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
          WHERE c.relnamespace = 'public'::regnamespace AND NOT tg.tgisinternal) <> 89 THEN
-    RAISE EXCEPTION '%: public object counts differ from the reviewed state (expected functions 223, tables 55, indexes 209, policies 58, triggers 89)', _stage;
+    RAISE EXCEPTION '%: public object counts differ from the reviewed state (expected functions 227, tables 55, indexes 209, policies 58, triggers 89)', _stage;
   END IF;
 END
 $phase6b1_postcheck$;
@@ -294,6 +298,10 @@ SELECT section, key, value FROM (
     ('price_name_anchors'),
     ('price_observation_evidence'),
     ('price_product_state'),
+    ('price_catalog_package_agreement'),
+    ('price_summary_flagged_invoices'),
+    ('price_summary_groups'),
+    ('price_summary_product_states'),
     ('list_price_intelligence_products'),
     ('get_price_intelligence_summary'),
     ('get_product_vendor_price_history'),
@@ -380,7 +388,8 @@ SELECT section, key, value FROM (
   SELECT 2, 'overloads', fn.name, count(p.oid)::text
   FROM (VALUES ('get_price_intelligence_overview'), ('get_product_price_intelligence'), ('price_product_state'),
                ('price_observation_rows'), ('list_price_intelligence_products'), ('get_price_intelligence_summary'),
-               ('get_product_vendor_price_history'), ('get_supply_request_price_context')) AS fn(name)
+               ('get_product_vendor_price_history'), ('get_supply_request_price_context'),
+               ('price_summary_product_states')) AS fn(name)
   LEFT JOIN pg_proc p ON p.proname = fn.name AND p.pronamespace = 'public'::regnamespace
   GROUP BY fn.name
 
