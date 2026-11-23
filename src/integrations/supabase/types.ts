@@ -2836,6 +2836,36 @@ export type Database = {
         Args: { _organization_id: string }
         Returns: Json
       }
+      list_price_intelligence_products: {
+        Args: {
+          _organization_id: string
+          _sort?: string
+          _filter?: string
+          _vendor_id?: string | null
+          _cursor?: Json | null
+          _limit?: number
+          _scan_limit?: number
+        }
+        Returns: Json
+      }
+      get_price_intelligence_summary: {
+        Args: { _organization_id: string }
+        Returns: Json
+      }
+      get_product_vendor_price_history: {
+        Args: {
+          _organization_id: string
+          _product_id?: string | null
+          _inventory_item_id?: string | null
+          _cursor?: Json | null
+          _limit?: number
+        }
+        Returns: Json
+      }
+      get_supply_request_price_context: {
+        Args: { _organization_id: string; _request_id: string }
+        Returns: Json
+      }
       get_budget_summary: {
         Args: { _organization_id: string; _budget_id: string }
         Returns: { budget_id: string; budget_name: string; period_start: string; period_end: string; budget_amount: number; actual_spend: number; committed_spend: number; available_amount: number; remaining_amount: number; posted_invoice_count: number; active_commitment_count: number; incomplete_commitment_count: number }[]

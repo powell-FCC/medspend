@@ -2,16 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
-  formatPrice,
-  formatPriceChange,
-  type PriceIntelligenceSummary,
-} from "../src/price-intelligence/price-intelligence.ts";
+  sameSkuChangeText,
+  formatUsd,
+} from "../src/price-intelligence/vendor-intelligence.ts";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const migration = read("../supabase/migrations/20260921120000_phase6b_price_intelligence.sql");
 const behavior = read("../supabase/tests/phase6b_price_intelligence_behavior.sql");
 const server = read("../src/lib/price-intelligence.functions.ts");
-const panel = read("../src/components/catalog/ProductPriceIntelligence.tsx");
+// Phase 6B.1 replaced the 6B catalog panel with the shared product vendor history.
+const panel = read("../src/components/price-intelligence/PriceIntelligenceSections.tsx");
+const history = read("../src/components/price-intelligence/ProductVendorHistory.tsx");
 const catalogPage = read("../src/components/catalog/CatalogAdminPage.tsx");
 const staffShell = read("../src/components/app/StaffAppShell.tsx");
 const staffRequest = read("../src/routes/_authenticated/staff/request.tsx");
@@ -19,17 +20,6 @@ const staffRequests = read("../src/routes/_authenticated/staff/requests.tsx");
 const generatedTypes = read("../src/integrations/supabase/types.ts");
 const docs = read("../docs/phase6b-price-intelligence.md");
 
-const summary = (overrides: Partial<PriceIntelligenceSummary> = {}): PriceIntelligenceSummary => ({
-  latestPrice: 42.5,
-  latestPriceDate: "2026-09-20",
-  previousPrice: 39,
-  absoluteChange: 3.5,
-  percentChange: 8.974358974,
-  historicalLow: 35,
-  historicalHigh: 42.5,
-  observationCount: 3,
-  ...overrides,
-});
 
 test("6B reuses authoritative inventory price history instead of creating a second ledger", () => {
   assert.match(migration, /FROM public\.inventory_price_history history/);
@@ -105,7 +95,8 @@ test("absolute, percent, range, and observation metrics are database-computed", 
   assert.match(migration, /count\(\*\)::integer AS observation_count/);
   for (const expected of [
     "latestPrice.*25",
-    "previousPrice.*24",
+    // Phase 6B.1: the previous price is the same vendor, SKU and unit (23), never 24.
+    "previousPrice.*23",
     "historicalLow.*1",
     "historicalHigh.*25",
     "observationCount.*25",
@@ -120,24 +111,14 @@ test("zero or missing previous price never produces an invalid percentage", () =
     /summary\.previous_price IS NULL[\s\S]*summary\.previous_price = 0 THEN NULL/,
   );
   assert.match(behavior, /summary,previousPrice.*<> 0[\s\S]*summary,percentChange.*'null'::jsonb/);
-  assert.equal(
-    formatPriceChange(summary({ previousPrice: null, absoluteChange: null, percentChange: null })),
-    "No comparable prior purchase",
-  );
-  assert.equal(
-    formatPriceChange(summary({ previousPrice: 0, absoluteChange: 5, percentChange: null })),
-    "+$5.00",
-  );
+  assert.equal(sameSkuChangeText(null, null), null);
+  assert.equal(sameSkuChangeText(5, null), "Price increased +$5.00");
 });
 
 test("neutral display formatting reports increases and decreases without procurement advice", () => {
-  assert.equal(formatPrice(42.5), "$42.50");
-  assert.equal(formatPrice(null), "Unavailable");
-  assert.equal(formatPriceChange(summary()), "+$3.50 (+9.0%)");
-  assert.equal(
-    formatPriceChange(summary({ absoluteChange: -4.2, percentChange: -8.4 })),
-    "−$4.20 (−8.4%)",
-  );
+  assert.equal(formatUsd(42.5), "$42.50");
+  assert.equal(sameSkuChangeText(3.5, 8.974358974), "Price increased +$3.50 (+9.0%)");
+  assert.equal(sameSkuChangeText(-4.2, -8.4), "Price decreased −$4.20 (−8.4%)");
   assert.doesNotMatch(panel, /bad price|overpriced|great deal|should switch|wasting money/i);
 });
 
@@ -157,14 +138,12 @@ test("package mismatch remains raw evidence and never creates normalized unit ec
   assert.match(migration, /'status', 'not_verified'/);
   assert.match(migration, /'normalizedUnitEconomicsAvailable', false/);
   assert.doesNotMatch(rpcBody, /package_quantity|normalized_unit_(?:cost|price)|cheaper|savings/i);
-  assert.match(panel, /Vendor price comparison unavailable/);
-  assert.match(panel, /without a[\s\S]*cheaper-vendor conclusion/);
+  assert.match(panel, /Prices[\s\S]*are not compared/);
 });
 
 test("currency exclusions are explicit and no FX logic exists", () => {
   assert.match(migration, /excludedUnknownCurrencyCount/);
   assert.match(migration, /excludedNonUsdCount/);
-  assert.match(panel, /unknown currency/);
   assert.match(panel, /non-USD/);
   assert.doesNotMatch(migration + server, /exchange_rate|fx_rate|convert_currency/i);
 });
@@ -196,24 +175,24 @@ test("every displayed purchase carries invoice and line provenance", () => {
     assert.match(migration, new RegExp(`'${field}'`));
   }
   assert.match(migration, /'posted_invoice_purchase_history'/);
-  assert.match(panel, /Posted invoice/);
+  assert.match(panel, /sourceLabel\(o\.documentType, o\.dateBasis\)/);
 });
 
 test("catalog detail loads price intelligence only from an adopted organization product", () => {
   assert.match(catalogPage, /organizationProductId=\{row\?\.organizationProductId \?\? null\}/);
-  assert.match(catalogPage, /<ProductPriceIntelligence/);
-  assert.match(panel, /enabled: Boolean\(productId\)/);
+  assert.match(catalogPage, /<ProductVendorHistory/);
+  assert.match(catalogPage, /organizationProductId \?/);
   assert.match(
-    panel,
+    catalogPage,
     /Adopt this catalog identity before organization purchase history can be shown/,
   );
+  assert.match(history, /getProductVendorHistoryFn/);
 });
 
 test("server wrapper requires authentication and delegates all financial calculation to the RPC", () => {
   assert.match(server, /middleware\(\[requireSupabaseAuth\]\)/);
-  assert.match(server, /rpc\(\s*"get_product_price_intelligence"/);
-  assert.match(server, /_organization_id: data\.organizationId/);
-  assert.match(server, /_product_id: data\.productId/);
+  // Phase 6B.1: the wrappers delegate to src/price-intelligence/data.ts, which calls the RPCs.
+  assert.match(server, /getProductVendorHistory\(/);
   assert.doesNotMatch(server, /inventory_price_history|absoluteChange\s*=|percentChange\s*=/);
 });
 
@@ -221,7 +200,7 @@ test("staff UX has no price-intelligence imports or rendering", () => {
   for (const source of [staffShell, staffRequest, staffRequests]) {
     assert.doesNotMatch(
       source,
-      /price-intelligence|ProductPriceIntelligence|getProductPriceIntelligence/i,
+      /price-intelligence|ProductPriceIntelligence|ProductVendorHistory|getProductPriceIntelligence/i,
     );
   }
 });

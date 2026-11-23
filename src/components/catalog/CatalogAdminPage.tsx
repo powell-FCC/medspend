@@ -9,7 +9,7 @@ import {
   CatalogStockDialog,
   type CatalogStockSubmission,
 } from "@/components/catalog/CatalogStockDialog";
-import { ProductPriceIntelligence } from "@/components/catalog/ProductPriceIntelligence";
+import { ProductVendorHistory } from "@/components/price-intelligence/ProductVendorHistory";
 import {
   Sheet,
   SheetContent,
@@ -638,7 +638,18 @@ function CatalogDetail({
           </p>
         )}
       </DetailSection>
-      <ProductPriceIntelligence organizationId={organizationId} productId={organizationProductId} />
+      <DetailSection title="Purchase history">
+        {organizationProductId ? (
+          <ProductVendorHistory
+            organizationId={organizationId}
+            target={{ productId: organizationProductId }}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Adopt this catalog identity before organization purchase history can be shown.
+          </p>
+        )}
+      </DetailSection>
       <DetailSection title="Lifecycle">
         <DetailGrid
           entries={[

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../integrations/supabase/types.ts";
 import { assertBudgetAdmin } from "../budget/data.ts";
-import { lineageSchema, overviewSchema, priceOverviewSchema } from "./command-center.ts";
+import { lineageSchema, overviewSchema } from "./command-center.ts";
 
 // Each RPC enforces owner/admin membership itself; the membership check here only turns
 // a refusal into a clear message before any aggregation runs.
@@ -38,17 +38,4 @@ export async function getBudgetLineage(
   });
   if (error) throw rpcError(error, "Unable to load budget detail");
   return lineageSchema.parse(data);
-}
-
-export async function getPriceIntelligenceOverview(
-  db: SupabaseClient<Database>,
-  userId: string,
-  organizationId: string,
-) {
-  await assertBudgetAdmin(db, userId, organizationId);
-  const { data, error } = await db.rpc("get_price_intelligence_overview", {
-    _organization_id: organizationId,
-  });
-  if (error) throw rpcError(error, "Unable to load price intelligence");
-  return priceOverviewSchema.parse(data);
 }

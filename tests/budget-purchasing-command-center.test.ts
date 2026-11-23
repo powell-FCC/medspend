@@ -16,26 +16,15 @@ import {
   budgetsOverlap,
   daysAgo,
   defaultScopeId,
-  filterPriceRows,
-  isPriceIncrease,
-  isSavingsOpportunity,
   overviewSchema,
-  priceOverviewSchema,
   scopeOptions,
-  sortPriceRows,
   summarizeScope,
   utilizationRatio,
   utilizationSegments,
   type BudgetRow,
   type CommandCenterOverview,
-  type PriceOverview,
-  type PriceRow,
 } from "../src/budget-purchasing/command-center.ts";
-import {
-  getBudgetLineage,
-  getCommandCenterOverview,
-  getPriceIntelligenceOverview,
-} from "../src/budget-purchasing/data.ts";
+import { getBudgetLineage, getCommandCenterOverview } from "../src/budget-purchasing/data.ts";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const migration = read(
@@ -126,100 +115,6 @@ const overview = (overrides: Partial<CommandCenterOverview> = {}): CommandCenter
   ...overrides,
 });
 
-const priceRow = (n: number, overrides: Partial<PriceRow> = {}): PriceRow => ({
-  productId: uuid(400 + n),
-  productName: `Product ${n}`,
-  comparability: "comparable",
-  current: {
-    observationId: uuid(500 + n),
-    vendorId: uuid(301),
-    vendorName: "Vendor A",
-    price: 118,
-    purchaseDate: "2027-02-25",
-    invoiceId: uuid(600 + n),
-    invoiceNumber: `INV-${n}`,
-    quantity: 3,
-    unitOfMeasure: "case",
-    packageSize: "case of 12",
-  },
-  previous: {
-    price: 104,
-    purchaseDate: "2027-01-10",
-    invoiceId: uuid(700 + n),
-    invoiceNumber: `PREV-${n}`,
-  },
-  absoluteChange: 14,
-  percentChange: 13.461538,
-  recentAverage: {
-    average: 111,
-    observationCount: 2,
-    windowStart: "2026-11-28",
-    windowEnd: "2027-02-25",
-  },
-  bestAlternative: {
-    vendorId: uuid(302),
-    vendorName: "Vendor B",
-    price: 106.2,
-    purchaseDate: "2027-01-20",
-    invoiceId: uuid(800 + n),
-    invoiceNumber: `ALT-${n}`,
-    unitOfMeasure: "case",
-    packageSize: "case of 12",
-    comparableVendorCount: 1,
-  },
-  unitSavings: 11.8,
-  ...overrides,
-});
-const tape = priceRow(1, { productName: "KT Tape" });
-const gauze = priceRow(2, {
-  productName: "Gauze",
-  current: {
-    ...priceRow(2).current,
-    vendorId: uuid(302),
-    vendorName: "Vendor B",
-    price: 20,
-    purchaseDate: "2027-03-01",
-  },
-  previous: { price: 25, purchaseDate: "2027-02-01", invoiceId: uuid(702), invoiceNumber: null },
-  absoluteChange: -5,
-  percentChange: -20,
-  bestAlternative: null,
-  unitSavings: null,
-});
-const wrap = priceRow(3, {
-  productName: "Wrap",
-  comparability: "missing_unit_of_measure",
-  current: {
-    ...priceRow(3).current,
-    unitOfMeasure: null,
-    packageSize: null,
-    price: 5,
-    purchaseDate: "2027-01-05",
-  },
-  previous: null,
-  absoluteChange: null,
-  percentChange: null,
-  recentAverage: null,
-  bestAlternative: null,
-  unitSavings: null,
-});
-const ice = priceRow(4, {
-  productName: "Ice",
-  previous: null,
-  absoluteChange: null,
-  percentChange: null,
-  current: { ...priceRow(4).current, price: 10 },
-  bestAlternative: { ...priceRow(4).bestAlternative!, price: 12 },
-  unitSavings: null,
-});
-const prices = (rows: PriceRow[] = [tape, gauze, wrap, ice]): PriceOverview => ({
-  organizationId: org,
-  currencyCode: "USD",
-  averageWindowDays: 90,
-  productLimit: 500,
-  productCount: rows.length,
-  rows,
-});
 
 // ---------------------------------------------------------------------------
 // Financial summary
@@ -374,61 +269,7 @@ test("admins (not owners) get no invoice review item because invoice screens are
   assert.match(rendered, /Invoice review is available to organization owners/);
 });
 
-// ---------------------------------------------------------------------------
-// Price intelligence
-// ---------------------------------------------------------------------------
-
-test("filters classify increases and savings opportunities from the server comparison fields only", () => {
-  assert.deepEqual([tape, gauze, wrap, ice].map(isPriceIncrease), [true, false, false, false]);
-  assert.deepEqual([tape, gauze, wrap, ice].map(isSavingsOpportunity), [true, false, false, false]);
-  assert.deepEqual(filterPriceRows([tape, gauze, wrap, ice], "all").length, 4);
-  assert.deepEqual(
-    filterPriceRows([tape, gauze, wrap, ice], "increases").map((r) => r.productName),
-    ["KT Tape"],
-  );
-  assert.deepEqual(
-    filterPriceRows([tape, gauze, wrap, ice], "savings").map((r) => r.productName),
-    ["KT Tape"],
-  );
-  assert.deepEqual(
-    filterPriceRows([tape, gauze, wrap, ice], "all", uuid(302)).map((r) => r.productName),
-    ["Gauze"],
-  );
-});
-
-test("no alternative or a more expensive alternative never fabricates savings", () => {
-  assert.equal(isSavingsOpportunity(gauze), false);
-  assert.equal(isSavingsOpportunity(ice), false);
-  assert.equal(isSavingsOpportunity({ ...tape, unitSavings: 0 }), false);
-});
-
-test("sorts are deterministic and put missing values last", () => {
-  const rows = [wrap, gauze, ice, tape];
-  assert.deepEqual(
-    sortPriceRows(rows, "increase").map((r) => r.productName),
-    ["KT Tape", "Gauze", "Ice", "Wrap"],
-  );
-  assert.deepEqual(
-    sortPriceRows(rows, "savings").map((r) => r.productName),
-    ["KT Tape", "Gauze", "Ice", "Wrap"],
-  );
-  assert.deepEqual(
-    sortPriceRows(rows, "recent").map((r) => r.productName),
-    ["Gauze", "Ice", "KT Tape", "Wrap"],
-  );
-  assert.deepEqual(
-    sortPriceRows(rows, "product").map((r) => r.productName),
-    ["Gauze", "Ice", "KT Tape", "Wrap"],
-  );
-});
-
 test("result schemas reject unexpected or malformed RPC payloads", () => {
-  assert.equal(priceOverviewSchema.safeParse(prices()).success, true);
-  assert.equal(
-    priceOverviewSchema.safeParse({ ...prices(), rows: [{ ...tape, catalogListPrice: 1 }] })
-      .success,
-    false,
-  );
   assert.equal(overviewSchema.safeParse(overview()).success, true);
   assert.equal(
     overviewSchema.safeParse({
@@ -485,7 +326,6 @@ test("server data functions check owner/admin membership before calling org-scop
   for (const role of ["staff", null]) {
     const denied = mockDb(role as string);
     await assert.rejects(() => getCommandCenterOverview(denied.db, "user", org), /Forbidden/);
-    await assert.rejects(() => getPriceIntelligenceOverview(denied.db, "user", org), /Forbidden/);
     assert.equal(
       denied.calls.some((c) => c[0] === "rpc"),
       false,
@@ -513,16 +353,6 @@ test("server data functions surface database refusals and reject malformed data"
       ),
     /no longer exists/,
   );
-  await assert.rejects(() =>
-    getPriceIntelligenceOverview(mockDb("owner", { rows: "nope" }).db, "user", org),
-  );
-  const { db, calls } = mockDb("owner", prices());
-  assert.equal((await getPriceIntelligenceOverview(db, "user", org)).rows.length, 4);
-  assert.deepEqual(calls.at(-1), [
-    "rpc",
-    "get_price_intelligence_overview",
-    { _organization_id: org },
-  ]);
 });
 
 // ---------------------------------------------------------------------------
@@ -603,67 +433,6 @@ test("budget table shows per-budget spent, committed, remaining and utilization"
     "unpriced",
   ])
     assert.ok(rendered.includes(text), text);
-});
-
-test("price intelligence table renders comparisons and filters to savings opportunities", () => {
-  const all = html("PriceIntelligenceTable", { overview: prices(), today });
-  for (const text of [
-    "Price Intelligence",
-    "KT Tape",
-    "Vendor A",
-    "$118.00",
-    "$104.00",
-    "+13.5%",
-    "$111.00",
-    '$106.20</span><span class="block truncate text-xs text-[#7a8592]">Vendor B',
-    "$11.80",
-    "/ case",
-    "18 days ago",
-    "Unit unknown",
-    "None known",
-    "never catalog list prices",
-  ])
-    assert.ok(all.includes(text), text);
-  assert.equal((all.match(/data-product-id=/g) ?? []).length, 4);
-  const savings = html("PriceIntelligenceTable", {
-    overview: prices(),
-    today,
-    initialFilter: "savings",
-  });
-  assert.equal((savings.match(/data-product-id=/g) ?? []).length, 1);
-  assert.match(savings, /aria-pressed="true"[^>]*>Savings opportunities/);
-  const increases = html("PriceIntelligenceTable", {
-    overview: prices([gauze, ice]),
-    today,
-    initialFilter: "increases",
-  });
-  assert.match(increases, /No items match price increases/);
-  const empty = html("PriceIntelligenceTable", { overview: prices([]), today });
-  assert.match(empty, /No posted purchase prices yet/);
-});
-
-test("selected price item exposes the supporting evidence", () => {
-  const rendered = html("PriceEvidence", { row: tape, today });
-  for (const text of [
-    "Vendor A",
-    "$118.00 / case",
-    "invoice #INV-1",
-    "case · case of 12",
-    "$104.00",
-    "invoice #PREV-1",
-    "+$14.00",
-    "+13.5%",
-    "$111.00",
-    "from 2 purchases",
-    "Vendor B · $106.20 / case",
-    "invoice #ALT-1",
-    "$11.80 / case",
-    "not independently verified",
-  ])
-    assert.ok(rendered.includes(text), text);
-  const unitless = html("PriceEvidence", { row: wrap, today });
-  assert.match(unitless, /did not record a unit of measure/);
-  assert.match(unitless, /No earlier comparable purchase/);
 });
 
 test("budget lineage and recent purchasing link to existing invoice review routes; admins see no invoice detail", () => {
@@ -953,10 +722,10 @@ test("the SQL behavior suite covers the financial, price and isolation requireme
     "Budget lineage does not reconcile",
     "Admin overview visibility is incorrect",
     "Tape previous price or change is incorrect",
-    "Tape 90-day average is incorrect",
-    "Tape alternative or savings is incorrect",
+    "Savings or 90-day averages are reported",
+    "Tape alternative must be withheld",
     "Unit-less observations were compared",
-    "More expensive alternative fabricated savings",
+    "A stale alternative was ranked",
     "Other organization prices leaked",
     "Cross-organization budget lineage succeeded",
     "Empty organization state is incorrect",
@@ -990,7 +759,7 @@ test("navigation replaces Budget with Budget & Purchasing and keeps the old URL 
         /middleware\(\[requireSupabaseAuth\]\)/g,
       ) ?? []
     ).length,
-    3,
+    2,
   );
   const types = read("../src/integrations/supabase/types.ts");
   for (const fn of [

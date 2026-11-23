@@ -1,13 +1,9 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useActiveOrg } from "@/hooks/use-active-org";
-import {
-  getBudgetLineageFn,
-  getCommandCenterOverviewFn,
-  getPriceIntelligenceOverviewFn,
-} from "@/lib/budget-purchasing.functions";
+import { getBudgetLineageFn, getCommandCenterOverviewFn } from "@/lib/budget-purchasing.functions";
 import { canAccessBudget, formatPeriod, utcToday, type Budget } from "@/budget/budget";
 import { SpendWorkspace } from "@/components/budget-analytics/SpendWorkspace";
 import {
@@ -17,7 +13,6 @@ import {
   scopeOptions,
   summarizeScope,
   type BudgetRow,
-  type PriceRow,
 } from "@/budget-purchasing/command-center";
 import { BudgetEditor } from "@/components/budget/BudgetEditor";
 import { Button } from "@/components/ui/button";
@@ -28,15 +23,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { ProductPriceIntelligence } from "@/components/catalog/ProductPriceIntelligence";
+import {
+  PriceIntelligencePanel,
+  type PriceTarget,
+} from "@/components/price-intelligence/PriceIntelligencePanel";
 import {
   BudgetLineagePanel,
   BudgetTable,
   FinancialSummary,
   NeedsAttention,
   NoBudgetState,
-  PriceEvidence,
-  PriceIntelligenceTable,
   RecentPurchasing,
   SectionError,
   SectionLoading,
@@ -87,24 +83,36 @@ function CommandCenter({
   organizationName: string;
 }) {
   const fetchOverview = useServerFn(getCommandCenterOverviewFn);
-  const fetchPrices = useServerFn(getPriceIntelligenceOverviewFn);
   const queryClient = useQueryClient();
   // Phase 7E: UTC calendar day, the same day the server uses.
   const today = utcToday();
   const [tab, setTab] = useState<"overview" | "spend">("overview");
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [lineageBudget, setLineageBudget] = useState<BudgetRow | null>(null);
-  const [priceRow, setPriceRow] = useState<PriceRow | null>(null);
+  // Phase 6B.1: ?priceProduct= / ?priceInventoryItem= open a product's purchase history.
+  const search = useSearch({ from: "/_authenticated/budget-purchasing" });
+  const navigate = useNavigate({ from: "/budget-purchasing" });
+  const priceTarget: PriceTarget | null = search.priceProduct
+    ? { productId: search.priceProduct }
+    : search.priceInventoryItem
+      ? { inventoryItemId: search.priceInventoryItem }
+      : null;
+  const setPriceTarget = (target: PriceTarget | null) =>
+    void navigate({
+      search: (current) => ({
+        ...current,
+        priceProduct: target && "productId" in target ? target.productId : undefined,
+        priceInventoryItem:
+          target && "inventoryItemId" in target ? target.inventoryItemId : undefined,
+      }),
+      replace: true,
+    });
   const [editor, setEditor] = useState<Budget | "new" | null>(null);
   const [settlementOpen, setSettlementOpen] = useState(false);
 
   const overview = useQuery({
     queryKey: ["budget-purchasing", organizationId, "overview"],
     queryFn: () => fetchOverview({ data: { organizationId } }),
-  });
-  const prices = useQuery({
-    queryKey: ["budget-purchasing", organizationId, "prices"],
-    queryFn: () => fetchPrices({ data: { organizationId } }),
   });
 
   const budgets = overview.data?.budgets ?? [];
@@ -258,21 +266,11 @@ function CommandCenter({
               </>
             )}
 
-            {prices.isPending ? (
-              <SectionLoading label="Loading price intelligence…" />
-            ) : prices.isError ? (
-              <SectionError
-                message="Price intelligence could not be loaded."
-                onRetry={() => prices.refetch()}
-              />
-            ) : (
-              <PriceIntelligenceTable
-                overview={prices.data}
-                today={today}
-                selectedProductId={priceRow?.productId}
-                onSelect={setPriceRow}
-              />
-            )}
+            <PriceIntelligencePanel
+              organizationId={organizationId}
+              target={priceTarget}
+              onTargetChange={setPriceTarget}
+            />
 
             {overview.data?.recentPurchases && (
               <RecentPurchasing purchases={overview.data.recentPurchases} renderLink={renderLink} />
@@ -331,31 +329,6 @@ function CommandCenter({
                 limit={overview.data.settlementCandidateLimit}
                 renderLink={renderLink}
               />
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
-
-      <Sheet
-        open={!!priceRow}
-        onOpenChange={(open) => {
-          if (!open) setPriceRow(null);
-        }}
-      >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
-          {priceRow && (
-            <>
-              <SheetHeader className="mb-4">
-                <SheetTitle>{priceRow.productName}</SheetTitle>
-                <SheetDescription>Why this price is flagged</SheetDescription>
-              </SheetHeader>
-              <PriceEvidence row={priceRow} today={today} />
-              <div className="mt-6">
-                <ProductPriceIntelligence
-                  organizationId={organizationId}
-                  productId={priceRow.productId}
-                />
-              </div>
             </>
           )}
         </SheetContent>
