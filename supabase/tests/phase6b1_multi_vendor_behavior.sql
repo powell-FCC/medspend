@@ -779,7 +779,9 @@ DECLARE _fn text;
 BEGIN
   FOREACH _fn IN ARRAY ARRAY['public.price_unit_key(text)', 'public.price_unit_is_valid(text)', 'public.price_recency(date, date)',
     'public.price_catalog_unit_agrees(numeric, text, text)', 'public.price_package_agreement(text, text, text, uuid, uuid)',
-    'public.price_observation_rows(uuid, uuid[])', 'public.price_product_anchors(uuid)', 'public.price_product_state(uuid, uuid[], date)'] LOOP
+    'public.price_observation_rows(uuid, uuid[])', 'public.price_observation_evidence(uuid, uuid, date)', 'public.price_row_is_valid(numeric, numeric, numeric, text)',
+    'public.price_recent_anchors(uuid, uuid, date, timestamptz, uuid, integer)', 'public.price_name_anchors(uuid, uuid, text, uuid, integer)',
+    'public.price_product_state(uuid, uuid[], date, boolean)'] LOOP
     IF has_function_privilege('authenticated', _fn, 'EXECUTE') OR has_function_privilege('anon', _fn, 'EXECUTE')
        OR has_function_privilege('service_role', _fn, 'EXECUTE') THEN
       RAISE EXCEPTION 'internal helper % is executable by a client role', _fn;

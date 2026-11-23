@@ -11,9 +11,9 @@
 # everything back. A control run with the unmutated functions must pass every suite.
 #
 # Equivalent, deliberately not listed:
-#   * the SKU condition in the same-SKU prior join (earlier.sku_key = anchor.sku_key): a change is
-#     only reported when the product is not insufficient identity, which already requires every
-#     vendor to have exactly one SKU identity, so all of the anchor vendor's rows share it;
+#   * SKU identity in the same-SKU grouping (GROUP BY ... sku_key, unit_key): a change is only
+#     reported when the product is not insufficient identity, which already requires every vendor
+#     to have exactly one SKU identity, so all of the anchor vendor's rows share it;
 #   * the organization filter on the detail's inventory-item lookup: the resolved product is
 #     then looked up with the organization filter, so another organization's item is still
 #     "Product not found" (the suite asserts that response);
@@ -42,28 +42,28 @@ trap 'rm -rf "$work"' EXIT
 # SQL's string concatenation operator, and none contains a dollar-quote (bash would expand it).
 mutants=(
   # Same-SKU history
-  "unit dropped from the change grouping|     AND earlier.unit_key = anchor.unit_key
-|"
-  "insufficient identity still shows a change|      CASE WHEN stated.state <> 'insufficient_identity' AND stated.prior_evidence IS NOT NULL|      CASE WHEN stated.prior_evidence IS NOT NULL"
+  "unit dropped from the same-SKU grouping|    GROUP BY o.product_id, o.vendor_id, o.sku_key, o.unit_key|    GROUP BY o.product_id, o.vendor_id, o.sku_key"
+  "insufficient identity still shows a change|      CASE WHEN stated.state <> 'insufficient_identity' AND stated.prior_id IS NOT NULL|      CASE WHEN stated.prior_id IS NOT NULL"
+  "prior taken from another same-SKU group|      (array_agg(g.ids[2] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_prior_id,
+      (array_agg(g.prices[2] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_prior_price|      (array_agg(g.ids[1] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[2] AS rep_prior_id,
+      (array_agg(g.prices[1] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[2] AS rep_prior_price"
   "old detail vendor previous crosses SKUs|         AND o.sku_key = rep.sku_key AND o.unit_key = rep.unit_key AND o.unit_valid AND rep.unit_valid
        ORDER BY|         AND o.unit_key = rep.unit_key AND o.unit_valid AND rep.unit_valid
        ORDER BY|        'previousPrice', CASE WHEN vendor_row.sku_count = 1 AND NOT vendor_row.missing_sku
           AND vendor_row.other_mapped_skus = 0 THEN vendor_row.prior_price END,|        'previousPrice', vendor_row.prior_price,"
   # Identity
-  "multi-SKU guard off|      bool_or(per_vendor.sku_count > 1) AS multiple_skus|      false AS multiple_skus"
-  "unpurchased mappings ignored|        WHERE mapping.organization_id = _organization_id
-          AND mapping.active
-          AND NULLIF(btrim(mapping.vendor_sku), '') IS NOT NULL
-      ) keyed|        WHERE false
-      ) keyed"
-  "missing SKU allowed|      bool_or(per_vendor.missing_sku) AS missing_sku|      false AS missing_sku"
-  "unit problems are not identity problems|        WHEN COALESCE(identity.multiple_skus, false) OR COALESCE(identity.missing_sku, false)
-          OR units.missing_unit OR units.malformed_unit THEN 'insufficient_identity'|        WHEN COALESCE(identity.multiple_skus, false) OR COALESCE(identity.missing_sku, false)
-          THEN 'insufficient_identity'"
+  "multi-SKU guard off|      bool_or(v.multiple_skus) AS multiple_skus,|      false AS multiple_skus,"
+  "unpurchased mappings ignored|               AND mapping.active
+               AND NULLIF(btrim(mapping.vendor_sku), '') IS NOT NULL
+             UNION|               AND false
+             UNION"
+  "missing SKU allowed|      bool_or(v.missing_sku) AS missing_sku,|      false AS missing_sku,"
+  "unit problems are not identity problems|        WHEN c.multiple_skus OR c.missing_sku OR c.missing_unit OR c.malformed_unit THEN 'insufficient_identity'|        WHEN c.multiple_skus OR c.missing_sku THEN 'insufficient_identity'"
   "unit validator loosened|'^[a-z]{1,10}\$'|'^.{1,10}\$'"
-  "unit key collapses case only for valid units|NULLIF(lower(btrim(history.unit_of_measure)), '')|NULLIF(btrim(history.unit_of_measure), '')"
+  "unit key keeps case|NULLIF(lower(btrim(history.unit_of_measure)), '')|NULLIF(btrim(history.unit_of_measure), '')"
   # Cross-vendor comparability
-  "cross-vendor unit equality removed|    WHERE anchor.unit_valid AND rep.unit_valid AND anchor.unit_key = rep.unit_key|    WHERE anchor.unit_valid AND rep.unit_valid"
+  "cross-vendor unit equality removed|        AND p.anchor_unit_key = r ->> 'unitKey'
+|"
   "NULL package accepted across vendors|      AND NULLIF(btrim(b.package_unit), '') IS NOT NULL
     ), false)|      AND NULLIF(btrim(b.package_unit), '') IS NOT NULL
     ), true)"
@@ -81,10 +81,10 @@ mutants=(
         AND|      SELECT"
   "quantity 1 agrees with any unit|    WHEN _quantity = 1 THEN _unit_key IN ('ea', 'each')|    WHEN _quantity = 1 THEN true"
   "lower-price signal on equal prices|      CASE WHEN marked.numbers AND marked.anchor_price > marked.cheapest_price|      CASE WHEN marked.numbers AND marked.anchor_price >= marked.cheapest_price"
-  "a tie ranks the other vendor|      CASE WHEN marked.anchor_price <= marked.cheapest_price THEN marked.anchor_evidence ELSE marked.cheapest END|      CASE WHEN marked.anchor_price < marked.cheapest_price THEN marked.anchor_evidence ELSE marked.cheapest END"
-  "stale pairs produce numbers|      (stated.state = 'comparable' AND stated.fresh_count > 0) AS numbers|      (stated.state = 'comparable' AND stated.match_count > 0) AS numbers"
+  "a tie ranks the other vendor|      CASE WHEN marked.anchor_price <= marked.cheapest_price THEN marked.anchor_id ELSE marked.cheapest_id END, _today)|      CASE WHEN marked.anchor_price < marked.cheapest_price THEN marked.anchor_id ELSE marked.cheapest_id END, _today)"
+  "stale pairs produce numbers|      (stated.state = 'comparable' AND COALESCE(stated.fresh_count, 0) > 0) AS numbers|      (stated.state = 'comparable' AND COALESCE(stated.match_count, 0) > 0) AS numbers"
   # Recency
-  "freshness at 181 days|      GREATEST(_today - o.purchase_date, 0) <= 180 AS fresh|      GREATEST(_today - o.purchase_date, 0) <= 181 AS fresh"
+  "freshness at 181 days|      GREATEST(_today - v.rep_date, 0) <= 180 AS rep_fresh,|      GREATEST(_today - v.rep_date, 0) <= 181 AS rep_fresh,"
   "recent at 91 days|    WHEN GREATEST(_today - _purchase_date, 0) <= 90 THEN 'recent'|    WHEN GREATEST(_today - _purchase_date, 0) <= 91 THEN 'recent'"
   "aging at 181 days|    WHEN GREATEST(_today - _purchase_date, 0) <= 180 THEN 'aging'|    WHEN GREATEST(_today - _purchase_date, 0) <= 181 THEN 'aging'"
   "stale anchor still signals an increase|      CASE WHEN marked.change > 0 AND marked.anchor_fresh THEN 'same_sku_price_increased' END,|      CASE WHEN marked.change > 0 THEN 'same_sku_price_increased' END,"
@@ -95,15 +95,11 @@ mutants=(
   "order confirmations show no order number|    CASE WHEN invoice.document_type = 'ORDER_CONFIRMATION'
       THEN COALESCE(NULLIF(btrim(invoice.order_number), ''), NULLIF(btrim(invoice.invoice_number), ''))|    CASE WHEN false
       THEN NULL"
-  "non-USD included|           OR upper(btrim(invoice.currency_code)) = 'USD')) IS TRUE|           OR true)) IS TRUE|           OR upper(btrim(invoice.currency_code)) = 'USD')
-    ORDER BY history.purchase_date DESC|           OR true)
-    ORDER BY history.purchase_date DESC"
-  "NULL currency excluded|      AND (invoice.currency_code IS NULL OR btrim(invoice.currency_code) = ''
-           OR upper(btrim(invoice.currency_code)) = 'USD')) IS TRUE|      AND upper(btrim(invoice.currency_code)) = 'USD') IS TRUE"
+  "non-USD included|    AND (_currency_code IS NULL OR btrim(_currency_code) = '' OR upper(btrim(_currency_code)) = 'USD')) IS TRUE|    AND true) IS TRUE"
+  "NULL currency excluded|    AND (_currency_code IS NULL OR btrim(_currency_code) = '' OR upper(btrim(_currency_code)) = 'USD')) IS TRUE|    AND upper(btrim(_currency_code)) = 'USD') IS TRUE"
   "unposted documents observed|   AND invoice.posted_at IS NOT NULL
-  JOIN public.invoice_items item|  JOIN public.invoice_items item"
-  "observations not organization-scoped|  WHERE history.organization_id = _organization_id
-    AND (_product_ids IS NULL OR history.product_id = ANY (_product_ids))|  WHERE (_product_ids IS NULL OR history.product_id = ANY (_product_ids))"
+  LEFT JOIN public.vendor_products mapping|  LEFT JOIN public.vendor_products mapping"
+  "observations not organization-scoped|    WHERE all_rows.organization_id = _organization_id AND _product_ids IS NULL|    WHERE _product_ids IS NULL"
   # Access
   "admins may open source documents|    'canOpenSourceDocument', _is_owner,|    'canOpenSourceDocument', true,"
   "new RPCs skip the access check|  PERFORM public.financial_assert_access(_organization_id, false);|  PERFORM 1;|  _is_owner := public.financial_assert_access(_organization_id, false);|  _is_owner := true;"
@@ -114,7 +110,11 @@ mutants=(
   "old 90-day average resurrected|      'recentAverage', NULL,|      'recentAverage', jsonb_build_object('average', 1, 'observationCount', 1, 'windowStart', '2026-01-01', 'windowEnd', '2026-01-01'),"
   "old alternative ignores comparability|      'bestAlternative', CASE WHEN state.alternative IS NOT NULL THEN jsonb_build_object(|      'bestAlternative', CASE WHEN state.anchor IS NOT NULL THEN jsonb_build_object("
   # Keyset pagination and request context
-  "recent cursor re-reads the boundary row|             < (_cursor_date, _cursor_created, _cursor_observation)))|             <= (_cursor_date, _cursor_created, _cursor_observation)))"
+  "recent walk keeps older observations|          AND (newer.purchase_date, newer.created_at, newer.id) > (history.purchase_date, history.created_at, history.id)|          AND (newer.purchase_date, newer.created_at, newer.id) < (history.purchase_date, history.created_at, history.id)"
+  "recent cursor re-reads the boundary row|      AND (history.purchase_date, history.created_at, history.id)
+        < (COALESCE(|      AND (history.purchase_date, history.created_at, history.id)
+        <= (COALESCE("
+  "name cursor re-reads the boundary row|        AND (_after_name IS NULL OR (candidate.normalized_name, candidate.id) > (_after_name, _after_product_id))|        AND (_after_name IS NULL OR (candidate.normalized_name, candidate.id) >= (_after_name, _after_product_id))"
   "filtered scan stops without a cursor|      WHEN bounds.scanned_count >= _scan THEN
         CASE WHEN _filter = 'all' THEN bounds.last_page_position ELSE bounds.last_scan_position END|      WHEN false THEN NULL"
   "lower-price line shown against another SKU|          AND (r.sku_purchase IS NULL OR r.sku_purchase -> 'observationId' = r.anchor -> 'observationId')
@@ -128,8 +128,8 @@ python3 - "$migration" "$work/functions.sql" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 found = re.findall(r"(CREATE (?:OR REPLACE )?FUNCTION .*?\nAS (\$\$|\$function\$)\n.*?\n\2;)", text, re.S)
-if len(found) != 14:
-    sys.exit(f"expected the migration's 14 functions, found {len(found)}")
+if len(found) != 17:
+    sys.exit(f"expected the migration's 17 functions, found {len(found)}")
 open(sys.argv[2], "w").write("\n".join(block for block, _ in found))
 PY
 

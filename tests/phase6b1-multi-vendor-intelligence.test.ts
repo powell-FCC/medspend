@@ -770,8 +770,11 @@ test("internal helpers are revoked from every client role; RPCs are owner/admin 
     "price_catalog_unit_agrees(numeric, text, text)",
     "price_package_agreement(text, text, text, uuid, uuid)",
     "price_observation_rows(uuid, uuid[])",
-    "price_product_anchors(uuid)",
-    "price_product_state(uuid, uuid[], date)",
+    "price_row_is_valid(numeric, numeric, numeric, text)",
+    "price_recent_anchors(uuid, uuid, date, timestamptz, uuid, integer)",
+    "price_name_anchors(uuid, uuid, text, uuid, integer)",
+    "price_observation_evidence(uuid, uuid, date)",
+    "price_product_state(uuid, uuid[], date, boolean)",
   ])
     assert.ok(
       migration.includes(

@@ -42,11 +42,13 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname = 'public' AND p.proname IN (
                'price_unit_key', 'price_unit_is_valid', 'price_recency', 'price_catalog_unit_agrees',
-               'price_package_agreement', 'price_observation_rows', 'price_product_anchors',
+               'price_package_agreement', 'price_row_is_valid', 'price_observation_rows',
+               'price_observation_evidence', 'price_recent_anchors', 'price_name_anchors',
                'price_product_state', 'list_price_intelligence_products',
                'get_price_intelligence_summary', 'get_product_vendor_price_history',
                'get_supply_request_price_context'))
-     OR pg_catalog.to_regclass('public.inventory_price_history_product_vendor_order_idx') IS NOT NULL THEN
+     OR pg_catalog.to_regclass('public.inventory_price_history_product_vendor_order_idx') IS NOT NULL
+     OR pg_catalog.to_regclass('public.inventory_price_history_org_recent_idx') IS NOT NULL THEN
     RAISE EXCEPTION 'Phase 6B.1 multi-vendor intelligence objects already exist unexpectedly';
   END IF;
 
@@ -72,6 +74,10 @@ CREATE INDEX inventory_price_history_product_vendor_order_idx
   ON public.inventory_price_history (
     organization_id, product_id, vendor_id, purchase_date DESC, created_at DESC, id DESC
   );
+
+-- Newest first across the organization: the keyset walk of the "most recent purchase" list.
+CREATE INDEX inventory_price_history_org_recent_idx
+  ON public.inventory_price_history (organization_id, purchase_date DESC, created_at DESC, id DESC);
 
 -- ---------------------------------------------------------------------------------------
 -- Internal helpers (no client EXECUTE). SQL without SET clauses so the planner can inline
@@ -182,6 +188,20 @@ REVOKE ALL ON FUNCTION public.price_package_agreement(text, text, text, uuid, uu
 COMMENT ON FUNCTION public.price_package_agreement(text, text, text, uuid, uuid) IS
   'Phase 6B.1: package equality is proven only by matching non-null package text, or (when either text is missing) by verified catalog packages of equal quantity and unit that both agree with the invoiced unit. Differing package texts never agree.';
 
+-- A price observation is usable in USD figures: a price at or above zero, a positive quantity,
+-- and USD or no currency recorded (the Phase 7E rule).
+CREATE FUNCTION public.price_row_is_valid(_unit_price numeric, _extended_price numeric, _quantity numeric, _currency_code text)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+  SELECT (COALESCE(_unit_price, _extended_price / NULLIF(_quantity, 0)) >= 0
+    AND _quantity > 0
+    AND (_currency_code IS NULL OR btrim(_currency_code) = '' OR upper(btrim(_currency_code)) = 'USD')) IS TRUE
+$$;
+REVOKE ALL ON FUNCTION public.price_row_is_valid(numeric, numeric, numeric, text) FROM PUBLIC, anon, authenticated, service_role;
+
 -- Every posted observation with its source line and document. "valid" = usable in USD figures.
 CREATE FUNCTION public.price_observation_rows(_organization_id uuid, _product_ids uuid[])
 RETURNS TABLE (
@@ -216,19 +236,24 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 AS $$
+  -- Line and vendor fields are scalar subqueries so a caller that does not use them (the state
+  -- pass) never reads invoice_items or vendors; FKs guarantee both rows exist.
   SELECT
     history.id,
     history.organization_id,
     history.product_id,
     history.vendor_id,
-    vendor.name,
+    (SELECT vendor.name FROM public.vendors vendor WHERE vendor.id = history.vendor_id),
     history.vendor_product_id,
     mapping.catalog_vendor_product_id,
-    NULLIF(upper(btrim(COALESCE(NULLIF(btrim(mapping.vendor_sku), ''), item.sku))), ''),
-    COALESCE(NULLIF(btrim(item.sku), ''), NULLIF(btrim(mapping.vendor_sku), '')),
+    NULLIF(upper(btrim(COALESCE(NULLIF(btrim(mapping.vendor_sku), ''),
+      (SELECT item.sku FROM public.invoice_items item WHERE item.id = history.invoice_item_id)))), ''),
+    COALESCE(
+      NULLIF(btrim((SELECT item.sku FROM public.invoice_items item WHERE item.id = history.invoice_item_id)), ''),
+      NULLIF(btrim(mapping.vendor_sku), '')),
     history.invoice_id,
     history.invoice_item_id,
-    item.line_number,
+    (SELECT item.line_number FROM public.invoice_items item WHERE item.id = history.invoice_item_id),
     COALESCE(NULLIF(btrim(invoice.document_type), ''), 'UNKNOWN'),
     CASE WHEN invoice.document_type = 'ORDER_CONFIRMATION'
       THEN COALESCE(NULLIF(btrim(invoice.order_number), ''), NULLIF(btrim(invoice.invoice_number), ''))
@@ -244,40 +269,48 @@ AS $$
     COALESCE(lower(btrim(history.unit_of_measure)) ~ '^[a-z]{1,10}$', false),
     NULLIF(btrim(history.package_size), ''),
     COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0))::numeric,
-    COALESCE(history.extended_price, item.total_price),
+    COALESCE(history.extended_price,
+      (SELECT item.total_price FROM public.invoice_items item WHERE item.id = history.invoice_item_id)),
     CASE
       WHEN invoice.currency_code IS NULL OR btrim(invoice.currency_code) = '' THEN 'legacy_usd'
       WHEN upper(btrim(invoice.currency_code)) = 'USD' THEN 'usd'
       ELSE 'other'
     END,
-    (COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) >= 0
-      AND history.quantity > 0
-      AND (invoice.currency_code IS NULL OR btrim(invoice.currency_code) = ''
-           OR upper(btrim(invoice.currency_code)) = 'USD')) IS TRUE
-  FROM public.inventory_price_history history
+    public.price_row_is_valid(history.unit_price, history.extended_price, history.quantity, invoice.currency_code)
+  -- Two branches, so a product list is read through the product index (an "IS NULL OR = ANY"
+  -- predicate would force a scan of the whole organization).
+  FROM (
+    SELECT all_rows.* FROM public.inventory_price_history all_rows
+    WHERE all_rows.organization_id = _organization_id AND _product_ids IS NULL
+    UNION ALL
+    SELECT listed.* FROM public.inventory_price_history listed
+    WHERE listed.organization_id = _organization_id AND listed.product_id = ANY (_product_ids)
+  ) history
   JOIN public.invoices invoice
     ON invoice.id = history.invoice_id
    AND invoice.organization_id = history.organization_id
    AND invoice.posted_at IS NOT NULL
-  JOIN public.invoice_items item
-    ON item.id = history.invoice_item_id
-   AND item.organization_id = history.organization_id
-  JOIN public.vendors vendor
-    ON vendor.id = history.vendor_id
-   AND vendor.organization_id = history.organization_id
   LEFT JOIN public.vendor_products mapping
     ON mapping.id = history.vendor_product_id
    AND mapping.organization_id = history.organization_id
-  WHERE history.organization_id = _organization_id
-    AND (_product_ids IS NULL OR history.product_id = ANY (_product_ids))
 $$;
 REVOKE ALL ON FUNCTION public.price_observation_rows(uuid, uuid[]) FROM PUBLIC, anon, authenticated, service_role;
 COMMENT ON FUNCTION public.price_observation_rows(uuid, uuid[]) IS
   'Phase 6B.1 single definition of a historical price observation (posted invoice/order-confirmation line). Internal.';
 
--- Each product's last purchase (its newest valid observation): the keyset driver.
-CREATE FUNCTION public.price_product_anchors(_organization_id uuid)
+-- Last purchases (each product's newest valid observation) newest first, after a keyset cursor:
+-- an ordered walk of inventory_price_history_org_recent_idx that keeps a row only when no newer
+-- valid observation of its product exists. Reads only as far as the page needs.
+CREATE FUNCTION public.price_recent_anchors(
+  _organization_id uuid,
+  _vendor_id uuid,
+  _after_date date,
+  _after_created_at timestamptz,
+  _after_id uuid,
+  _limit integer
+)
 RETURNS TABLE (
+  scan_position bigint,
   product_id uuid,
   product_name text,
   normalized_name text,
@@ -289,31 +322,149 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT product.id, product.name, product.normalized_name,
-    anchor.vendor_id, anchor.purchase_date, anchor.created_at, anchor.id
-  FROM public.products product
-  CROSS JOIN LATERAL (
-    SELECT history.vendor_id, history.purchase_date, history.created_at, history.id
+  SELECT
+    row_number() OVER (ORDER BY walk.purchase_date DESC, walk.created_at DESC, walk.id DESC),
+    walk.product_id, product.name, product.normalized_name, walk.vendor_id,
+    walk.purchase_date, walk.created_at, walk.id
+  FROM (
+    SELECT history.product_id, history.vendor_id, history.purchase_date, history.created_at, history.id
     FROM public.inventory_price_history history
     JOIN public.invoices invoice
       ON invoice.id = history.invoice_id
      AND invoice.organization_id = history.organization_id
      AND invoice.posted_at IS NOT NULL
     WHERE history.organization_id = _organization_id
-      AND history.product_id = product.id
-      AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) >= 0
-      AND (invoice.currency_code IS NULL OR btrim(invoice.currency_code) = ''
-           OR upper(btrim(invoice.currency_code)) = 'USD')
+      AND (history.purchase_date, history.created_at, history.id)
+        < (COALESCE(_after_date, 'infinity'::date), COALESCE(_after_created_at, 'infinity'::timestamptz),
+           COALESCE(_after_id, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+      AND public.price_row_is_valid(history.unit_price, history.extended_price, history.quantity, invoice.currency_code)
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.inventory_price_history newer
+        JOIN public.invoices newer_invoice
+          ON newer_invoice.id = newer.invoice_id
+         AND newer_invoice.organization_id = newer.organization_id
+         AND newer_invoice.posted_at IS NOT NULL
+        WHERE newer.organization_id = _organization_id
+          AND newer.product_id = history.product_id
+          AND (newer.purchase_date, newer.created_at, newer.id) > (history.purchase_date, history.created_at, history.id)
+          AND public.price_row_is_valid(newer.unit_price, newer.extended_price, newer.quantity, newer_invoice.currency_code)
+      )
+      AND (_vendor_id IS NULL OR history.vendor_id = _vendor_id)
     ORDER BY history.purchase_date DESC, history.created_at DESC, history.id DESC
-    LIMIT 1
-  ) anchor
-  WHERE product.organization_id = _organization_id
+    LIMIT _limit
+  ) walk
+  JOIN public.products product
+    ON product.id = walk.product_id
+   AND product.organization_id = _organization_id
 $$;
-REVOKE ALL ON FUNCTION public.price_product_anchors(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.price_recent_anchors(uuid, uuid, date, timestamptz, uuid, integer) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Products with a last purchase in name order after a keyset cursor; each product's last
+-- purchase is one index probe, made only for the products the page reads.
+CREATE FUNCTION public.price_name_anchors(
+  _organization_id uuid,
+  _vendor_id uuid,
+  _after_name text,
+  _after_product_id uuid,
+  _limit integer
+)
+RETURNS TABLE (
+  scan_position bigint,
+  product_id uuid,
+  product_name text,
+  normalized_name text,
+  vendor_id uuid,
+  purchase_date date,
+  created_at timestamptz,
+  observation_id uuid
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT
+    row_number() OVER (ORDER BY listed.normalized_name, listed.id),
+    listed.id, listed.name, listed.normalized_name, listed.vendor_id,
+    listed.purchase_date, listed.created_at, listed.observation_id
+  FROM (
+    SELECT product.id, product.name, product.normalized_name,
+      anchor.vendor_id, anchor.purchase_date, anchor.created_at, anchor.id AS observation_id
+    FROM (
+      -- Sorted first (OFFSET 0 keeps it a separate step), so the per-product probe below stops
+      -- at the page limit instead of running for every product.
+      SELECT candidate.id, candidate.name, candidate.normalized_name
+      FROM public.products candidate
+      WHERE candidate.organization_id = _organization_id
+        AND (_after_name IS NULL OR (candidate.normalized_name, candidate.id) > (_after_name, _after_product_id))
+      ORDER BY candidate.normalized_name, candidate.id
+      OFFSET 0
+    ) product
+    CROSS JOIN LATERAL (
+      SELECT history.vendor_id, history.purchase_date, history.created_at, history.id
+      FROM public.inventory_price_history history
+      JOIN public.invoices invoice
+        ON invoice.id = history.invoice_id
+       AND invoice.organization_id = history.organization_id
+       AND invoice.posted_at IS NOT NULL
+      WHERE history.organization_id = _organization_id
+        AND history.product_id = product.id
+        AND public.price_row_is_valid(history.unit_price, history.extended_price, history.quantity, invoice.currency_code)
+      ORDER BY history.purchase_date DESC, history.created_at DESC, history.id DESC
+      LIMIT 1
+    ) anchor
+    WHERE _vendor_id IS NULL OR anchor.vendor_id = _vendor_id
+    ORDER BY product.normalized_name, product.id
+    LIMIT _limit
+  ) listed
+$$;
+REVOKE ALL ON FUNCTION public.price_name_anchors(uuid, uuid, text, uuid, integer) FROM PUBLIC, anon, authenticated, service_role;
+
+-- One observation as shown to people: source document, line, date basis, age and amounts.
+CREATE FUNCTION public.price_observation_evidence(_organization_id uuid, _observation_id uuid, _today date)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT jsonb_build_object(
+    'observationId', o.observation_id,
+    'vendorId', o.vendor_id,
+    'vendorName', o.vendor_name,
+    'vendorProductId', o.vendor_product_id,
+    'sku', o.sku_display,
+    'documentType', o.document_type,
+    'documentNumber', o.document_number,
+    'invoiceNumber', o.invoice_number,
+    'dateBasis', o.date_basis,
+    'purchaseDate', o.purchase_date,
+    'ageDays', GREATEST(_today - o.purchase_date, 0),
+    'recency', public.price_recency(o.purchase_date, _today),
+    'quantity', o.quantity,
+    'unitOfMeasure', o.unit_raw,
+    'unitValid', o.unit_valid,
+    'packageSize', o.package_raw,
+    'price', o.price,
+    'lineAmount', o.line_amount,
+    'invoiceId', o.invoice_id,
+    'invoiceItemId', o.invoice_item_id,
+    'lineNumber', o.line_number
+  )
+  FROM public.price_observation_rows(_organization_id, NULL) o
+  WHERE o.observation_id = _observation_id
+$$;
+REVOKE ALL ON FUNCTION public.price_observation_evidence(uuid, uuid, date) FROM PUBLIC, anon, authenticated, service_role;
 
 -- The whole Phase 6B.1 decision for a set of products (NULL = every product): state, markers,
--- evidence and signals. One row per product with at least one valid observation.
-CREATE FUNCTION public.price_product_state(_organization_id uuid, _product_ids uuid[], _today date)
+-- evidence and signals. One row per product with at least one valid observation. One pass:
+-- window functions give each observation its product, vendor and same-SKU positions; per-vendor
+-- and then per-product aggregates replace joins, so the cost grows linearly with observations.
+-- Vendor pairs are only ever compared within one product's (small) set of vendors.
+-- _with_evidence = false skips building the evidence objects (counts and filters only).
+CREATE FUNCTION public.price_product_state(
+  _organization_id uuid,
+  _product_ids uuid[],
+  _today date,
+  _with_evidence boolean DEFAULT true
+)
 RETURNS TABLE (
   product_id uuid,
   state text,
@@ -330,181 +481,173 @@ RETURNS TABLE (
   difference numeric,
   comparable_vendor_count integer,
   comparison_withheld text,
-  signals text[]
+  signals text[],
+  anchor_vendor_id uuid
 )
 LANGUAGE sql
 STABLE
 AS $$
-  WITH obs AS MATERIALIZED (
+  -- Same-SKU groups: one row per product, vendor, SKU identity and unit key, holding its two
+  -- newest observations. One sort serves every ordered aggregate.
+  WITH same_sku AS (
     SELECT
-      o.*,
-      GREATEST(_today - o.purchase_date, 0) <= 180 AS fresh,
-      jsonb_build_object(
-        'observationId', o.observation_id,
-        'vendorId', o.vendor_id,
-        'vendorName', o.vendor_name,
-        'vendorProductId', o.vendor_product_id,
-        'sku', o.sku_display,
-        'documentType', o.document_type,
-        'documentNumber', o.document_number,
-        'invoiceNumber', o.invoice_number,
-        'dateBasis', o.date_basis,
-        'purchaseDate', o.purchase_date,
-        'ageDays', GREATEST(_today - o.purchase_date, 0),
-        'recency', public.price_recency(o.purchase_date, _today),
-        'quantity', o.quantity,
-        'unitOfMeasure', o.unit_raw,
-        'unitValid', o.unit_valid,
-        'packageSize', o.package_raw,
-        'price', o.price,
-        'lineAmount', o.line_amount,
-        'invoiceId', o.invoice_id,
-        'invoiceItemId', o.invoice_item_id,
-        'lineNumber', o.line_number
-      ) AS evidence,
-      row_number() OVER (
-        PARTITION BY o.product_id
-        ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC
-      ) AS product_position,
-      row_number() OVER (
-        PARTITION BY o.product_id, o.vendor_id
-        ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC
-      ) AS vendor_position
+      o.product_id, o.vendor_id, o.sku_key, o.unit_key,
+      count(*)::integer AS observation_count,
+      (array_agg(o.observation_id ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC))[1:2] AS ids,
+      (array_agg(o.price ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC))[1:2] AS prices,
+      (array_agg(o.purchase_date ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC))[1] AS newest_date,
+      (array_agg(o.created_at ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC))[1] AS newest_created_at,
+      (array_agg(o.unit_valid ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC))[1] AS unit_valid,
+      (array_agg(o.package_raw ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC))[1] AS package_raw,
+      (array_agg(o.catalog_vendor_product_id ORDER BY o.purchase_date DESC, o.created_at DESC, o.observation_id DESC))[1] AS catalog_id
     FROM public.price_observation_rows(_organization_id, _product_ids) o
     WHERE o.valid
+    GROUP BY o.product_id, o.vendor_id, o.sku_key, o.unit_key
   ),
-  reps AS MATERIALIZED (
-    SELECT * FROM obs WHERE vendor_position = 1
+  -- Vendors: the representative is the vendor's newest observation; its prior is the next
+  -- newest observation in the same same-SKU group.
+  per_vendor AS (
+    SELECT
+      g.product_id,
+      g.vendor_id,
+      sum(g.observation_count)::integer AS observation_count,
+      bool_or(g.sku_key IS NULL) AS missing_sku,
+      min(g.sku_key) AS min_sku_key,
+      max(g.sku_key) AS max_sku_key,
+      (array_agg(g.ids[1] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_id,
+      (array_agg(g.prices[1] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_price,
+      (array_agg(g.unit_key ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_unit_key,
+      (array_agg(g.unit_valid ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_unit_valid,
+      (array_agg(g.package_raw ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_package,
+      (array_agg(g.catalog_id ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_catalog,
+      (array_agg(g.newest_date ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_date,
+      (array_agg(g.newest_created_at ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_created_at,
+      (array_agg(g.ids[2] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_prior_id,
+      (array_agg(g.prices[2] ORDER BY g.newest_date DESC, g.newest_created_at DESC, g.ids[1] DESC))[1] AS rep_prior_price
+    FROM same_sku g
+    GROUP BY g.product_id, g.vendor_id
   ),
-  counts AS (
-    SELECT obs.product_id, count(*)::integer AS observation_count,
-      count(DISTINCT obs.vendor_id)::integer AS vendor_count
-    FROM obs GROUP BY obs.product_id
+  per_vendor_identity AS (
+    SELECT
+      v.*,
+      GREATEST(_today - v.rep_date, 0) <= 180 AS rep_fresh,
+      -- More than one SKU identity among the vendor's observed SKUs and its active mappings.
+      (v.min_sku_key IS DISTINCT FROM v.max_sku_key
+       OR (SELECT count(DISTINCT key) FROM (
+             SELECT upper(btrim(mapping.vendor_sku)) AS key
+             FROM public.vendor_products mapping
+             WHERE mapping.organization_id = _organization_id
+               AND mapping.product_id = v.product_id
+               AND mapping.vendor_id = v.vendor_id
+               AND mapping.active
+               AND NULLIF(btrim(mapping.vendor_sku), '') IS NOT NULL
+             UNION
+             SELECT v.min_sku_key WHERE v.min_sku_key IS NOT NULL
+           ) keys) > 1) AS multiple_skus
+    FROM per_vendor v
   ),
-  identity AS (
-    SELECT per_vendor.product_id,
-      bool_or(per_vendor.sku_count > 1) AS multiple_skus,
-      bool_or(per_vendor.missing_sku) AS missing_sku
-    FROM (
-      SELECT keyed.product_id, keyed.vendor_id,
-        count(DISTINCT keyed.sku_key) AS sku_count,
-        bool_or(keyed.observed AND keyed.sku_key IS NULL) AS missing_sku
-      FROM (
-        SELECT obs.product_id, obs.vendor_id, obs.sku_key, true AS observed FROM obs
-        UNION ALL
-        SELECT mapping.product_id, mapping.vendor_id, upper(btrim(mapping.vendor_sku)), false
-        FROM public.vendor_products mapping
-        JOIN reps
-          ON reps.product_id = mapping.product_id
-         AND reps.vendor_id = mapping.vendor_id
-        WHERE mapping.organization_id = _organization_id
-          AND mapping.active
-          AND NULLIF(btrim(mapping.vendor_sku), '') IS NOT NULL
-      ) keyed
-      GROUP BY keyed.product_id, keyed.vendor_id
-    ) per_vendor
-    GROUP BY per_vendor.product_id
+  per_product AS (
+    SELECT
+      v.product_id,
+      sum(v.observation_count)::integer AS observation_count,
+      count(*)::integer AS vendor_count,
+      bool_or(v.multiple_skus) AS multiple_skus,
+      bool_or(v.missing_sku) AS missing_sku,
+      bool_or(v.rep_unit_key IS NULL) AS missing_unit,
+      bool_or(v.rep_unit_key IS NOT NULL AND NOT v.rep_unit_valid) AS malformed_unit,
+      -- The last purchase is the newest vendor representative.
+      (array_agg(v.vendor_id ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_vendor_id,
+      (array_agg(v.rep_id ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_id,
+      (array_agg(v.rep_price ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_price,
+      (array_agg(v.rep_unit_key ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_unit_key,
+      (array_agg(v.rep_unit_valid ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_unit_valid,
+      (array_agg(v.rep_package ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_package,
+      (array_agg(v.rep_catalog ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_catalog,
+      (array_agg(v.rep_fresh ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS anchor_fresh,
+      (array_agg(v.rep_prior_id ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS prior_id,
+      (array_agg(v.rep_prior_price ORDER BY v.rep_date DESC, v.rep_created_at DESC, v.rep_id DESC))[1] AS prior_price,
+      jsonb_agg(jsonb_build_object(
+        'vendorId', v.vendor_id, 'observationId', v.rep_id, 'price', v.rep_price,
+        'unitKey', v.rep_unit_key, 'unitValid', v.rep_unit_valid, 'package', v.rep_package,
+        'catalog', v.rep_catalog, 'date', v.rep_date, 'fresh', v.rep_fresh)) AS reps
+    FROM per_vendor_identity v
+    GROUP BY v.product_id
   ),
-  units AS (
-    SELECT reps.product_id,
-      bool_or(reps.unit_key IS NULL) AS missing_unit,
-      bool_or(reps.unit_key IS NOT NULL AND NOT reps.unit_valid) AS malformed_unit
-    FROM reps GROUP BY reps.product_id
-  ),
-  pairs AS (
-    SELECT a.product_id,
-      bool_or(a.unit_valid AND b.unit_valid AND a.unit_key = b.unit_key) AS any_same_unit,
-      bool_or(a.unit_valid AND b.unit_valid AND a.unit_key = b.unit_key
-        AND public.price_package_agreement(a.unit_key, a.package_raw, b.package_raw,
-          a.catalog_vendor_product_id, b.catalog_vendor_product_id)) AS any_pass
-    FROM reps a
-    JOIN reps b ON b.product_id = a.product_id AND b.vendor_id > a.vendor_id
-    GROUP BY a.product_id
-  ),
-  anchors AS (
-    SELECT * FROM obs WHERE product_position = 1
-  ),
-  matches AS (
-    SELECT anchor.product_id, rep.evidence, rep.price, rep.purchase_date, rep.vendor_id,
-      (rep.fresh AND anchor.fresh) AS both_fresh
-    FROM anchors anchor
-    JOIN reps rep ON rep.product_id = anchor.product_id AND rep.vendor_id <> anchor.vendor_id
-    WHERE anchor.unit_valid AND rep.unit_valid AND anchor.unit_key = rep.unit_key
-      AND public.price_package_agreement(anchor.unit_key, anchor.package_raw, rep.package_raw,
-        anchor.catalog_vendor_product_id, rep.catalog_vendor_product_id)
-  ),
-  match_summary AS (
-    SELECT matches.product_id,
-      count(*)::integer AS match_count,
-      (count(*) FILTER (WHERE matches.both_fresh))::integer AS fresh_count,
-      min(matches.price) FILTER (WHERE matches.both_fresh) AS cheapest_price,
-      (array_agg(matches.evidence ORDER BY matches.price, matches.purchase_date DESC, matches.vendor_id)
-        FILTER (WHERE matches.both_fresh))[1] AS cheapest
-    FROM matches GROUP BY matches.product_id
-  ),
-  priors AS (
-    SELECT DISTINCT ON (anchor.product_id) anchor.product_id, earlier.evidence, earlier.price
-    FROM anchors anchor
-    JOIN obs earlier
-      ON earlier.product_id = anchor.product_id
-     AND earlier.vendor_id = anchor.vendor_id
-     AND earlier.sku_key = anchor.sku_key
-     AND earlier.unit_key = anchor.unit_key
-     AND earlier.product_position > 1
-    WHERE anchor.unit_valid AND earlier.unit_valid
-    ORDER BY anchor.product_id, earlier.purchase_date DESC, earlier.created_at DESC, earlier.observation_id DESC
+  compared AS (
+    SELECT
+      p.*,
+      pairs.any_same_unit,
+      pairs.any_pass,
+      matches.match_count,
+      matches.fresh_count,
+      matches.cheapest_id,
+      matches.cheapest_price
+    FROM per_product p
+    LEFT JOIN LATERAL (
+      SELECT
+        bool_or((a ->> 'unitValid')::boolean AND (b ->> 'unitValid')::boolean
+          AND a ->> 'unitKey' = b ->> 'unitKey') AS any_same_unit,
+        bool_or((a ->> 'unitValid')::boolean AND (b ->> 'unitValid')::boolean
+          AND a ->> 'unitKey' = b ->> 'unitKey'
+          AND public.price_package_agreement(a ->> 'unitKey', a ->> 'package', b ->> 'package',
+            (a ->> 'catalog')::uuid, (b ->> 'catalog')::uuid)) AS any_pass
+      FROM jsonb_array_elements(p.reps) a
+      JOIN jsonb_array_elements(p.reps) b ON b ->> 'vendorId' > a ->> 'vendorId'
+      WHERE p.vendor_count > 1
+    ) pairs ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        count(*)::integer AS match_count,
+        (count(*) FILTER (WHERE (r ->> 'fresh')::boolean AND p.anchor_fresh))::integer AS fresh_count,
+        (array_agg((r ->> 'observationId')::uuid
+          ORDER BY (r ->> 'price')::numeric, r ->> 'date' DESC, r ->> 'vendorId')
+          FILTER (WHERE (r ->> 'fresh')::boolean AND p.anchor_fresh))[1] AS cheapest_id,
+        min((r ->> 'price')::numeric) FILTER (WHERE (r ->> 'fresh')::boolean AND p.anchor_fresh) AS cheapest_price
+      FROM jsonb_array_elements(p.reps) r
+      WHERE p.vendor_count > 1
+        AND (r ->> 'vendorId')::uuid <> p.anchor_vendor_id
+        AND p.anchor_unit_valid AND (r ->> 'unitValid')::boolean
+        AND p.anchor_unit_key = r ->> 'unitKey'
+        AND public.price_package_agreement(p.anchor_unit_key, p.anchor_package, r ->> 'package',
+          p.anchor_catalog, (r ->> 'catalog')::uuid)
+    ) matches ON true
   ),
   stated AS (
     SELECT
-      anchor.product_id,
-      anchor.evidence AS anchor_evidence,
-      anchor.price AS anchor_price,
-      anchor.fresh AS anchor_fresh,
-      counts.observation_count,
-      counts.vendor_count,
+      c.*,
       CASE
-        WHEN COALESCE(identity.multiple_skus, false) THEN 'multiple_skus'
-        WHEN COALESCE(identity.missing_sku, false) THEN 'missing_sku'
-        WHEN units.missing_unit THEN 'missing_unit'
-        WHEN units.malformed_unit THEN 'malformed_unit'
+        WHEN c.multiple_skus THEN 'multiple_skus'
+        WHEN c.missing_sku THEN 'missing_sku'
+        WHEN c.missing_unit THEN 'missing_unit'
+        WHEN c.malformed_unit THEN 'malformed_unit'
       END AS identity_issue,
       CASE
-        WHEN COALESCE(identity.multiple_skus, false) OR COALESCE(identity.missing_sku, false)
-          OR units.missing_unit OR units.malformed_unit THEN 'insufficient_identity'
-        WHEN counts.observation_count = 1 THEN 'one_purchase'
-        WHEN counts.vendor_count = 1 THEN 'single_vendor'
-        WHEN COALESCE(pairs.any_pass, false) THEN 'comparable'
-        WHEN COALESCE(pairs.any_same_unit, false) THEN 'missing_package_details'
+        WHEN c.multiple_skus OR c.missing_sku OR c.missing_unit OR c.malformed_unit THEN 'insufficient_identity'
+        WHEN c.observation_count = 1 THEN 'one_purchase'
+        WHEN c.vendor_count = 1 THEN 'single_vendor'
+        WHEN COALESCE(c.any_pass, false) THEN 'comparable'
+        WHEN COALESCE(c.any_same_unit, false) THEN 'missing_package_details'
         ELSE 'incompatible_units'
-      END AS state,
-      COALESCE(match_summary.match_count, 0) AS match_count,
-      COALESCE(match_summary.fresh_count, 0) AS fresh_count,
-      match_summary.cheapest_price,
-      match_summary.cheapest,
-      priors.evidence AS prior_evidence,
-      priors.price AS prior_price
-    FROM anchors anchor
-    JOIN counts ON counts.product_id = anchor.product_id
-    LEFT JOIN identity ON identity.product_id = anchor.product_id
-    LEFT JOIN units ON units.product_id = anchor.product_id
-    LEFT JOIN pairs ON pairs.product_id = anchor.product_id
-    LEFT JOIN match_summary ON match_summary.product_id = anchor.product_id
-    LEFT JOIN priors ON priors.product_id = anchor.product_id
+      END AS state
+    FROM compared c
   ),
   decided AS (
-    SELECT stated.*,
-      (stated.state = 'comparable' AND stated.fresh_count > 0) AS numbers,
+    SELECT
+      stated.*,
+      (stated.state = 'comparable' AND COALESCE(stated.fresh_count, 0) > 0) AS numbers,
       CASE
-        WHEN stated.state <> 'comparable' OR stated.fresh_count > 0 THEN NULL
-        WHEN stated.match_count > 0 THEN 'stale'
+        WHEN stated.state <> 'comparable' OR COALESCE(stated.fresh_count, 0) > 0 THEN NULL
+        WHEN COALESCE(stated.match_count, 0) > 0 THEN 'stale'
         ELSE 'last_purchase_not_comparable'
       END AS withheld,
-      CASE WHEN stated.state <> 'insufficient_identity' AND stated.prior_evidence IS NOT NULL
+      CASE WHEN stated.state <> 'insufficient_identity' AND stated.prior_id IS NOT NULL
+        AND stated.anchor_unit_valid
         THEN stated.anchor_price - stated.prior_price END AS change
     FROM stated
   ),
   marked AS (
-    SELECT decided.*,
+    SELECT
+      decided.*,
       (NOT decided.anchor_fresh OR decided.withheld IS NOT DISTINCT FROM 'stale') AS is_stale
     FROM decided
   )
@@ -515,15 +658,17 @@ AS $$
     marked.identity_issue,
     marked.observation_count,
     marked.vendor_count,
-    marked.anchor_evidence,
-    CASE WHEN marked.change IS NOT NULL THEN marked.prior_evidence END,
+    CASE WHEN _with_evidence THEN public.price_observation_evidence(_organization_id, marked.anchor_id, _today) END,
+    CASE WHEN _with_evidence AND marked.change IS NOT NULL
+      THEN public.price_observation_evidence(_organization_id, marked.prior_id, _today) END,
     marked.change,
     CASE WHEN marked.change IS NOT NULL AND marked.prior_price > 0
       THEN (marked.change / marked.prior_price) * 100 END,
-    CASE WHEN marked.numbers THEN
-      CASE WHEN marked.anchor_price <= marked.cheapest_price THEN marked.anchor_evidence ELSE marked.cheapest END
+    CASE WHEN _with_evidence AND marked.numbers THEN public.price_observation_evidence(_organization_id,
+      CASE WHEN marked.anchor_price <= marked.cheapest_price THEN marked.anchor_id ELSE marked.cheapest_id END, _today)
     END,
-    CASE WHEN marked.numbers THEN marked.cheapest END,
+    CASE WHEN _with_evidence AND marked.numbers
+      THEN public.price_observation_evidence(_organization_id, marked.cheapest_id, _today) END,
     CASE WHEN marked.numbers THEN marked.anchor_price - marked.cheapest_price END,
     CASE WHEN marked.numbers THEN marked.fresh_count + 1 ELSE 0 END,
     marked.withheld,
@@ -535,11 +680,12 @@ AS $$
       CASE WHEN marked.state = 'missing_package_details' THEN 'package_details_missing' END,
       CASE WHEN marked.vendor_count >= 2 AND marked.state IN ('insufficient_identity', 'incompatible_units')
         THEN 'multiple_vendors_not_comparable' END
-    ], NULL)
+    ], NULL),
+    marked.anchor_vendor_id
   FROM marked
 $$;
-REVOKE ALL ON FUNCTION public.price_product_state(uuid, uuid[], date) FROM PUBLIC, anon, authenticated, service_role;
-COMMENT ON FUNCTION public.price_product_state(uuid, uuid[], date) IS
+REVOKE ALL ON FUNCTION public.price_product_state(uuid, uuid[], date, boolean) FROM PUBLIC, anon, authenticated, service_role;
+COMMENT ON FUNCTION public.price_product_state(uuid, uuid[], date, boolean) IS
   'Phase 6B.1 state, markers, evidence and signals per product (NULL = all products). Internal; the only implementation of the comparison rules.';
 
 -- ---------------------------------------------------------------------------------------
@@ -552,7 +698,7 @@ CREATE FUNCTION public.list_price_intelligence_products(
   _vendor_id uuid DEFAULT NULL,
   _cursor jsonb DEFAULT NULL,
   _limit integer DEFAULT 50,
-  _scan_limit integer DEFAULT 2000
+  _scan_limit integer DEFAULT 1000
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -613,39 +759,21 @@ BEGIN
   END IF;
 
   WITH scanned AS MATERIALIZED (
-    SELECT anchor.*,
-      row_number() OVER (ORDER BY
-        CASE WHEN _sort = 'recent' THEN anchor.purchase_date END DESC,
-        CASE WHEN _sort = 'recent' THEN anchor.created_at END DESC,
-        CASE WHEN _sort = 'recent' THEN anchor.observation_id END DESC,
-        CASE WHEN _sort = 'product' THEN anchor.normalized_name END,
-        CASE WHEN _sort = 'product' THEN anchor.product_id END) AS scan_position
-    FROM public.price_product_anchors(_organization_id) anchor
-    WHERE (_vendor_id IS NULL OR anchor.vendor_id = _vendor_id)
-      AND (
-        (_sort = 'recent' AND (_cursor_date IS NULL
-          OR (anchor.purchase_date, anchor.created_at, anchor.observation_id)
-             < (_cursor_date, _cursor_created, _cursor_observation)))
-        OR (_sort = 'product' AND (_cursor_name IS NULL
-          OR (anchor.normalized_name, anchor.product_id) > (_cursor_name, _cursor_product)))
-      )
-    ORDER BY
-      CASE WHEN _sort = 'recent' THEN anchor.purchase_date END DESC,
-      CASE WHEN _sort = 'recent' THEN anchor.created_at END DESC,
-      CASE WHEN _sort = 'recent' THEN anchor.observation_id END DESC,
-      CASE WHEN _sort = 'product' THEN anchor.normalized_name END,
-      CASE WHEN _sort = 'product' THEN anchor.product_id END
-    LIMIT _scan
+    SELECT * FROM public.price_recent_anchors(
+      _organization_id, _vendor_id, _cursor_date, _cursor_created, _cursor_observation, _scan)
+    WHERE _sort = 'recent'
+    UNION ALL
+    SELECT * FROM public.price_name_anchors(
+      _organization_id, _vendor_id, _cursor_name, _cursor_product, _scan)
+    WHERE _sort = 'product'
   ),
+  -- Filters need only states and signals; evidence is built for the returned page alone.
   states AS MATERIALIZED (
     SELECT * FROM public.price_product_state(
-      _organization_id, (SELECT array_agg(scanned.product_id) FROM scanned), _today)
+      _organization_id, (SELECT array_agg(scanned.product_id) FROM scanned), _today, false)
   ),
   matched AS MATERIALIZED (
-    SELECT scanned.*, states.state, states.stale, states.identity_issue, states.observation_count,
-      states.vendor_count, states.anchor, states.prior, states.change_amount, states.change_percent,
-      states.lowest, states.alternative, states.difference, states.comparable_vendor_count,
-      states.comparison_withheld, states.signals,
+    SELECT scanned.*, states.state, states.stale, states.signals,
       row_number() OVER (ORDER BY scanned.scan_position) AS match_position
     FROM scanned
     JOIN states ON states.product_id = scanned.product_id
@@ -654,8 +782,14 @@ BEGIN
        OR (_filter = 'stale' AND states.stale)
        OR _filter = ANY (states.signals)
   ),
-  page AS (
+  page AS MATERIALIZED (
     SELECT * FROM matched WHERE match_position <= _limit
+  ),
+  page_states AS MATERIALIZED (
+    SELECT page.match_position, page.product_name, full_state.*
+    FROM public.price_product_state(
+      _organization_id, (SELECT array_agg(page.product_id) FROM page), _today, true) full_state
+    JOIN page ON page.product_id = full_state.product_id
   ),
   bounds AS (
     SELECT
@@ -699,7 +833,7 @@ BEGIN
         'comparisonWithheld', page.comparison_withheld,
         'signals', to_jsonb(page.signals)
       ) ORDER BY page.match_position)
-      FROM page
+      FROM page_states page
     ), '[]'::jsonb),
     'scanned', (SELECT scanned_count FROM bounds),
     'nextCursor', (
@@ -724,12 +858,18 @@ COMMENT ON FUNCTION public.list_price_intelligence_products(uuid, text, text, uu
 -- ---------------------------------------------------------------------------------------
 -- Summary: counts for filter chips, the vendor filter and coverage.
 -- ---------------------------------------------------------------------------------------
+-- The summary always reads the whole organization: hash joins beat a million index probes
+-- (the planner underestimates the joined row count), and its one large sort stays in memory up
+-- to 32 MB (250,000 observations) instead of spilling. Measured in
+-- supabase/tests/run_phase6b1_price_integration.sh.
 CREATE FUNCTION public.get_price_intelligence_summary(_organization_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public
+SET enable_nestloop = off
+SET work_mem = '32MB'
 AS $$
 DECLARE
   _today date := (now() AT TIME ZONE 'UTC')::date;
@@ -738,10 +878,21 @@ BEGIN
   PERFORM public.financial_assert_access(_organization_id, false);
 
   WITH states AS MATERIALIZED (
-    SELECT * FROM public.price_product_state(_organization_id, NULL, _today)
+    SELECT * FROM public.price_product_state(_organization_id, NULL, _today, false)
   ),
-  observations AS MATERIALIZED (
-    SELECT * FROM public.price_observation_rows(_organization_id, NULL)
+  -- One aggregate pass for coverage.
+  coverage AS MATERIALIZED (
+    SELECT
+      count(*) AS posted,
+      count(*) FILTER (WHERE o.valid) AS valid,
+      count(DISTINCT o.vendor_id) FILTER (WHERE o.valid) AS vendors,
+      count(*) FILTER (WHERE o.currency_basis = 'other') AS non_usd,
+      count(*) FILTER (WHERE o.currency_basis <> 'other' AND o.price IS NULL) AS missing_price,
+      count(*) FILTER (WHERE o.valid AND o.document_type = 'ORDER_CONFIRMATION') AS order_confirmations,
+      count(*) FILTER (WHERE o.valid AND o.date_basis = 'posting_date') AS dated_by_posting,
+      count(*) FILTER (WHERE o.valid AND o.package_raw IS NULL) AS missing_package,
+      count(*) FILTER (WHERE o.valid AND NOT o.unit_valid) AS unit_problems
+    FROM public.price_observation_rows(_organization_id, NULL) o
   ),
   signal_counts AS (
     SELECT code, count(*)::integer AS n
@@ -756,8 +907,8 @@ BEGIN
     'currencyCode', 'USD',
     'asOf', _today,
     'productCount', (SELECT count(*) FROM states),
-    'observationCount', (SELECT count(*) FROM observations WHERE valid),
-    'vendorCount', (SELECT count(DISTINCT vendor_id) FROM observations WHERE valid),
+    'observationCount', (SELECT valid FROM coverage),
+    'vendorCount', (SELECT vendors FROM coverage),
     'staleCount', (SELECT count(*) FROM states WHERE stale),
     'states', jsonb_build_object(
       'insufficient_identity', COALESCE((SELECT n FROM state_counts WHERE state = 'insufficient_identity'), 0),
@@ -778,19 +929,21 @@ BEGIN
       SELECT jsonb_agg(jsonb_build_object('vendorId', v.vendor_id, 'vendorName', v.vendor_name,
           'lastPurchaseProductCount', v.n) ORDER BY v.vendor_name, v.vendor_id)
       FROM (
-        SELECT (states.anchor ->> 'vendorId')::uuid AS vendor_id, max(states.anchor ->> 'vendorName') AS vendor_name,
-          count(*)::integer AS n
-        FROM states GROUP BY 1
+        SELECT states.anchor_vendor_id AS vendor_id, vendor.name AS vendor_name, count(*)::integer AS n
+        FROM states
+        JOIN public.vendors vendor
+          ON vendor.id = states.anchor_vendor_id AND vendor.organization_id = _organization_id
+        GROUP BY states.anchor_vendor_id, vendor.name
       ) v
     ), '[]'::jsonb),
     'coverage', jsonb_build_object(
-      'postedObservationCount', (SELECT count(*) FROM observations),
-      'excludedNonUsdCount', (SELECT count(*) FROM observations WHERE currency_basis = 'other'),
-      'excludedMissingPriceCount', (SELECT count(*) FROM observations WHERE currency_basis <> 'other' AND price IS NULL),
-      'orderConfirmationCount', (SELECT count(*) FROM observations WHERE valid AND document_type = 'ORDER_CONFIRMATION'),
-      'datedByPostingCount', (SELECT count(*) FROM observations WHERE valid AND date_basis = 'posting_date'),
-      'missingPackageCount', (SELECT count(*) FROM observations WHERE valid AND package_raw IS NULL),
-      'missingOrMalformedUnitCount', (SELECT count(*) FROM observations WHERE valid AND NOT unit_valid)
+      'postedObservationCount', (SELECT posted FROM coverage),
+      'excludedNonUsdCount', (SELECT non_usd FROM coverage),
+      'excludedMissingPriceCount', (SELECT missing_price FROM coverage),
+      'orderConfirmationCount', (SELECT order_confirmations FROM coverage),
+      'datedByPostingCount', (SELECT dated_by_posting FROM coverage),
+      'missingPackageCount', (SELECT missing_package FROM coverage),
+      'missingOrMalformedUnitCount', (SELECT unit_problems FROM coverage)
     )
   ) INTO _result;
 
@@ -1242,15 +1395,20 @@ BEGIN
     RAISE EXCEPTION 'Forbidden: owner or admin access required' USING ERRCODE = '42501';
   END IF;
 
-  WITH anchors AS MATERIALIZED (
-    SELECT * FROM public.price_product_anchors(_organization_id)
-  )
-  SELECT (SELECT count(*) FROM anchors),
-    (SELECT array_agg(bounded.product_id) FROM (
-      SELECT anchors.product_id FROM anchors
-      ORDER BY anchors.purchase_date DESC, anchors.created_at DESC, anchors.observation_id DESC
-      LIMIT 500) bounded)
-  INTO _product_count, _product_ids;
+  SELECT count(*) INTO _product_count
+  FROM public.products product
+  WHERE product.organization_id = _organization_id
+    AND EXISTS (
+      SELECT 1 FROM public.inventory_price_history history
+      JOIN public.invoices invoice
+        ON invoice.id = history.invoice_id
+       AND invoice.organization_id = history.organization_id
+       AND invoice.posted_at IS NOT NULL
+      WHERE history.organization_id = _organization_id
+        AND history.product_id = product.id
+        AND public.price_row_is_valid(history.unit_price, history.extended_price, history.quantity, invoice.currency_code));
+  SELECT array_agg(recent.product_id) INTO _product_ids
+  FROM public.price_recent_anchors(_organization_id, NULL, NULL, NULL, NULL, 500) recent;
 
   SELECT jsonb_build_object(
     'organizationId', _organization_id,
