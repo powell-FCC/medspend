@@ -773,6 +773,10 @@ test("internal helpers are revoked from every client role; RPCs are owner/admin 
     "price_row_is_valid(numeric, numeric, numeric, text)",
     "price_recent_anchors(uuid, uuid, date, timestamptz, uuid, integer)",
     "price_name_anchors(uuid, uuid, text, uuid, integer)",
+    "price_catalog_package_agreement(text, uuid, uuid)",
+    "price_summary_flagged_invoices(uuid)",
+    "price_summary_groups(uuid)",
+    "price_summary_product_states(uuid, date)",
     "price_observation_evidence(uuid, uuid, date)",
     "price_product_state(uuid, uuid[], date, boolean)",
   ])
@@ -814,6 +818,7 @@ test("the SQL suite covers the production regressions and every rule", () => {
     "old overview: Ammex false increase gone",
     "admins cannot open source documents",
     "no business row changed after every call",
+    "summary counting path equals price_product_state for every product",
   ])
     assert.ok(behavior.includes(text), text);
 });
