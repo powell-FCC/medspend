@@ -1238,12 +1238,15 @@ COMMENT ON FUNCTION public.list_price_intelligence_products(uuid, text, text, uu
 -- ---------------------------------------------------------------------------------------
 -- Summary: counts for filter chips, the vendor filter and coverage.
 -- ---------------------------------------------------------------------------------------
+-- Its intermediate results (one row per product-vendor pair or product: ~60,000 rows at
+-- 1,000,000 observations) stay in memory with 16 MB rather than spilling to temp files.
 CREATE FUNCTION public.get_price_intelligence_summary(_organization_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public
+SET work_mem = '16MB'
 AS $$
 DECLARE
   _today date := (now() AT TIME ZONE 'UTC')::date;

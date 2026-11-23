@@ -6,9 +6,9 @@
 // supabase/tests/run_phase6b1_price_integration.sh; skipped by a plain `npm test`.
 //
 // Targets (p95 of the timed calls): list page < 300 ms, filtered scan chunk < 500 ms, detail
-// < 150 ms, request context < 100 ms, summary < 1 s. The university summary does not meet its
-// 1 s target (it reads every observation); it is measured, reported and held to a regression
-// ceiling, and the list never waits for it.
+// < 150 ms, request context < 100 ms, summary <= 1.0 s. The 1,000,000-observation summary is
+// held to the accepted ceiling of 1.3 s (decision rule, 2026-11-23: above 1.0 s and up to 1.3 s
+// is a documented non-blocking exception when exact, stable and spill-free).
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
@@ -68,7 +68,7 @@ async function p95<T>(label: string, runs: number, work: (i: number) => Promise<
   }
   times.sort((a, b) => a - b);
   const p = times[Math.min(times.length - 1, Math.ceil(0.95 * times.length) - 1)];
-  const line = `${label}: p95 ${p.toFixed(0)} ms (median ${times[Math.floor(times.length / 2)].toFixed(0)} ms, ${runs} runs)`;
+  const line = `${label}: p50 ${times[Math.floor(times.length / 2)].toFixed(0)} ms, p95 ${p.toFixed(0)} ms, min ${times[0].toFixed(0)} ms, max ${times[times.length - 1].toFixed(0)} ms (${runs} runs)`;
   results.push(line);
   console.log(`# timing ${line}`);
   return [value as T, p] as const;
@@ -79,7 +79,7 @@ test.after(() => {
 
 for (const [name, org, viewer, budgetSummary] of [
   ["club (250,000 observations)", CLUB, () => clubAdmin, 1000],
-  ["university (1,000,000 observations)", UNIVERSITY, () => universityOwner, 6000],
+  ["university (1,000,000 observations)", UNIVERSITY, () => universityOwner, 1300],
 ] as const) {
   test(
     `${name}: list pages, scan chunks, detail and request context within budget`,
@@ -152,7 +152,7 @@ for (const [name, org, viewer, budgetSummary] of [
       assert.ok(context.items.every((i) => i.productId !== null));
       assert.ok(contextMs < 100, `request context p95 ${contextMs.toFixed(0)} ms`);
 
-      const [summary, summaryMs] = await p95(`${name} summary`, 5, () =>
+      const [summary, summaryMs] = await p95(`${name} summary`, 15, () =>
         getPriceIntelligenceSummary(db, userId, org),
       );
       // Every club product is bought; 4 university products never are (fixture arithmetic).

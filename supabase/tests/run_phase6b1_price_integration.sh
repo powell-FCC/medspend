@@ -74,5 +74,23 @@ echo "$detail_plan" | grep -qE "Seq Scan on inventory_price_history" && fail "pr
 echo "plan: product detail reads price history through an index"
 summary_plan="$(plan 6b1c0000-0000-4000-8000-000000000004 "SELECT public.get_price_intelligence_summary('6b1c0000-0000-4000-8000-000000000102') IS NOT NULL;")"
 spill="$(echo "$summary_plan" | grep -oE "temp read=[0-9]+ written=[0-9]+" | awk -F'[= ]' '{ if ($5 > max) max = $5 } END { print max + 0 }')"
-echo "plan: university summary largest temp write ${spill} blocks"
+# Intermediate results are one row per product-vendor pair; nothing proportional to the
+# observations may reach disk. Budget: 1,024 blocks (8 MB).
+[ "$spill" -le 1024 ] || fail "the university summary writes ${spill} temp blocks (budget 1024)"
+probes="$(echo "$summary_plan" | grep -E "Index Scan using inventory_price_history_product_vendor_order_idx" | grep -oE "loops=[0-9]+" | head -1 | cut -d= -f2)"
+sorts="$(echo "$summary_plan" | grep -cE "Sort Method: external" || true)"
+echo "plan: university summary: one aggregated pass, ${probes} representative probes, ${spill} temp blocks written, ${sorts} external sorts"
+[ "$sorts" = "0" ] || fail "the university summary sorts on disk"
+# The counting path equals the canonical product state for every product, at both sizes.
+for org in 6b1c0000-0000-4000-8000-000000000101 6b1c0000-0000-4000-8000-000000000102; do
+  mismatches="$(psql -X -At -U postgres -d postgres -c "
+    WITH fast AS (SELECT * FROM public.price_summary_product_states('$org', (now() AT TIME ZONE 'UTC')::date) WHERE state IS NOT NULL),
+    full_ AS (SELECT * FROM public.price_product_state('$org', NULL, (now() AT TIME ZONE 'UTC')::date, false))
+    SELECT count(*) FROM fast FULL JOIN full_ USING (product_id)
+    WHERE fast.state IS DISTINCT FROM full_.state OR fast.stale IS DISTINCT FROM full_.stale
+       OR fast.signals IS DISTINCT FROM full_.signals OR fast.anchor_vendor_id IS DISTINCT FROM full_.anchor_vendor_id
+       OR fast.observation_count IS DISTINCT FROM full_.observation_count")"
+  [ "$mismatches" = "0" ] || fail "summary counting path differs from price_product_state for $org: $mismatches products"
+done
+echo "equivalence: summary counting path equals price_product_state for all 5,000 + 24,996 products"
 echo "run_phase6b1_price_integration: passed"
