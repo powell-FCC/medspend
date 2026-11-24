@@ -114,8 +114,10 @@ BEGIN
   VALUES (_invoice, _org, _vendor, 'PI-' || _date, _date, _currency,
     CASE WHEN _posted THEN 'completed' ELSE 'review_required' END,
     CASE WHEN _posted THEN _date::timestamptz + interval '12 hours' END, 0);
-  INSERT INTO public.invoice_items (id, invoice_id, organization_id, description, quantity, unit_price, total_price)
-  VALUES (_item, _invoice, _org, 'observation', 1, _price, _price);
+  -- Phase 6B.1: one SKU per product and vendor, so SKU identity is never the reason a
+  -- comparison is refused here.
+  INSERT INTO public.invoice_items (id, invoice_id, organization_id, description, sku, quantity, unit_price, total_price)
+  VALUES (_item, _invoice, _org, 'observation', 'SKU-' || right(_product::text, 3) || '-' || right(_vendor::text, 3), 1, _price, _price);
   INSERT INTO public.inventory_price_history (organization_id, product_id, vendor_id, invoice_id,
     invoice_item_id, purchase_date, quantity, package_size, unit_of_measure, unit_price, extended_price)
   VALUES (_org, _product, _vendor, _invoice, _item, _date, 1, _package, _uom, _price, _price);
@@ -327,53 +329,48 @@ BEGIN
   SELECT value INTO _wrap FROM jsonb_array_elements(_result -> 'rows') WHERE value ->> 'productName' = 'Wrap';
   SELECT value INTO _ice FROM jsonb_array_elements(_result -> 'rows') WHERE value ->> 'productName' = 'Ice';
 
-  -- Latest comparable price ignores unposted and non-USD rows.
-  IF (_tape #>> '{current,price}')::numeric <> 118
-     OR _tape #>> '{current,vendorName}' <> 'Vendor A'
-     OR _tape #>> '{current,purchaseDate}' <> '2026-05-01' THEN
+  -- Phase 6B.1 rules. These fixtures are dated early 2026, so every last purchase is over
+  -- 180 days old: no cross-vendor numbers, no savings, no 90-day average, ever.
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(_result -> 'rows') r
+             WHERE r -> 'unitSavings' <> 'null'::jsonb OR r -> 'recentAverage' <> 'null'::jsonb) THEN
+    RAISE EXCEPTION 'Savings or 90-day averages are reported: %', _result;
+  END IF;
+  -- Latest price ignores unposted and non-USD rows.
+  IF (_tape #>> '{current,price}')::numeric IS DISTINCT FROM 118
+     OR _tape #>> '{current,vendorName}' IS DISTINCT FROM 'Vendor A'
+     OR _tape #>> '{current,purchaseDate}' IS DISTINCT FROM '2026-05-01' THEN
     RAISE EXCEPTION 'Tape current price is incorrect: %', _tape -> 'current';
   END IF;
-  -- Previous skips the same vendor's "each" purchase and other vendors.
-  IF (_tape #>> '{previous,price}')::numeric <> 104
-     OR _tape #>> '{previous,purchaseDate}' <> '2026-03-01'
-     OR (_tape ->> 'absoluteChange')::numeric <> 14
-     OR round((_tape ->> 'percentChange')::numeric, 4) <> 13.4615 THEN
+  -- Previous is the same vendor, SKU and unit: it skips the "each" purchase and other vendors.
+  IF (_tape #>> '{previous,price}')::numeric IS DISTINCT FROM 104
+     OR _tape #>> '{previous,purchaseDate}' IS DISTINCT FROM '2026-03-01'
+     OR (_tape ->> 'absoluteChange')::numeric IS DISTINCT FROM 14
+     OR round((_tape ->> 'percentChange')::numeric, 4) IS DISTINCT FROM 13.4615 THEN
     RAISE EXCEPTION 'Tape previous price or change is incorrect: %', _tape;
   END IF;
-  -- 90-day window ending 2026-05-01 starts 2026-02-01: 104 and 118 only.
-  IF (_tape #>> '{recentAverage,average}')::numeric <> 111
-     OR (_tape #>> '{recentAverage,observationCount}')::integer <> 2
-     OR _tape #>> '{recentAverage,windowStart}' <> '2026-02-01' THEN
-    RAISE EXCEPTION 'Tape 90-day average is incorrect: %', _tape -> 'recentAverage';
-  END IF;
-  -- Best alternative is Vendor B's latest same-package price, not Vendor C's 24-pack,
-  -- not the unposted/EUR rows, and never the other organization's 0.01.
-  IF _tape #>> '{bestAlternative,vendorName}' <> 'Vendor B'
-     OR (_tape #>> '{bestAlternative,price}')::numeric <> 106.20
-     OR (_tape #>> '{bestAlternative,comparableVendorCount}')::integer <> 1
-     OR (_tape ->> 'unitSavings')::numeric <> 11.80 THEN
-    RAISE EXCEPTION 'Tape alternative or savings is incorrect: %', _tape;
+  -- Vendor B's 'case  of 12' is not the same package text after trim + lowercase, Vendor C's
+  -- is a 24-pack, and the last purchase is stale: no alternative.
+  IF _tape -> 'bestAlternative' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'Tape alternative must be withheld: %', _tape;
   END IF;
 
-  IF (_gauze #>> '{previous,price}')::numeric <> 25
-     OR (_gauze ->> 'percentChange')::numeric <> -20
-     OR _gauze -> 'bestAlternative' <> 'null'::jsonb
-     OR _gauze -> 'unitSavings' <> 'null'::jsonb THEN
+  IF (_gauze #>> '{previous,price}')::numeric IS DISTINCT FROM 25
+     OR (_gauze ->> 'percentChange')::numeric IS DISTINCT FROM -20
+     OR _gauze -> 'bestAlternative' IS DISTINCT FROM 'null'::jsonb THEN
     RAISE EXCEPTION 'Gauze decrease or unpackaged alternative handling is incorrect: %', _gauze;
   END IF;
 
-  IF _wrap ->> 'comparability' <> 'missing_unit_of_measure'
-     OR _wrap -> 'previous' <> 'null'::jsonb
-     OR _wrap -> 'percentChange' <> 'null'::jsonb
-     OR _wrap -> 'recentAverage' <> 'null'::jsonb
-     OR _wrap -> 'bestAlternative' <> 'null'::jsonb THEN
+  IF _wrap ->> 'comparability' IS DISTINCT FROM 'missing_unit_of_measure'
+     OR _wrap -> 'previous' IS DISTINCT FROM 'null'::jsonb
+     OR _wrap -> 'percentChange' IS DISTINCT FROM 'null'::jsonb
+     OR _wrap -> 'bestAlternative' IS DISTINCT FROM 'null'::jsonb THEN
     RAISE EXCEPTION 'Unit-less observations were compared: %', _wrap;
   END IF;
 
-  IF (_ice #>> '{bestAlternative,price}')::numeric <> 12
-     OR _ice -> 'unitSavings' <> 'null'::jsonb
-     OR _ice -> 'previous' <> 'null'::jsonb THEN
-    RAISE EXCEPTION 'More expensive alternative fabricated savings: %', _ice;
+  -- Ice is structurally comparable (same unit and package) but stale: withheld.
+  IF _ice -> 'bestAlternative' IS DISTINCT FROM 'null'::jsonb
+     OR _ice -> 'previous' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'A stale alternative was ranked: %', _ice;
   END IF;
 END
 $price_rules$;

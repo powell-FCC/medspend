@@ -15,6 +15,12 @@ import type { SupplyRequestStatus } from "@/supply-requests/lifecycle";
 import { translateAdminRequestStatus, type AdminSupplyRequestViewModel } from "@/supply-requests/admin-dashboard";
 import { requestItemIsCustom, requestTimestamp } from "@/supply-requests/admin-request-inbox";
 import { formatUSD } from "@/budget/budget";
+import { Link } from "@tanstack/react-router";
+import {
+  RequestItemPriceContext,
+  type RenderLink,
+} from "@/components/price-intelligence/PriceIntelligenceSections";
+import type { RequestPriceContext } from "@/price-intelligence/vendor-intelligence";
 import { pricingDescription, type CommitmentReleaseKind, type RequestBudgetImpact } from "@/supply-requests/commitments";
 import {
   COMPOUND_ACTION_LABELS,
@@ -41,6 +47,13 @@ type Update = {
 
 export type AdminDrawerAction = AdminWorkflowActionKind | "decline";
 
+// Phase 6B.1: purchase history opens in Budget & Purchasing.
+const priceLink: RenderLink = ({ to, search, className, children }) => (
+  <Link to={to as never} search={search as never} className={className}>
+    {children}
+  </Link>
+);
+
 const primaryTransition: Partial<Record<SupplyRequestStatus, SupplyRequestStatus>> = {
   submitted: "approved", under_review: "approved", approved: "ordered",
   ordered: "received", received: "completed",
@@ -50,7 +63,7 @@ const primaryTransition: Partial<Record<SupplyRequestStatus, SupplyRequestStatus
 // change. Detailed is today's set of actions.
 
 export function AdminRequestDetail({ request, updates, loadingUpdates, updatesError, onRetryUpdates,
-  budgetImpact, loadingBudgetImpact, budgetImpactError, onRetryBudgetImpact,
+  budgetImpact, loadingBudgetImpact, budgetImpactError, onRetryBudgetImpact, priceContext,
   busy, error, onClose, onTransition, onReleaseCommitment, workflowProfile = "detailed",
   organizationId, destinations = [], loadingDestinations = false, destinationsError = false, onRetryDestinations = () => {},
 }: {
@@ -63,6 +76,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   loadingBudgetImpact: boolean;
   budgetImpactError: boolean;
   onRetryBudgetImpact: () => void;
+  priceContext?: RequestPriceContext;
   busy: boolean;
   error: string | null;
   onClose: () => void;
@@ -76,6 +90,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   destinationsError?: boolean;
   onRetryDestinations?: () => void;
 }) {
+  const priceItem = (id: string) => priceContext?.items.find((context) => context.itemId === id);
   const [staffMessage, setStaffMessage] = useState("");
   const [internalNote, setInternalNote] = useState("");
   const [mode, setMode] = useState<"review" | "decline">("review");
@@ -177,6 +192,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                         {(item.manufacturer || item.vendorName) && <p className="mt-1 text-xs leading-5 text-[#697687] [overflow-wrap:anywhere]">{[item.manufacturer, item.vendorName].filter((value, index, values) => value && values.indexOf(value) === index).join(" · ")}</p>}
                         {(item.vendorSku || item.packageDisplay) && <p className="text-xs leading-5 text-[#697687] [overflow-wrap:anywhere]">{[item.vendorSku ? "SKU " + item.vendorSku : null, item.packageDisplay].filter(Boolean).join(" · ")}</p>}
                       </>}
+                        <RequestItemPriceContext item={priceItem(item.id)} renderLink={priceLink} />
                     </div>
                     <div className="shrink-0 text-right text-sm"><span className="text-xs text-[#697687]">Qty </span><span className="font-semibold tabular-nums text-[#293e55]">{item.quantity}</span>{item.unit && <p className="mt-1 text-xs text-[#697687]">{item.unit}</p>}</div>
                   </li>)}

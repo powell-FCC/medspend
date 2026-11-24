@@ -135,21 +135,25 @@ mutants=(
   "posted PDF deletable|        AND (invoice.posted_at IS NOT NULL OR invoice.processing_status = 'completed')
     )|        AND false
     )"
-  # Price Intelligence
-  "product price intelligence excludes NULL currency|    WHERE public.financial_currency_basis(currency_code) <> 'other'
-      AND purchase_price IS NOT NULL|    WHERE currency_code = 'USD'
-      AND purchase_price IS NOT NULL"
-  "price overview excludes NULL currency|      AND public.financial_currency_basis(invoice.currency_code) <> 'other'|      AND invoice.currency_code = 'USD'"
+  # Price Intelligence: Phase 6B.1 replaced both functions; its own check
+  # (phase6b1_mutation_check.sh) now mutates the NULL-currency and non-USD rules.
 )
 
 # The migration's functions only (tables, triggers and data already exist in <database>).
-python3 - "$migration" "$work/functions.sql" <<'PY'
+python3 - "$migration" "$work/functions.sql" "$root/supabase/migrations/20261123120000_phase6b1_multi_vendor_intelligence.sql" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 found = re.findall(r"(CREATE (?:OR REPLACE )?FUNCTION .*?\nAS (\$\$|\$function\$)\n.*?\n\2;)", text, re.S)
 if len(found) != 34:
     sys.exit(f"expected the migration's 34 functions, found {len(found)}")
-open(sys.argv[2], "w").write("\n".join(block for block, _ in found))
+blocks = [block for block, _ in found]
+# Phase 6B.1 later replaced the two Price Intelligence functions. On a database that has it,
+# re-apply its functions after 7E's so every suite runs against the current definitions.
+later = sys.argv[3]
+import os
+if os.path.exists(later):
+    blocks += [b for b, _ in re.findall(r"(CREATE (?:OR REPLACE )?FUNCTION .*?\nAS (\$\$|\$function\$)\n.*?\n\2;)", open(later).read(), re.S)]
+open(sys.argv[2], "w").write("\n".join(blocks))
 PY
 
 build() {  # <spec or empty> <target> <suite>

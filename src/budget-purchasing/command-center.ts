@@ -85,74 +85,11 @@ export const lineageSchema = z
   })
   .strict();
 
-const observationReference = {
-  price: money,
-  purchaseDate: date,
-  invoiceId: uuid,
-  invoiceNumber: z.string().nullable(),
-};
-
-export const priceRowSchema = z
-  .object({
-    productId: uuid,
-    productName: z.string(),
-    comparability: z.enum(["comparable", "missing_unit_of_measure"]),
-    current: z
-      .object({
-        ...observationReference,
-        observationId: uuid,
-        vendorId: uuid,
-        vendorName: z.string(),
-        quantity: z.number(),
-        unitOfMeasure: z.string().nullable(),
-        packageSize: z.string().nullable(),
-      })
-      .strict(),
-    previous: z.object(observationReference).strict().nullable(),
-    absoluteChange: money.nullable(),
-    percentChange: z.number().nullable(),
-    recentAverage: z
-      .object({
-        average: money,
-        observationCount: count,
-        windowStart: date,
-        windowEnd: date,
-      })
-      .strict()
-      .nullable(),
-    bestAlternative: z
-      .object({
-        ...observationReference,
-        vendorId: uuid,
-        vendorName: z.string(),
-        unitOfMeasure: z.string().nullable(),
-        packageSize: z.string().nullable(),
-        comparableVendorCount: count,
-      })
-      .strict()
-      .nullable(),
-    unitSavings: money.nullable(),
-  })
-  .strict();
-
-export const priceOverviewSchema = z
-  .object({
-    organizationId: uuid,
-    currencyCode: z.literal("USD"),
-    averageWindowDays: z.literal(90),
-    productLimit: count,
-    productCount: count,
-    rows: z.array(priceRowSchema),
-  })
-  .strict();
-
 export type BudgetRow = z.infer<typeof budgetRowSchema>;
 export type CommandCenterOverview = z.infer<typeof overviewSchema>;
 export type BudgetLineage = z.infer<typeof lineageSchema>;
 export type InvoiceReference = z.infer<typeof invoiceReferenceSchema>;
 export type CommitmentReference = z.infer<typeof commitmentReferenceSchema>;
-export type PriceRow = z.infer<typeof priceRowSchema>;
-export type PriceOverview = z.infer<typeof priceOverviewSchema>;
 
 // ---------------------------------------------------------------------------
 // Budget scope
@@ -442,54 +379,6 @@ export function attentionItems(overview: CommandCenterOverview, today: string): 
 }
 
 // ---------------------------------------------------------------------------
-// Price intelligence
-// ---------------------------------------------------------------------------
-
-export type PriceFilter = "all" | "increases" | "savings";
-export type PriceSort = "recent" | "increase" | "savings" | "product";
-
-export const isPriceIncrease = (row: PriceRow) =>
-  row.absoluteChange !== null && row.absoluteChange > 0;
-export const isSavingsOpportunity = (row: PriceRow) =>
-  row.unitSavings !== null && row.unitSavings > 0;
-
-export function filterPriceRows(
-  rows: PriceRow[],
-  filter: PriceFilter,
-  vendorId: string | null = null,
-) {
-  return rows.filter(
-    (row) =>
-      (filter === "all" ||
-        (filter === "increases" ? isPriceIncrease(row) : isSavingsOpportunity(row))) &&
-      (!vendorId || row.current.vendorId === vendorId),
-  );
-}
-
-const descNullsLast = (a: number | null, b: number | null) =>
-  a === null ? (b === null ? 0 : 1) : b === null ? -1 : b - a;
-
-export function sortPriceRows(rows: PriceRow[], sort: PriceSort) {
-  const byName = (a: PriceRow, b: PriceRow) =>
-    a.productName.localeCompare(b.productName) || a.productId.localeCompare(b.productId);
-  return [...rows].sort((a, b) => {
-    if (sort === "increase") return descNullsLast(a.percentChange, b.percentChange) || byName(a, b);
-    if (sort === "savings") return descNullsLast(a.unitSavings, b.unitSavings) || byName(a, b);
-    if (sort === "recent")
-      return b.current.purchaseDate.localeCompare(a.current.purchaseDate) || byName(a, b);
-    return byName(a, b);
-  });
-}
-
-export function priceVendors(rows: PriceRow[]) {
-  const vendors = new Map<string, string>();
-  for (const row of rows) vendors.set(row.current.vendorId, row.current.vendorName);
-  return [...vendors]
-    .map(([id, name]) => ({ id, name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-// ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
 
@@ -530,6 +419,3 @@ export function daysAgo(value: string, today: string) {
   if (days <= 0) return "today";
   return days === 1 ? "1 day ago" : `${days} days ago`;
 }
-export const unitLabel = (row: { unitOfMeasure: string | null; packageSize: string | null }) =>
-  [row.unitOfMeasure?.trim(), row.packageSize?.trim()].filter(Boolean).join(" · ") ||
-  "Unit not recorded";

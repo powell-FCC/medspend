@@ -7,6 +7,7 @@ import { AdminQueueTabs, adminQueueLabel, type AdminQueueKey } from "@/component
 import { AdminRequestCard } from "@/components/admin/supply-requests/AdminRequestCard";
 import { AdminRequestDetail, type AdminDrawerAction } from "@/components/admin/supply-requests/AdminRequestDetail";
 import { useActiveOrg } from "@/hooks/use-active-org";
+import { getSupplyRequestPriceContextFn } from "@/lib/price-intelligence.functions";
 import { approveAndOrderSupplyRequestFn, decideSupplyRequestFn, getAdminSupplyRequestDashboardFn, getSupplyRequestBudgetImpactFn, listReceivingDestinationsFn, listRequestUpdatesFn, receiveAndCompleteSupplyRequestFn, receiveSupplyRequestFn, releaseSupplyRequestCommitmentFn, updateRequestStatusFn } from "@/lib/supply-requests.functions";
 import { rememberLastUsedDestination } from "@/supply-requests/receiving";
 import type { CommitmentReleaseKind } from "@/supply-requests/commitments";
@@ -37,6 +38,7 @@ function Page() {
   const receiveAndComplete = useServerFn(receiveAndCompleteSupplyRequestFn);
   const fetchDestinations = useServerFn(listReceivingDestinationsFn);
   const fetchBudgetImpact = useServerFn(getSupplyRequestBudgetImpactFn);
+  const fetchPriceContext = useServerFn(getSupplyRequestPriceContextFn);
   const releaseCommitment = useServerFn(releaseSupplyRequestCommitmentFn);
   const queryClient = useQueryClient();
   const { queue: initialQueue, request: initialRequest } = Route.useSearch();
@@ -78,6 +80,15 @@ function Page() {
   const budgetImpact = useQuery({
     queryKey: ["org", active?.organizationId, "requests", selected?.id, "budget-impact"],
     queryFn: () => fetchBudgetImpact({ data: { organizationId: active!.organizationId, requestId: selected!.id } }),
+    enabled: !!active && !!selected,
+  });
+  // Phase 6B.1: read-only purchase history per request line. It never assigns a vendor.
+  const priceContext = useQuery({
+    queryKey: ["org", active?.organizationId, "requests", selected?.id, "price-context"],
+    queryFn: () =>
+      fetchPriceContext({
+        data: { organizationId: active!.organizationId, requestId: selected!.id },
+      }),
     enabled: !!active && !!selected,
   });
 
@@ -189,7 +200,7 @@ function Page() {
           </div>}
         </section>
       </div>
-      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} budgetImpact={budgetImpact.data} loadingBudgetImpact={budgetImpact.isLoading} budgetImpactError={budgetImpact.isError} onRetryBudgetImpact={() => void budgetImpact.refetch()} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} onReleaseCommitment={release} workflowProfile={workflowProfile}
+      {selected && <AdminRequestDetail key={selected.id} request={selected} updates={updates.data ?? []} loadingUpdates={updates.isLoading} updatesError={updates.isError} onRetryUpdates={() => void updates.refetch()} budgetImpact={budgetImpact.data} loadingBudgetImpact={budgetImpact.isLoading} budgetImpactError={budgetImpact.isError} onRetryBudgetImpact={() => void budgetImpact.refetch()} priceContext={priceContext.data} busy={busy} error={mutationError} onClose={() => { if (!submitting.current) setSelection(null); }} onTransition={transition} onReleaseCommitment={release} workflowProfile={workflowProfile}
         organizationId={active?.organizationId} destinations={destinations.data ?? []} loadingDestinations={destinations.isLoading}
         destinationsError={destinations.isError} onRetryDestinations={() => void destinations.refetch()} />}
     </div>

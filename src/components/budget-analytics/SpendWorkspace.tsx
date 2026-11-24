@@ -389,7 +389,7 @@ function ProductLinesDrill({
   );
 }
 
-function DocumentDetailDrill({
+export function DocumentDetailDrill({
   organizationId,
   invoiceId,
 }: {

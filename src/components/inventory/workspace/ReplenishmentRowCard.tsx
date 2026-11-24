@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { AlertTriangle, ArrowRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -95,6 +96,18 @@ export function ReplenishmentRowCard({
           <ArrowRight className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span className="break-words">{recommendation}</span>
         </p>
+      )}
+      {row.category === "needs_purchasing" && (
+        // Phase 6B.1: read-only purchase history for owners and admins (the only viewers of
+        // this workspace). It never creates a request, an order or a stock change.
+        <Link
+          to="/budget-purchasing"
+          search={{ priceInventoryItem: row.inventoryItemId }}
+          className="inline-flex text-xs font-medium text-primary underline underline-offset-2"
+          data-testid="replenishment-purchase-history"
+        >
+          View purchase history
+        </Link>
       )}
       {!inactive && row.donors.length > 0 && (
         <ul className="space-y-0.5 text-xs text-muted-foreground" aria-label="Stock elsewhere">
