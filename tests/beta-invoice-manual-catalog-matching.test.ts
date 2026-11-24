@@ -630,7 +630,7 @@ test("server functions hand the request's client to the review actions, which ca
   // The handlers are one line each: validated input, the request's client, the user id.
   for (const [fn, schema, action] of [
     ["searchInvoiceCatalogFn", "catalogSearchInput", "searchInvoiceCatalog"],
-    ["matchInvoiceItemToCatalogFn", "catalogMatchInput", "matchInvoiceItemToCatalog"],
+    ["matchInvoiceItemToCatalogFn", "catalogMatchInput", "matchInvoiceItemToCatalogOutcome"],
     ["confirmInvoiceItemProductFn", "confirmMatchInput", "confirmInvoiceItemProduct"],
     ["saveInvoiceItemFn", "itemInput", "saveInvoiceItem"],
     ["deleteInvoiceItemFn", "itemKeyInput", "deleteInvoiceItem"],
@@ -768,7 +768,12 @@ test("the reviewer is told when a catalog SKU mapping is kept", () => {
     page,
     /match\.preservedMapping\s+\? `Matched on this invoice only\. Vendor SKU \$\{match\.preservedMapping\.vendorSku\} stays mapped to its catalog product/,
   );
-  assert.equal(page.match(/noteMatch\(\s+await (?:matchCatalog|confirmProduct)\(/g)?.length, 2);
+  assert.equal(page.match(/noteMatch\(\s+await confirmProduct\(/g)?.length, 1);
+  // A catalog choice notes the match it made; a refusal is returned to the dialog instead.
+  assert.match(
+    page,
+    /if \(outcome\.status === "conflict"\) return outcome\.conflict;\s+noteMatch\(outcome\.match\);/,
+  );
   assert.match(
     server,
     /skuFromCatalog: \(mappingsResult\.data \?\? \[\]\)\.some\(\(mapping\) => mapping\.id === item\.vendor_product_id && mapping\.catalog_vendor_product_id !== null\)/,

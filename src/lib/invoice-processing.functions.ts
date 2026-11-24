@@ -22,7 +22,7 @@ import {
   itemInput,
   itemKeyInput,
   markExtractionReviewed,
-  matchInvoiceItemToCatalog,
+  matchInvoiceItemToCatalogOutcome,
   refreshDerivedInvoiceTotals,
   requireDraftInvoice,
   reviewKey,
@@ -31,7 +31,7 @@ import {
   toInvoiceReviewError,
 } from '@/invoice/review-actions';
 import type { OCRProvider } from '@/extraction/providers';
-import type { InvoiceApprovalResult, InvoiceCatalogSearch, InvoiceMatchResult, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
+import type { InvoiceApprovalResult, InvoiceCatalogMatchOutcome, InvoiceCatalogSearch, InvoiceMatchResult, InvoiceReview, InvoiceItemReviewStatus, ProcessingStatus } from '@/types/invoice-processing';
 
 const uuid = z.string().uuid();
 const headerInput = reviewKey.extend({
@@ -577,7 +577,7 @@ export const searchInvoiceCatalogFn = createServerFn({ method: 'POST' })
 export const matchInvoiceItemToCatalogFn = createServerFn({ method: 'POST' })
   .inputValidator((value: unknown) => catalogMatchInput.parse(value))
   .middleware([requireSupabaseAuth])
-  .handler(({ data, context }): Promise<InvoiceMatchResult> => matchInvoiceItemToCatalog(context.supabase, context.userId, data));
+  .handler(({ data, context }): Promise<InvoiceCatalogMatchOutcome> => matchInvoiceItemToCatalogOutcome(context.supabase, context.userId, data));
 
 export const unlinkInvoiceItemProductFn = createServerFn({ method: 'POST' })
   .inputValidator((value: unknown) => reviewKey.extend({ itemId: uuid, forgetMapping: z.boolean().default(false) }).parse(value))

@@ -6,8 +6,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { CanonicalInvoiceExtraction } from "../extraction/types.ts";
 import type { Database, Json } from "../integrations/supabase/types.ts";
-import type { InvoiceCatalogSearch, InvoiceMatchResult } from "../types/invoice-processing.ts";
-import { toInvoiceCatalogSearch } from "./catalog-match.ts";
+import type {
+  InvoiceCatalogMatchConflict,
+  InvoiceCatalogMatchOutcome,
+  InvoiceCatalogSearch,
+  InvoiceMatchResult,
+} from "../types/invoice-processing.ts";
+import { toCatalogMatchConflict, toInvoiceCatalogSearch } from "./catalog-match.ts";
 import {
   derivedTotalKeys,
   recalculateDerivedTotals,
@@ -58,6 +63,8 @@ export type InvoiceReviewErrorCode =
 /** An error whose message is written for the reviewer. Database text never reaches it raw. */
 export class InvoiceReviewError extends Error {
   code: InvoiceReviewErrorCode;
+  // Set when a chosen catalog item was refused because of an existing product or mapping.
+  catalogConflict: InvoiceCatalogMatchConflict | null = null;
   constructor(code: InvoiceReviewErrorCode, message: string) {
     super(message);
     this.name = "InvoiceReviewError";
@@ -81,13 +88,18 @@ export const NOT_DEPLOYED_MESSAGE =
  * constraint names, identifiers, and SQL never reach the screen.
  */
 export function toInvoiceReviewError(
-  error: { code?: string | null; message?: string | null },
+  error: { code?: string | null; message?: string | null; hint?: string | null },
   fallback: string,
 ): InvoiceReviewError {
   const code = error.code ?? "";
   const message = error.message ?? "";
   if (code === "P0001" && message) {
-    return new InvoiceReviewError(/^Forbidden\b/.test(message) ? "forbidden" : "rejected", message);
+    const reviewError = new InvoiceReviewError(
+      /^Forbidden\b/.test(message) ? "forbidden" : "rejected",
+      message,
+    );
+    reviewError.catalogConflict = toCatalogMatchConflict(message, error.hint);
+    return reviewError;
   }
   // The posting gate raises its reviewer-facing message with a not-null code.
   if (code === "23502" && message.startsWith("Match or create a product for every invoice line")) {
@@ -448,4 +460,22 @@ export async function matchInvoiceItemToCatalog(
   });
   if (error) throw toInvoiceReviewError(error, "Could not match this line to the catalog item.");
   return toMatchResult(db, data.organizationId, result);
+}
+
+// The server function's view of a catalog choice: a refusal caused by an existing product
+// or mapping is an answer for the reviewer (naming that product), not a failure, so it is
+// returned rather than thrown. Every other error still throws.
+export async function matchInvoiceItemToCatalogOutcome(
+  db: Db,
+  userId: string,
+  data: z.infer<typeof catalogMatchInput>,
+): Promise<InvoiceCatalogMatchOutcome> {
+  try {
+    return { status: "matched", match: await matchInvoiceItemToCatalog(db, userId, data) };
+  } catch (cause) {
+    if (cause instanceof InvoiceReviewError && cause.catalogConflict) {
+      return { status: "conflict", conflict: cause.catalogConflict };
+    }
+    throw cause;
+  }
 }
