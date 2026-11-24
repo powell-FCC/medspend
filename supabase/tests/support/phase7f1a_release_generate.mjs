@@ -41,7 +41,11 @@ const STRUCTURAL = [
   "trigger",
   "count",
 ];
-const CHANGED_FUNCTIONS = ["supply_request_product_search", "supply_request_product_identities"];
+const CHANGED_FUNCTIONS = [
+  "supply_request_product_search",
+  "supply_request_product_identities",
+  "replace_supply_request_items",
+];
 const ALTERED_TABLES = ["catalog_products", "catalog_vendor_products", "catalog_import_batches"];
 const NEW_TABLES = [
   "catalog_brands",

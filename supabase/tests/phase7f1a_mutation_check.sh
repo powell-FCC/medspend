@@ -44,13 +44,32 @@ mutants=(
     AND organization_vendor.active = true
     AND organization_vendor.catalog_vendor_id IS NOT NULL;|  WHERE organization_vendor.organization_id = _organization_id
     AND organization_vendor.catalog_vendor_id IS NOT NULL;"
-  "discovery scope ignores which catalog vendor|         AND organization_vendor.catalog_vendor_id = catalog_vendor.id|         AND organization_vendor.catalog_vendor_id IS NOT NULL"
+  "discovery scope ignores which catalog vendor|         AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+     )|         AND organization_vendor.catalog_vendor_id IS NOT NULL
+     )"
   "discovery scope uses every organization's vendors|     -- Phase 7F.1A: only catalog vendors this organization uses.
      AND EXISTS (
        SELECT 1 FROM public.vendors organization_vendor
        WHERE organization_vendor.organization_id = _organization_id|     AND EXISTS (
        SELECT 1 FROM public.vendors organization_vendor
        WHERE true"
+  "request lines unscoped (any linked catalog enables every catalog)|            AND organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );|            AND organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id IS NOT NULL
+        );"
+  "request lines use every organization's vendors|          WHERE organization_vendor.organization_id = _organization_id
+            AND organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );|          WHERE organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );"
+  "request lines accept an inactive linked vendor|          WHERE organization_vendor.organization_id = _organization_id
+            AND organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );|          WHERE organization_vendor.organization_id = _organization_id
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );"
   "search typo tier renumbered|pattern WHERE candidate.search_text !~ pattern) THEN 7|pattern WHERE candidate.search_text !~ pattern) THEN 6"
   "search result column changed (vendor name)|      COALESCE(adoption.vendor_name, catalog_vendor.name) AS vendor_name,
       catalog_vendor_product.vendor_sku,

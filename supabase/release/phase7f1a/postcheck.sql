@@ -224,6 +224,7 @@ BEGIN
       ('count', 'public triggers', '96'),
       ('function', 'adopt_catalog_vendor_product', '0d7b2caceae9fa41e5eae85ef76ed29e secdef=true authenticated=true anon=false service_role=true public=false'),
       ('function', 'apply_invoice_exact_product_identities', '9a702cb321adf16959785744f45cc20a secdef=false authenticated=false anon=false service_role=true public=false'),
+      ('function', 'cancel_submitted_supply_request', 'f2bcba7dc4c6656a1eb2b69f9ea7c288 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('function', 'catalog_normalize_row', '54c2d042c02b5f0571cc443a3eab18f6 secdef=false authenticated=true anon=true service_role=true public=true'),
       ('function', 'catalog_product_normalize_row', 'd2609d906f0f7beaef6ee5dc79849951 secdef=false authenticated=true anon=true service_role=true public=true'),
       ('function', 'catalog_search_edit_distance', '4615aacf57c4340282386d7472e0fa16 secdef=false authenticated=false anon=false service_role=true public=false'),
@@ -275,6 +276,8 @@ BEGIN
       ('function', 'refresh_catalog_vendor_product_search_documents', 'ee62f1b49263dfef20452e40f6992a4d secdef=true authenticated=false anon=false service_role=true public=false'),
       ('function', 'rematch_invoice_vendor_products', 'cb4bcb1f7f183a350afd196cc62bd1a8 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('function', 'remove_staff_saved_product', 'eb416cf398248e3cdfdeb72b9b8de4b9 secdef=true authenticated=true anon=false service_role=true public=false'),
+      ('function', 'replace_supply_request_items', '6e66bfeb784739c684fe845d95814e9c secdef=true authenticated=false anon=false service_role=true public=false'),
+      ('function', 'resolve_supply_request_context', '0df3406783e0910a7dbf7317bdda272a secdef=true authenticated=false anon=false service_role=true public=false'),
       ('function', 'resolve_supply_request_item_costs', '7cbfbf4a8098c0cf79ea6a36ed6e3e51 secdef=true authenticated=false anon=false service_role=true public=false'),
       ('function', 'save_staff_product', 'bca0e5a3e675357882721b37eae19bbd secdef=true authenticated=true anon=false service_role=true public=false'),
       ('function', 'search_invoice_line_catalog_listings', '8fed4e9e5b207a840989722b92006852 secdef=true authenticated=true anon=false service_role=true public=false'),
@@ -290,6 +293,7 @@ BEGIN
       ('function', 'tg_catalog_vendor_products_search_document', '21e38b0a485e72ffa4efecf068bb671e secdef=true authenticated=false anon=false service_role=true public=false'),
       ('function', 'tg_catalog_vendors_search_document', '9f62b394c6f192a7713f22c2fd77643c secdef=true authenticated=false anon=false service_role=true public=false'),
       ('function', 'tg_set_updated_at', '494198e1eb8f9c98c4cf075ed9d79bb9 secdef=false authenticated=true anon=true service_role=true public=true'),
+      ('function', 'update_submitted_supply_request', '6da72bb6d7bf813a3a226545517ef8dd secdef=true authenticated=true anon=false service_role=true public=false'),
       ('grants', 'catalog_brands', 'authenticated=SELECT;service_role=DELETE,INSERT,SELECT,UPDATE'),
       ('grants', 'catalog_bundle_components', 'authenticated=SELECT;service_role=DELETE,INSERT,SELECT,UPDATE'),
       ('grants', 'catalog_categories', 'authenticated=SELECT;service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE'),
@@ -415,6 +419,7 @@ BEGIN
       ('index', 'vendors_org_catalog_vendor_uq', 'a9f7d9e7f7f488132bb753e3eef89ab0 valid=true'),
       ('index', 'vendors_org_search_idx', '01461d5e0a80bcfca69ed282d4f31d0d valid=true'),
       ('index', 'vendors_pkey', '88227aae6abcef810f53edb79da75cb6 valid=true'),
+      ('overloads', 'replace_supply_request_items', '1'),
       ('overloads', 'search_supply_request_products', '1'),
       ('overloads', 'search_supply_request_products_with_signals', '1'),
       ('overloads', 'supply_request_product_identities', '1'),
@@ -538,9 +543,10 @@ BEGIN
               ORDER BY p.oid LIMIT 1
             ), 'absent') AS value
           FROM (VALUES
-            -- Changed by 7F.1A (same signatures, catalog scope added).
+            -- Changed by 7F.1A (same signatures and grants, catalog scope added).
             ('supply_request_product_search'),
             ('supply_request_product_identities'),
+            ('replace_supply_request_items'),
             -- Staff search and discovery around them, must not change.
             ('search_supply_request_products'),
             ('search_supply_request_products_with_signals'),
@@ -584,6 +590,9 @@ BEGIN
             ('post_reviewed_invoice'),
             -- Requests, must not change.
             ('submit_supply_request'),
+            ('update_submitted_supply_request'),
+            ('cancel_submitted_supply_request'),
+            ('resolve_supply_request_context'),
             ('decide_supply_request'),
             ('resolve_supply_request_item_costs'),
             -- 6B.1 Price Intelligence, must not change.
@@ -617,7 +626,7 @@ BEGIN
         
           UNION ALL
           SELECT 2, 'overloads', fn.name, count(p.oid)::text
-          FROM (VALUES ('supply_request_product_search'), ('supply_request_product_identities'),
+          FROM (VALUES ('supply_request_product_search'), ('supply_request_product_identities'), ('replace_supply_request_items'),
                        ('search_supply_request_products'), ('search_supply_request_products_with_signals')) AS fn(name)
           LEFT JOIN pg_proc p ON p.proname = fn.name AND p.pronamespace = 'public'::regnamespace
           GROUP BY fn.name
@@ -837,9 +846,10 @@ SELECT section, key, value FROM (
       ORDER BY p.oid LIMIT 1
     ), 'absent') AS value
   FROM (VALUES
-    -- Changed by 7F.1A (same signatures, catalog scope added).
+    -- Changed by 7F.1A (same signatures and grants, catalog scope added).
     ('supply_request_product_search'),
     ('supply_request_product_identities'),
+    ('replace_supply_request_items'),
     -- Staff search and discovery around them, must not change.
     ('search_supply_request_products'),
     ('search_supply_request_products_with_signals'),
@@ -883,6 +893,9 @@ SELECT section, key, value FROM (
     ('post_reviewed_invoice'),
     -- Requests, must not change.
     ('submit_supply_request'),
+    ('update_submitted_supply_request'),
+    ('cancel_submitted_supply_request'),
+    ('resolve_supply_request_context'),
     ('decide_supply_request'),
     ('resolve_supply_request_item_costs'),
     -- 6B.1 Price Intelligence, must not change.
@@ -916,7 +929,7 @@ SELECT section, key, value FROM (
 
   UNION ALL
   SELECT 2, 'overloads', fn.name, count(p.oid)::text
-  FROM (VALUES ('supply_request_product_search'), ('supply_request_product_identities'),
+  FROM (VALUES ('supply_request_product_search'), ('supply_request_product_identities'), ('replace_supply_request_items'),
                ('search_supply_request_products'), ('search_supply_request_products_with_signals')) AS fn(name)
   LEFT JOIN pg_proc p ON p.proname = fn.name AND p.pronamespace = 'public'::regnamespace
   GROUP BY fn.name

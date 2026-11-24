@@ -24,7 +24,7 @@ It is additive only. It sets up global catalog identity, search grouping and pro
 It does not include:
 - any vendor adapter or import;
 - any offer or price;
-- any change to supply requests;
+- any change to request semantics (one catalog-scope check at the request boundary, below);
 - any backfill.
 
 ### New global tables
@@ -74,19 +74,23 @@ There is no GIN index on `attributes`: nothing queries it yet, and every row is 
 Same signatures, same grants, internal only:
 
 - `supply_request_product_search`, and through it `search_supply_request_products` and `search_supply_request_products_with_signals`;
-- `supply_request_product_identities`, and through it `get_staff_product_discovery` and `save_staff_product`.
+- `supply_request_product_identities`, and through it `get_staff_product_discovery` and `save_staff_product`;
+- `replace_supply_request_items`, and through it `submit_supply_request`, `update_submitted_supply_request` and the cancellation edit path.
 
-Each is the Phase 5A.10 definition plus the catalog scope (next section). Tiers, ranking, typo correction, columns and organization products are unchanged.
+Each is the Phase 5A.10 (search) or Phase 6C (request lines) definition plus the catalog scope (next section). Tiers, ranking, typo correction, columns, validation order, error messages and every other request-line shape are unchanged.
 
 ### Organization catalog scope (behaviour change)
 
 An organization uses a catalog vendor exactly when it has an **active** organization vendor linked to it (`vendors.catalog_vendor_id`). That link:
 
 - is unique per organization;
-- is set only by `link_organization_vendor_to_catalog_vendor` (owner/admin);
+- cannot be written by client roles. Two owner/admin paths set it: `link_organization_vendor_to_catalog_vendor`, and `adopt_catalog_vendor_product`, which creates a linked organization vendor when a listing of a catalog the organization does not use yet is adopted. Adopting one listing therefore enables that whole catalog; this is an organization opt-in, not a platform entitlement;
 - can never be repointed.
 
-No enablement table was needed. Staff search, discovery and Saved Items now return global listings only from those catalog vendors. Owners and admins follow the same rule there, and an organization with no linked vendor sees no global listing at all.
+No enablement table was needed. For owners, admins and staff alike:
+
+- staff search, discovery and Saved Items return global listings only from those catalog vendors, and an organization with no linked vendor sees no global listing at all;
+- a request line naming a global listing of any other catalog vendor is refused at the request boundary itself (submit, requester edit, cancellation edit) with the existing "A selected global catalog product is unavailable" error. Lines reached through the organization's own vendor SKU mapping already require an active vendor tied to the listing's catalog, so every legitimate shape is unchanged.
 
 The global identity tables stay authenticated-readable, as before. This is a search scope, not a secrecy boundary.
 
@@ -127,7 +131,7 @@ Run each file as its own query: paste the whole file, run it once, and read the 
 
 ## Expected differences (precheck → postcheck)
 
-- **Changed functions** (new hash, same access `secdef=true authenticated=false anon=false service_role=true public=false`): `supply_request_product_search`, `supply_request_product_identities`.
+- **Changed functions** (new hash, same access `secdef=true authenticated=false anon=false service_role=true public=false`): `supply_request_product_search`, `supply_request_product_identities`, `replace_supply_request_items`.
 - **Tables:**
   - `catalog_products`, `catalog_vendor_products` and `catalog_import_batches` get new column hashes.
   - The eight new tables go from `absent` to a hash with `rls=true`, and gain `policies` and `grants` lines.

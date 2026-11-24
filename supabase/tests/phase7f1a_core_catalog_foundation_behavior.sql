@@ -811,4 +811,101 @@ BEGIN
 END
 $$;
 
+-- Check 21: request lines follow the same catalog scope as search. A listing of a catalog
+-- vendor the organization does not use is refused at the request boundary itself (submit,
+-- requester edit), for staff and owners alike; every legitimate line shape still works.
+INSERT INTO public.teams (id, organization_id, name, active) VALUES
+  ('7f1a0000-0000-4000-8000-000000000c01', '7f1a0000-0000-4000-8000-000000000101', 'Team A', true),
+  ('7f1a0000-0000-4000-8000-000000000c02', '7f1a0000-0000-4000-8000-000000000103', 'Team C', true);
+INSERT INTO public.locations (id, organization_id, name, active) VALUES
+  ('7f1a0000-0000-4000-8000-000000000c11', '7f1a0000-0000-4000-8000-000000000101', 'Room A', true),
+  ('7f1a0000-0000-4000-8000-000000000c12', '7f1a0000-0000-4000-8000-000000000103', 'Room C', true);
+INSERT INTO public.organization_memberships (organization_id, user_id, role, active)
+VALUES ('7f1a0000-0000-4000-8000-000000000103', '7f1a0000-0000-4000-8000-000000000003', 'staff', true);
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '7f1a0000-0000-4000-8000-000000000001', true);
+DO $$
+DECLARE _adoption jsonb;
+BEGIN
+  -- Owner A adopts an Alpha listing so a vendor SKU mapping exists for the mapping shape.
+  _adoption := public.adopt_catalog_vendor_product('7f1a0000-0000-4000-8000-000000000101', '7f1a0000-0000-4000-8000-000000000403');
+  PERFORM set_config('phase7f1a.vendor_product', _adoption->>'vendorProductId', true);
+  PERFORM set_config('phase7f1a.product', _adoption->>'productId', true);
+  BEGIN
+    PERFORM public.submit_supply_request('7f1a0000-0000-4000-8000-000000000101', 'reorder',
+      '7f1a0000-0000-4000-8000-000000000c01', '7f1a0000-0000-4000-8000-000000000c11', NULL,
+      '[{"catalogVendorProductId": "7f1a0000-0000-4000-8000-000000000411", "quantity": 1}]');
+    RAISE EXCEPTION 'Check 21 failed: owner A submitted a catalog Beta listing';
+  EXCEPTION WHEN no_data_found THEN
+    IF SQLERRM <> 'A selected global catalog product is unavailable' THEN
+      RAISE EXCEPTION 'Check 21 failed: wrong refusal %', SQLERRM;
+    END IF;
+  END;
+END
+$$;
+SELECT set_config('request.jwt.claim.sub', '7f1a0000-0000-4000-8000-000000000003', true);
+DO $$
+DECLARE _request uuid; _count integer;
+BEGIN
+  BEGIN
+    PERFORM public.submit_supply_request('7f1a0000-0000-4000-8000-000000000101', 'reorder',
+      '7f1a0000-0000-4000-8000-000000000c01', '7f1a0000-0000-4000-8000-000000000c11', NULL,
+      '[{"catalogVendorProductId": "7f1a0000-0000-4000-8000-000000000401", "quantity": 1},
+        {"catalogVendorProductId": "7f1a0000-0000-4000-8000-000000000412", "quantity": 1}]');
+    RAISE EXCEPTION 'Check 21 failed: staff A submitted a catalog Beta listing';
+  EXCEPTION WHEN no_data_found THEN NULL;
+  END;
+  -- Legitimate shapes: linked global listing, free text, organization product, vendor SKU
+  -- mapping (its catalog identity derived from the mapping).
+  _request := public.submit_supply_request('7f1a0000-0000-4000-8000-000000000101', 'reorder',
+    '7f1a0000-0000-4000-8000-000000000c01', '7f1a0000-0000-4000-8000-000000000c11', NULL,
+    jsonb_build_array(
+      jsonb_build_object('catalogVendorProductId', '7f1a0000-0000-4000-8000-000000000401', 'quantity', 2),
+      jsonb_build_object('freeTextItem', 'Custom ice bags', 'quantity', 1),
+      jsonb_build_object('productId', current_setting('phase7f1a.product'), 'quantity', 1),
+      jsonb_build_object('vendorProductId', current_setting('phase7f1a.vendor_product'), 'quantity', 3)));
+  SELECT count(*) INTO _count FROM public.supply_request_items WHERE supply_request_id = _request;
+  IF _count <> 4 THEN RAISE EXCEPTION 'Check 21 failed: legitimate lines stored %', _count; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.supply_request_items WHERE supply_request_id = _request
+                 AND vendor_product_id::text = current_setting('phase7f1a.vendor_product')
+                 AND catalog_vendor_product_id = '7f1a0000-0000-4000-8000-000000000403') THEN
+    RAISE EXCEPTION 'Check 21 failed: the mapping line lost its derived catalog identity';
+  END IF;
+  -- The requester edit boundary uses the same rule.
+  BEGIN
+    PERFORM public.update_submitted_supply_request('7f1a0000-0000-4000-8000-000000000101', _request, 'reorder',
+      '7f1a0000-0000-4000-8000-000000000c01', '7f1a0000-0000-4000-8000-000000000c11', NULL,
+      '[{"catalogVendorProductId": "7f1a0000-0000-4000-8000-000000000411", "quantity": 1}]');
+    RAISE EXCEPTION 'Check 21 failed: staff A edited a request to a catalog Beta listing';
+  EXCEPTION WHEN no_data_found THEN NULL;
+  END;
+  SELECT count(*) INTO _count FROM public.supply_request_items WHERE supply_request_id = _request;
+  IF _count <> 4 THEN RAISE EXCEPTION 'Check 21 failed: a refused edit changed the request (% lines)', _count; END IF;
+END
+$$;
+RESET ROLE;
+-- An inactive linked vendor enables no request lines either.
+UPDATE public.vendors SET active = false WHERE id = '7f1a0000-0000-4000-8000-000000000503';
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM public.submit_supply_request('7f1a0000-0000-4000-8000-000000000103', 'reorder',
+    '7f1a0000-0000-4000-8000-000000000c02', '7f1a0000-0000-4000-8000-000000000c12', NULL,
+    '[{"catalogVendorProductId": "7f1a0000-0000-4000-8000-000000000401", "quantity": 1}]');
+  RAISE EXCEPTION 'Check 21 failed: an inactive linked vendor enabled a request line';
+EXCEPTION WHEN no_data_found THEN NULL;
+END
+$$;
+RESET ROLE;
+-- No refused line was stored anywhere.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.supply_request_items
+             WHERE organization_id::text LIKE '7f1a0000-%'
+               AND catalog_vendor_product_id IN ('7f1a0000-0000-4000-8000-000000000411', '7f1a0000-0000-4000-8000-000000000412')) THEN
+    RAISE EXCEPTION 'Check 21 failed: an unlinked catalog listing reached a request line';
+  END IF;
+END
+$$;
+
 ROLLBACK;

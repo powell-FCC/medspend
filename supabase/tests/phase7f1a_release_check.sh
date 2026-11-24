@@ -171,7 +171,7 @@ def load(path):
 pre, post = load(sys.argv[1]), load(sys.argv[2])
 new_tables = {"catalog_brands", "catalog_bundle_components", "catalog_certification_types", "catalog_concept_synonyms",
               "catalog_concepts", "catalog_product_certifications", "catalog_product_concepts", "catalog_product_families"}
-allowed_functions = {"supply_request_product_search", "supply_request_product_identities"}
+allowed_functions = {"supply_request_product_search", "supply_request_product_identities", "replace_supply_request_items"}
 altered = {"catalog_products", "catalog_vendor_products", "catalog_import_batches"}
 bad = []
 for key in sorted(set(pre) | set(post)):

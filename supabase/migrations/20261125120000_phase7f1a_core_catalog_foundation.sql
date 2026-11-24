@@ -47,21 +47,35 @@
 --
 -- Organization catalog visibility: an organization uses a catalog vendor exactly when it
 -- has an ACTIVE organization vendor linked to it (vendors.catalog_vendor_id). That link is
--- unique per organization (vendors_org_catalog_vendor_uq), can only be set through
--- link_organization_vendor_to_catalog_vendor (owner/admin), and can never be repointed
--- (guard_vendor_catalog_link). No new enablement table is needed. Staff request search
--- (supply_request_product_search, and through it search_supply_request_products and
--- search_supply_request_products_with_signals) and discovery identities
--- (supply_request_product_identities, used by get_staff_product_discovery and
--- save_staff_product) now only return global listings of those catalog vendors; owners
--- and admins follow the same rule there. Everything else in those functions (signatures,
--- tiers, ranking, typo correction, organization products) is byte-for-byte the Phase
--- 5A.10 definition. Global catalog identity tables stay authenticated-readable as before;
--- this is a search scope, not a secrecy boundary.
+-- unique per organization (vendors_org_catalog_vendor_uq) and can never be repointed
+-- (guard_vendor_catalog_link). Client roles cannot write the column; only two
+-- SECURITY DEFINER paths set it, both owner/admin only:
+-- link_organization_vendor_to_catalog_vendor, and adopt_catalog_vendor_product, which
+-- creates a linked organization vendor when a listing of a catalog the organization does
+-- not use yet is adopted (that adoption therefore enables the whole catalog). This is an
+-- organization opt-in, not a platform entitlement. No new enablement table is needed.
+--
+-- Scoped by this migration, for owners, admins and staff alike:
+--   * staff request search (supply_request_product_search, and through it
+--     search_supply_request_products and search_supply_request_products_with_signals) and
+--     discovery identities (supply_request_product_identities, used by
+--     get_staff_product_discovery and save_staff_product) only return global listings of
+--     those catalog vendors;
+--   * request lines (replace_supply_request_items, used by submit_supply_request,
+--     update_submitted_supply_request and the cancellation edit path) refuse a global
+--     listing of any other catalog vendor with the existing "A selected global catalog
+--     product is unavailable" error (P0002). Lines reached through the organization's own
+--     vendor SKU mapping already require an active vendor, and
+--     vendor_products_validate_catalog_link ties that vendor to the listing's catalog.
+-- Everything else in those functions (signatures, grants, tiers, ranking, typo
+-- correction, validation order, every other request-line shape) is byte-for-byte the
+-- Phase 5A.10 / Phase 6C definition. Global catalog identity tables stay
+-- authenticated-readable as before; this is a scope, not a secrecy boundary.
 --
 -- Rollback (no data depends on the new objects until 7F.1B):
 --   re-run the Phase 5A.10 definitions of supply_request_product_search and
---   supply_request_product_identities; then DROP the new tables (catalog_bundle_components,
+--   supply_request_product_identities and the Phase 6C definition of
+--   replace_supply_request_items; then DROP the new tables (catalog_bundle_components,
 --   catalog_product_certifications, catalog_certification_types, catalog_product_concepts,
 --   catalog_concept_synonyms, catalog_concepts) and the new columns, then
 --   catalog_product_families and catalog_brands.
@@ -85,12 +99,13 @@ BEGIN
   END IF;
   IF pg_catalog.to_regprocedure('public.supply_request_product_search(uuid, text, integer)') IS NULL
      OR pg_catalog.to_regprocedure('public.supply_request_product_identities(uuid, uuid[], uuid[], uuid[])') IS NULL
+     OR pg_catalog.to_regprocedure('public.replace_supply_request_items(uuid, uuid, jsonb)') IS NULL
      OR pg_catalog.to_regprocedure('public.normalize_catalog_text(text)') IS NULL
      OR pg_catalog.to_regprocedure('public.normalize_catalog_sku(text)') IS NULL
      OR pg_catalog.to_regprocedure('public.tg_set_updated_at()') IS NULL
      OR pg_catalog.to_regprocedure('public.link_organization_vendor_to_catalog_vendor(uuid, uuid, uuid, timestamptz)') IS NULL
      OR pg_catalog.to_regprocedure('public.price_product_state(uuid, uuid[], date, boolean)') IS NULL THEN
-    RAISE EXCEPTION 'Phase 7F.1A requires Phase 5A.10, the catalog vendor link and Phase 6B.1';
+    RAISE EXCEPTION 'Phase 7F.1A requires Phase 5A.10, Phase 6C request editing, the catalog vendor link and Phase 6B.1';
   END IF;
   IF pg_catalog.to_regclass('public.vendors_org_catalog_vendor_uq') IS NULL
      OR pg_catalog.to_regclass('public.catalog_import_batches_id_vendor_uq') IS NULL THEN
@@ -500,8 +515,8 @@ CREATE POLICY catalog_bundle_components_authenticated_select
   ON public.catalog_bundle_components FOR SELECT TO authenticated USING (true);
 
 -- ---------------------------------------------------------------------------------------
--- Organization catalog scope for staff request search and discovery.
--- The two definitions below are the Phase 5A.10 definitions with only the marked
+-- Organization catalog scope for staff request search, discovery and request lines.
+-- The definitions below are the Phase 5A.10 / Phase 6C definitions with only the marked
 -- "Phase 7F.1A" scope additions.
 -- ---------------------------------------------------------------------------------------
 
@@ -1418,5 +1433,246 @@ REVOKE ALL ON FUNCTION public.supply_request_product_identities(uuid, uuid[], uu
 
 COMMENT ON FUNCTION public.supply_request_product_identities(uuid, uuid[], uuid[], uuid[]) IS
   'Phase 5A.10 discovery identity resolution under the eligibility rules of search. Phase 7F.1A: global listings only of catalog vendors the organization uses.';
+
+CREATE OR REPLACE FUNCTION public.replace_supply_request_items(
+  _organization_id uuid,
+  _request_id uuid,
+  _items jsonb
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _item jsonb;
+  _inventory public.inventory_items%ROWTYPE;
+  _vendor_product public.vendor_products%ROWTYPE;
+  _product public.products%ROWTYPE;
+  _catalog_vendor_product public.catalog_vendor_products%ROWTYPE;
+  _inventory_item_id uuid;
+  _vendor_product_id uuid;
+  _product_id uuid;
+  _catalog_vendor_product_id uuid;
+  _free_text text;
+  _quantity numeric;
+  _unit text;
+  _first_product_id uuid;
+  _first_free_text text;
+  _first_quantity integer;
+  _line_count integer := 0;
+BEGIN
+  IF _items IS NULL
+     OR jsonb_typeof(_items) <> 'array'
+     OR jsonb_array_length(_items) = 0 THEN
+    RAISE EXCEPTION 'Add at least one item to the request';
+  END IF;
+
+  -- Request lines referenced by a commitment snapshot are protected by
+  -- ON DELETE RESTRICT; callers only reach this point for uncommitted requests.
+  DELETE FROM public.supply_request_items
+  WHERE organization_id = _organization_id
+    AND supply_request_id = _request_id;
+
+  FOR _item IN SELECT value FROM jsonb_array_elements(_items)
+  LOOP
+    IF jsonb_typeof(_item) <> 'object' THEN
+      RAISE EXCEPTION 'Each request line must be an object';
+    END IF;
+
+    _inventory_item_id := nullif(_item->>'inventoryItemId', '')::uuid;
+    _vendor_product_id := nullif(_item->>'vendorProductId', '')::uuid;
+    _product_id := nullif(_item->>'productId', '')::uuid;
+    _catalog_vendor_product_id := nullif(_item->>'catalogVendorProductId', '')::uuid;
+    _free_text := nullif(btrim(_item->>'freeTextItem'), '');
+    _unit := NULL;
+
+    BEGIN
+      _quantity := (_item->>'quantity')::numeric;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION 'Each requested quantity must be a positive whole number';
+    END;
+    IF _quantity IS NULL OR _quantity <= 0 OR _quantity <> trunc(_quantity) THEN
+      RAISE EXCEPTION 'Each requested quantity must be a positive whole number';
+    END IF;
+
+    IF _free_text IS NOT NULL AND (
+      _inventory_item_id IS NOT NULL
+      OR _vendor_product_id IS NOT NULL
+      OR _product_id IS NOT NULL
+      OR _catalog_vendor_product_id IS NOT NULL
+    ) THEN
+      RAISE EXCEPTION 'A custom request line cannot include structured identity IDs'
+        USING ERRCODE = '22023';
+    END IF;
+    IF _free_text IS NULL
+       AND _inventory_item_id IS NULL
+       AND _vendor_product_id IS NULL
+       AND _product_id IS NULL
+       AND _catalog_vendor_product_id IS NULL THEN
+      RAISE EXCEPTION 'Each line must contain a structured identity or one custom item'
+        USING ERRCODE = '22023';
+    END IF;
+
+    IF _inventory_item_id IS NOT NULL THEN
+      SELECT *
+      INTO _inventory
+      FROM public.inventory_items
+      WHERE id = _inventory_item_id
+        AND organization_id = _organization_id
+        AND active = true;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'A selected inventory item is unavailable for this organization'
+          USING ERRCODE = 'P0002';
+      END IF;
+
+      IF _inventory.product_id IS NULL THEN
+        IF _product_id IS NOT NULL OR _vendor_product_id IS NOT NULL
+           OR _catalog_vendor_product_id IS NOT NULL THEN
+          RAISE EXCEPTION 'The selected inventory item has no proven product identity chain'
+            USING ERRCODE = '22023';
+        END IF;
+      ELSIF _product_id IS NOT NULL AND _product_id <> _inventory.product_id THEN
+        RAISE EXCEPTION 'The selected inventory item does not belong to the supplied product'
+          USING ERRCODE = '22023';
+      ELSE
+        _product_id := _inventory.product_id;
+      END IF;
+      _unit := _inventory.unit;
+    END IF;
+
+    IF _vendor_product_id IS NOT NULL THEN
+      SELECT vendor_product.*
+      INTO _vendor_product
+      FROM public.vendor_products vendor_product
+      JOIN public.vendors vendor
+        ON vendor.id = vendor_product.vendor_id
+       AND vendor.organization_id = vendor_product.organization_id
+       AND vendor.active = true
+      WHERE vendor_product.id = _vendor_product_id
+        AND vendor_product.organization_id = _organization_id
+        AND vendor_product.active = true;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'A selected vendor product is unavailable for this organization'
+          USING ERRCODE = 'P0002';
+      END IF;
+
+      IF _product_id IS NOT NULL AND _product_id <> _vendor_product.product_id THEN
+        RAISE EXCEPTION 'The selected vendor product does not belong to the supplied product'
+          USING ERRCODE = '22023';
+      END IF;
+      _product_id := _vendor_product.product_id;
+
+      IF _vendor_product.catalog_vendor_product_id IS NOT NULL THEN
+        IF _catalog_vendor_product_id IS NOT NULL
+           AND _catalog_vendor_product_id <> _vendor_product.catalog_vendor_product_id THEN
+          RAISE EXCEPTION 'The selected vendor product does not link to the supplied global catalog identity'
+            USING ERRCODE = '22023';
+        END IF;
+        _catalog_vendor_product_id := _vendor_product.catalog_vendor_product_id;
+      ELSIF _catalog_vendor_product_id IS NOT NULL THEN
+        RAISE EXCEPTION 'The selected vendor product has no proven global catalog link'
+          USING ERRCODE = '22023';
+      END IF;
+    END IF;
+
+    IF _product_id IS NOT NULL THEN
+      SELECT *
+      INTO _product
+      FROM public.products
+      WHERE id = _product_id
+        AND organization_id = _organization_id
+        AND active = true
+        AND staff_requestable = true;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'A selected product is unavailable for this organization'
+          USING ERRCODE = 'P0002';
+      END IF;
+      IF _unit IS NULL THEN
+        _unit := _product.unit_of_measure;
+      END IF;
+    END IF;
+
+    IF _catalog_vendor_product_id IS NOT NULL THEN
+      SELECT catalog_vendor_product.*
+      INTO _catalog_vendor_product
+      FROM public.catalog_vendor_products catalog_vendor_product
+      JOIN public.catalog_products catalog_product
+        ON catalog_product.id = catalog_vendor_product.catalog_product_id
+       AND catalog_product.active = true
+      JOIN public.catalog_vendors catalog_vendor
+        ON catalog_vendor.id = catalog_vendor_product.catalog_vendor_id
+       AND catalog_vendor.active = true
+      WHERE catalog_vendor_product.id = _catalog_vendor_product_id
+        AND catalog_vendor_product.active = true
+        AND catalog_vendor_product.discontinued = false
+        -- Phase 7F.1A: only catalog vendors this organization uses.
+        AND EXISTS (
+          SELECT 1 FROM public.vendors organization_vendor
+          WHERE organization_vendor.organization_id = _organization_id
+            AND organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'A selected global catalog product is unavailable'
+          USING ERRCODE = 'P0002';
+      END IF;
+
+      IF _vendor_product_id IS NULL AND (
+        _product_id IS NOT NULL OR _inventory_item_id IS NOT NULL
+      ) THEN
+        RAISE EXCEPTION 'A local product cannot claim an unproven global catalog identity'
+          USING ERRCODE = '22023';
+      END IF;
+    END IF;
+
+    INSERT INTO public.supply_request_items (
+      organization_id,
+      supply_request_id,
+      product_id,
+      inventory_item_id,
+      vendor_product_id,
+      catalog_vendor_product_id,
+      free_text_item,
+      quantity,
+      unit
+    ) VALUES (
+      _organization_id,
+      _request_id,
+      _product_id,
+      _inventory_item_id,
+      _vendor_product_id,
+      _catalog_vendor_product_id,
+      _free_text,
+      _quantity::integer,
+      _unit
+    );
+    _line_count := _line_count + 1;
+
+    IF _first_quantity IS NULL THEN
+      _first_product_id := _product_id;
+      _first_free_text := _free_text;
+      _first_quantity := _quantity::integer;
+    END IF;
+  END LOOP;
+
+  -- Preserve the established first-line compatibility mirror. A global-only or
+  -- unlinked-inventory first line intentionally leaves both legacy identity fields null.
+  UPDATE public.supply_requests
+  SET product_id = _first_product_id,
+      free_text_item = _first_free_text,
+      quantity = _first_quantity
+  WHERE id = _request_id
+    AND organization_id = _organization_id;
+
+  RETURN _line_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.replace_supply_request_items(uuid, uuid, jsonb)
+  FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION public.replace_supply_request_items(uuid, uuid, jsonb) IS
+  'Phase 6C request-line writer shared by submit, requester edit and cancellation edit. Phase 7F.1A: a global catalog listing must belong to a catalog vendor the organization uses.';
 
 COMMIT;

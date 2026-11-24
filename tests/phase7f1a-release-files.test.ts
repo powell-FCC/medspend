@@ -9,6 +9,17 @@ const migration = read("supabase/migrations/20261125120000_phase7f1a_core_catalo
 const fingerprint = release("fingerprint.sql");
 const select = fingerprint.slice(fingerprint.indexOf("SELECT section, key, value FROM ("));
 const code = migration.replace(/--[^\n]*/g, "");
+// The migration's own statements, before the redefined function bodies (which are the
+// Phase 5A.10 / 6C definitions plus the scope clause, checked separately below).
+const ddl = code.slice(0, code.indexOf("CREATE OR REPLACE FUNCTION"));
+const scopeClause = `
+        -- Phase 7F.1A: only catalog vendors this organization uses.
+        AND EXISTS (
+          SELECT 1 FROM public.vendors organization_vendor
+          WHERE organization_vendor.organization_id = _organization_id
+            AND organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );`;
 
 test("the migration is one additive transaction with a preflight", () => {
   assert.equal((code.match(/^BEGIN;$/gm) ?? []).length, 1);
@@ -18,13 +29,33 @@ test("the migration is one additive transaction with a preflight", () => {
   assert.match(code, /Phase 7F\.1A objects already exist unexpectedly/);
   assert.doesNotMatch(code, /\bDROP\s+(TABLE|COLUMN|INDEX|FUNCTION|POLICY|TRIGGER|CONSTRAINT)\b/i);
   assert.doesNotMatch(code, /CREATE\s+TEMP/i);
-  assert.doesNotMatch(code, /\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
-  // The only row written is the reference certification type.
+  assert.doesNotMatch(ddl, /\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
+  // The only row the migration writes is the reference certification type.
   assert.deepEqual(
-    [...code.matchAll(/INSERT INTO\s+(public\.[a-z_]+)/g)].map((m) => m[1]),
+    [...ddl.matchAll(/INSERT INTO\s+(public\.[a-z_]+)/g)].map((m) => m[1]),
     ["public.catalog_certification_types"],
   );
-  assert.doesNotMatch(code, /\bUPDATE\s+public\./i);
+  assert.doesNotMatch(ddl, /\bUPDATE\s+public\./i);
+});
+
+test("the request-line writer is the Phase 6C definition plus only the catalog scope", () => {
+  const source = read("supabase/migrations/20261009120000_phase6c_staff_request_forgiveness.sql");
+  const start = source.indexOf("CREATE FUNCTION public.replace_supply_request_items(");
+  const end =
+    source.indexOf("FROM PUBLIC, anon, authenticated;", start) +
+    "FROM PUBLIC, anon, authenticated;".length;
+  const lookupEnd = `
+        AND catalog_vendor_product.discontinued = false;`;
+  const original = source
+    .slice(start, end)
+    .replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION");
+  assert.equal(original.split(lookupEnd).length, 2, "the 6C catalog lookup moved");
+  const expected = original.replace(
+    lookupEnd,
+    `
+        AND catalog_vendor_product.discontinued = false${scopeClause}`,
+  );
+  assert.ok(migration.includes(expected), "replace_supply_request_items differs from 6C + scope");
 });
 
 test("the migration leaves the protected identity and pricing objects alone", () => {
@@ -48,10 +79,15 @@ test("the migration leaves the protected identity and pricing objects alone", ()
   }
   assert.doesNotMatch(code, /FUNCTION public\.price_/);
   assert.doesNotMatch(code, /vendor_offers|offer_sources/);
-  // Only the two scoped search functions are redefined, with their 5A.10 signatures.
+  // Only the two scoped search functions and the request-line writer are redefined, with
+  // their 5A.10 / 6C signatures.
   assert.deepEqual(
     [...code.matchAll(/CREATE OR REPLACE FUNCTION public\.([a-z_]+)\(/g)].map((m) => m[1]),
-    ["supply_request_product_search", "supply_request_product_identities"],
+    [
+      "supply_request_product_search",
+      "supply_request_product_identities",
+      "replace_supply_request_items",
+    ],
   );
 });
 

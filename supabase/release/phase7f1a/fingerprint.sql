@@ -21,9 +21,10 @@ SELECT section, key, value FROM (
       ORDER BY p.oid LIMIT 1
     ), 'absent') AS value
   FROM (VALUES
-    -- Changed by 7F.1A (same signatures, catalog scope added).
+    -- Changed by 7F.1A (same signatures and grants, catalog scope added).
     ('supply_request_product_search'),
     ('supply_request_product_identities'),
+    ('replace_supply_request_items'),
     -- Staff search and discovery around them, must not change.
     ('search_supply_request_products'),
     ('search_supply_request_products_with_signals'),
@@ -67,6 +68,9 @@ SELECT section, key, value FROM (
     ('post_reviewed_invoice'),
     -- Requests, must not change.
     ('submit_supply_request'),
+    ('update_submitted_supply_request'),
+    ('cancel_submitted_supply_request'),
+    ('resolve_supply_request_context'),
     ('decide_supply_request'),
     ('resolve_supply_request_item_costs'),
     -- 6B.1 Price Intelligence, must not change.
@@ -100,7 +104,7 @@ SELECT section, key, value FROM (
 
   UNION ALL
   SELECT 2, 'overloads', fn.name, count(p.oid)::text
-  FROM (VALUES ('supply_request_product_search'), ('supply_request_product_identities'),
+  FROM (VALUES ('supply_request_product_search'), ('supply_request_product_identities'), ('replace_supply_request_items'),
                ('search_supply_request_products'), ('search_supply_request_products_with_signals')) AS fn(name)
   LEFT JOIN pg_proc p ON p.proname = fn.name AND p.pronamespace = 'public'::regnamespace
   GROUP BY fn.name
