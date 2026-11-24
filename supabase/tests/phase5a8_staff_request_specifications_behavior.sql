@@ -73,6 +73,16 @@ VALUES (
   true
 );
 
+-- Phase 7F.1A: staff search only returns catalog vendors the organization uses.
+INSERT INTO public.vendors (id, organization_id, name, active, catalog_vendor_id)
+VALUES (
+  '5a8e0000-0000-4000-8000-000000000250'::uuid,
+  '5a8e0000-0000-4000-8000-000000000100'::uuid,
+  'Henry Schein Phase 5A.8',
+  true,
+  '5a8e0000-0000-4000-8000-000000000200'::uuid
+);
+
 INSERT INTO public.catalog_products (
   id,
   name,

@@ -1,0 +1,143 @@
+// Phase 7F.1A: static checks of the migration and its release files.
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+
+const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const release = (name: string) => read(`supabase/release/phase7f1a/${name}`);
+const migration = read("supabase/migrations/20261125120000_phase7f1a_core_catalog_foundation.sql");
+const fingerprint = release("fingerprint.sql");
+const select = fingerprint.slice(fingerprint.indexOf("SELECT section, key, value FROM ("));
+const code = migration.replace(/--[^\n]*/g, "");
+// The migration's own statements, before the redefined function bodies (which are the
+// Phase 5A.10 / 6C definitions plus the scope clause, checked separately below).
+const ddl = code.slice(0, code.indexOf("CREATE OR REPLACE FUNCTION"));
+const scopeClause = `
+        -- Phase 7F.1A: only catalog vendors this organization uses.
+        AND EXISTS (
+          SELECT 1 FROM public.vendors organization_vendor
+          WHERE organization_vendor.organization_id = _organization_id
+            AND organization_vendor.active = true
+            AND organization_vendor.catalog_vendor_id = catalog_vendor.id
+        );`;
+
+test("the migration is one additive transaction with a preflight", () => {
+  assert.equal((code.match(/^BEGIN;$/gm) ?? []).length, 1);
+  assert.equal((code.match(/^COMMIT;$/gm) ?? []).length, 1);
+  assert.ok(code.trimEnd().endsWith("COMMIT;"), "nothing may follow COMMIT");
+  assert.match(code, /DO \$preflight\$/);
+  assert.match(code, /Phase 7F\.1A objects already exist unexpectedly/);
+  assert.doesNotMatch(code, /\bDROP\s+(TABLE|COLUMN|INDEX|FUNCTION|POLICY|TRIGGER|CONSTRAINT)\b/i);
+  assert.doesNotMatch(code, /CREATE\s+TEMP/i);
+  assert.doesNotMatch(ddl, /\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
+  // The only row the migration writes is the reference certification type.
+  assert.deepEqual(
+    [...ddl.matchAll(/INSERT INTO\s+(public\.[a-z_]+)/g)].map((m) => m[1]),
+    ["public.catalog_certification_types"],
+  );
+  assert.doesNotMatch(ddl, /\bUPDATE\s+public\./i);
+});
+
+test("the request-line writer is the Phase 6C definition plus only the catalog scope", () => {
+  const source = read("supabase/migrations/20261009120000_phase6c_staff_request_forgiveness.sql");
+  const start = source.indexOf("CREATE FUNCTION public.replace_supply_request_items(");
+  const end =
+    source.indexOf("FROM PUBLIC, anon, authenticated;", start) +
+    "FROM PUBLIC, anon, authenticated;".length;
+  const lookupEnd = `
+        AND catalog_vendor_product.discontinued = false;`;
+  const original = source
+    .slice(start, end)
+    .replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION");
+  assert.equal(original.split(lookupEnd).length, 2, "the 6C catalog lookup moved");
+  const expected = original.replace(
+    lookupEnd,
+    `
+        AND catalog_vendor_product.discontinued = false${scopeClause}`,
+  );
+  assert.ok(migration.includes(expected), "replace_supply_request_items differs from 6C + scope");
+});
+
+test("the migration leaves the protected identity and pricing objects alone", () => {
+  for (const name of [
+    "adopt_catalog_vendor_product",
+    "match_invoice_item_to_catalog_listing",
+    "apply_invoice_exact_product_identities",
+    "inventory_price_history",
+    "invoice_items",
+    "vendor_identity_signatures",
+    "supply_request_items",
+    "vendor_products",
+  ]) {
+    assert.doesNotMatch(
+      code,
+      new RegExp(
+        `(CREATE OR REPLACE FUNCTION|ALTER TABLE|CREATE (UNIQUE )?INDEX [a-z_]+ ON) public\\.${name}\\b`,
+      ),
+      `${name} is changed`,
+    );
+  }
+  assert.doesNotMatch(code, /FUNCTION public\.price_/);
+  assert.doesNotMatch(code, /vendor_offers|offer_sources/);
+  // Only the two scoped search functions and the request-line writer are redefined, with
+  // their 5A.10 / 6C signatures.
+  assert.deepEqual(
+    [...code.matchAll(/CREATE OR REPLACE FUNCTION public\.([a-z_]+)\(/g)].map((m) => m[1]),
+    [
+      "supply_request_product_search",
+      "supply_request_product_identities",
+      "replace_supply_request_items",
+    ],
+  );
+});
+
+test("source_catalog_price is documented as never holding confidential prices", () => {
+  assert.match(
+    migration,
+    /COMMENT ON COLUMN public\.catalog_vendor_products\.source_catalog_price IS\s+'Public catalog list price only\. Readable by every authenticated user of every organization: NEVER store account-specific/,
+  );
+});
+
+test("precheck and postcheck end with the exact fingerprint SELECT and never write", () => {
+  for (const name of ["precheck.sql", "postcheck.sql"]) {
+    const text = release(name);
+    assert.ok(text.endsWith(select), `${name} does not end with the fingerprint`);
+    assert.doesNotMatch(text, /^\\/m, `${name} has a psql meta-command`);
+    assert.doesNotMatch(
+      text,
+      /^\s*(BEGIN|COMMIT|ROLLBACK)\s*;/im,
+      `${name} has transaction control`,
+    );
+    assert.equal((text.match(/^DO \$phase7f1a_(pre|post)check\$/gm) ?? []).length, 1);
+    assert.match(
+      text,
+      /Generated by supabase\/tests\/support\/phase7f1a_release_generate\.mjs; do not edit by hand/,
+    );
+    assert.doesNotMatch(text, /\b(INSERT|UPDATE|DELETE)\s+(INTO|FROM|public\.)/i, `${name} writes`);
+  }
+  assert.match(
+    release("precheck.sql"),
+    /Counts: functions 227,\n-- tables 55, indexes 209, policies 58, triggers 89/,
+  );
+  assert.match(
+    release("postcheck.sql"),
+    /functions 227, tables 63, indexes 233,\n-- policies 66, triggers 96/,
+  );
+  assert.match(release("postcheck.sql"), /set_config\('request\.jwt\.claim\.sub', '', true\)/);
+});
+
+test("the README documents the order, the expected differences and the catalog scope change", () => {
+  const readme = release("README.md");
+  for (const phrase of [
+    "precheck.sql",
+    "postcheck.sql",
+    "55 → 63",
+    "209 → 233",
+    "58 → 66",
+    "89 → 96",
+    "catalog scope",
+    "source_catalog_price",
+  ]) {
+    assert.ok(readme.includes(phrase), `README is missing ${phrase}`);
+  }
+});

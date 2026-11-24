@@ -30,6 +30,12 @@ INSERT INTO public.organization_memberships (organization_id, user_id, role, act
 INSERT INTO public.catalog_vendors (id, name, normalized_name, active)
 VALUES ('5a10b000-0000-4000-8000-000000000201', 'Fixture Medical', 'fixture medical', true);
 
+-- Phase 7F.1A: staff search only returns catalog vendors an organization uses (an active
+-- organization vendor linked to the catalog vendor). Both organizations use this catalog.
+INSERT INTO public.vendors (id, organization_id, name, active, catalog_vendor_id) VALUES
+  ('5a10b000-0000-4000-8000-000000000251', '5a10b000-0000-4000-8000-000000000101', 'Fixture Medical', true, '5a10b000-0000-4000-8000-000000000201'),
+  ('5a10b000-0000-4000-8000-000000000252', '5a10b000-0000-4000-8000-000000000102', 'Fixture Medical', true, '5a10b000-0000-4000-8000-000000000201');
+
 INSERT INTO public.catalog_products (id, name, normalized_name, description, manufacturer, active, verification_status)
 VALUES
   ('5a10b000-0000-4000-8000-000000000301', 'Athletic Tape', 'x', '2" x 15 yd', 'Fixture Mfg', true, 'verified'),
