@@ -168,6 +168,33 @@ export interface InvoiceMatchResult {
   preservedMapping: { vendorSku: string; productName: string } | null;
 }
 
+// Why a chosen catalog item could not be added (match_invoice_item_to_catalog_listing's
+// JSON hint). The message is the database's reviewer-facing text and names the product.
+export type InvoiceCatalogConflictType =
+  | "sku_mapped_to_other_product"
+  | "sku_mapped_to_other_listing"
+  | "name_twin_local"
+  | "name_twin_taken"
+  | "multiple_sku_mappings"
+  | "vendor_conflict"
+  | "adoption_inconsistent"
+  | "unknown";
+
+export interface InvoiceCatalogMatchConflict {
+  conflictType: InvoiceCatalogConflictType;
+  message: string;
+  productId: string | null;
+  productName: string | null;
+  vendorSku: string | null;
+  // True only when this line's own vendor SKU already maps to productId through an active
+  // mapping, so matching to it changes no mapping.
+  canMatchExisting: boolean;
+}
+
+export type InvoiceCatalogMatchOutcome =
+  | { status: "matched"; match: InvoiceMatchResult }
+  | { status: "conflict"; conflict: InvoiceCatalogMatchConflict };
+
 export interface InvoiceApprovalResult {
   invoiceId: string;
   createdInventoryItems: number;

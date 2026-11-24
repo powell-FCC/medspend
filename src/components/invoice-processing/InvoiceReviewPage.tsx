@@ -321,20 +321,22 @@ export function InvoiceReviewPage({ sourceFileId }: { sourceFileId: string }) {
         hasVendor={Boolean(data.header.vendorId)}
         searchCatalog={(query) => searchCatalog({ data: { organizationId: active.organizationId, sourceFileId, query } })}
         onConfirmCatalog={async (catalogVendorProductId) => {
-          if (!matching) return;
-          noteMatch(
-            await matchCatalog({
-              data: {
-                organizationId: active.organizationId,
-                sourceFileId,
-                itemId: matching.id,
-                catalogVendorProductId,
-                // The match this dialog showed; the database refuses if it has changed since.
-                expectedProductId: matching.productId,
-              },
-            }),
-          );
+          if (!matching) return null;
+          const outcome = await matchCatalog({
+            data: {
+              organizationId: active.organizationId,
+              sourceFileId,
+              itemId: matching.id,
+              catalogVendorProductId,
+              // The match this dialog showed; the database refuses if it has changed since.
+              expectedProductId: matching.productId,
+            },
+          });
+          // An existing product or mapping stopped the adoption: the dialog explains it.
+          if (outcome.status === "conflict") return outcome.conflict;
+          noteMatch(outcome.match);
           await refresh();
+          return null;
         }}
         onConfirm={async (productId) => {
           if (!matching) return;

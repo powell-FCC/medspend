@@ -246,7 +246,13 @@ test("migration is new, ordered after Phase 6C, transactional, and guarded", () 
       "20261021120000_phase7a1_location_aware_inventory.sql",
       "20261117120000_phase7e_budget_analytics.sql",
     ],
-    adopt_catalog_vendor_product: ["20261019120000_catalog_vendor_management.sql"],
+    // The catalog name-twin hotfix gives a variant whose name is taken by a product linked to
+    // a different catalog product a SKU-qualified name, and names its refusals;
+    // tests/hotfix-catalog-adoption-name-twin.test.ts and its SQL suite hold the rest.
+    adopt_catalog_vendor_product: [
+      "20261019120000_catalog_vendor_management.sql",
+      "20261124120000_hotfix_catalog_adoption_name_twin.sql",
+    ],
   };
   for (const later of migrations.slice(migrations.indexOf(migrationName) + 1)) {
     const code = read(`../supabase/migrations/${later}`).replace(/--.*$/gm, "");

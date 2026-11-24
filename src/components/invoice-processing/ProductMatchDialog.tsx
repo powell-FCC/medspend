@@ -19,6 +19,7 @@ import {
   searchOrganizationProducts,
 } from "@/invoice/catalog-match";
 import type {
+  InvoiceCatalogMatchConflict,
   InvoiceCatalogSearch,
   InvoiceReviewProduct,
   ReviewItem,
@@ -47,7 +48,8 @@ export function ProductMatchDialog({
   hasVendor: boolean;
   searchCatalog: (query: string) => Promise<InvoiceCatalogSearch>;
   onConfirm: (productId: string) => Promise<void>;
-  onConfirmCatalog: (catalogVendorProductId: string) => Promise<void>;
+  // Resolves with the refusal when an existing product or mapping stopped the adoption.
+  onConfirmCatalog: (catalogVendorProductId: string) => Promise<InvoiceCatalogMatchConflict | null>;
   onCreate: () => Promise<void>;
   onUnlink: (forget: boolean) => Promise<void>;
 }) {
@@ -59,6 +61,7 @@ export function ProductMatchDialog({
   const [confirmingCreate, setConfirmingCreate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [conflict, setConflict] = useState<InvoiceCatalogMatchConflict | null>(null);
   const lineSku = item?.sku ?? "";
   useEffect(() => {
     if (open) {
@@ -71,8 +74,11 @@ export function ProductMatchDialog({
       );
       setConfirmingCreate(false);
       setError("");
+      setConflict(null);
     }
   }, [open, item, lineSku]);
+  // A refusal explains the catalog item it was given for; choosing anything else clears it.
+  useEffect(() => setConflict(null), [selected]);
   // The catalog is searched on the server; wait for typing to pause.
   const itemId = item?.id ?? "";
   useEffect(() => {
@@ -106,11 +112,16 @@ export function ProductMatchDialog({
   // never changes that mapping, so the SKU is not remembered for the new product.
   const keepsCatalogMapping =
     item.skuFromCatalog && Boolean(item.sku) && chosenProductId !== item.productId;
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<InvoiceCatalogMatchConflict | null | void>) {
     setBusy(true);
     setError("");
+    setConflict(null);
     try {
-      await action();
+      const refusal = await action();
+      if (refusal) {
+        setConflict(refusal);
+        return;
+      }
       onOpenChange(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not update the product match.");
@@ -293,6 +304,28 @@ export function ProductMatchDialog({
           <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
+        )}
+        {conflict && (
+          <div
+            role="alert"
+            className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm"
+          >
+            <p className="text-destructive">{conflict.message}</p>
+            {/* Offered only when this line's vendor SKU already maps to that product. */}
+            {conflict.canMatchExisting && conflict.productId && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  const productId = conflict.productId;
+                  if (productId) run(() => onConfirm(productId));
+                }}
+              >
+                Match to {conflict.productName}
+              </Button>
+            )}
+          </div>
         )}
         {confirmingCreate ? (
           <DialogFooter>

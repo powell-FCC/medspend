@@ -25,6 +25,7 @@ import {
   itemInput,
   itemKeyInput,
   matchInvoiceItemToCatalog,
+  matchInvoiceItemToCatalogOutcome,
   refreshDerivedInvoiceTotals,
   saveInvoiceItem,
   searchInvoiceCatalog,
@@ -444,6 +445,37 @@ test(
       "rejected",
       /conflicts with a product or vendor SKU mapping your organization already has/,
     );
+    // The server function returns that refusal to the dialog, naming the product through
+    // PostgREST's hint. A same-named local product is never offered as a match.
+    const outcome = await matchInvoiceItemToCatalogOutcome(
+      owner,
+      OWNER,
+      catalogMatchInput.parse({
+        organizationId: ORG,
+        sourceFileId: SOURCE.match,
+        itemId: id("804"),
+        catalogVendorProductId: LISTING.collision,
+        expectedProductId: null,
+      }),
+    );
+    assert.equal(outcome.status, "conflict");
+    if (outcome.status === "conflict") {
+      assert.deepEqual(
+        { ...outcome.conflict, message: undefined },
+        {
+          conflictType: "name_twin_local",
+          message: undefined,
+          productId: id("402"),
+          productName: "Collision Named Catalog Product",
+          vendorSku: "888-0001",
+          canMatchExisting: false,
+        },
+      );
+      assert.match(
+        outcome.conflict.message,
+        /Your products already has "Collision Named Catalog Product", which is not linked to the catalog\./,
+      );
+    }
     assert.deepEqual(await line(id("803")), matched);
     assert.equal((await line(id("804"))).product_id, null);
     assert.deepEqual(await identityCounts(), before);

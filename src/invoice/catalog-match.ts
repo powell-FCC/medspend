@@ -1,5 +1,7 @@
 import type {
+  InvoiceCatalogConflictType,
   InvoiceCatalogListing,
+  InvoiceCatalogMatchConflict,
   InvoiceCatalogSearch,
   InvoiceCatalogUnavailableReason,
   InvoiceReviewProduct,
@@ -13,6 +15,46 @@ const UNAVAILABLE_REASONS: InvoiceCatalogUnavailableReason[] = [
 ];
 
 const text = (value: unknown) => (typeof value === "string" ? value : "");
+
+const CONFLICT_TYPES: InvoiceCatalogConflictType[] = [
+  "sku_mapped_to_other_product",
+  "sku_mapped_to_other_listing",
+  "name_twin_local",
+  "name_twin_taken",
+  "multiple_sku_mappings",
+  "vendor_conflict",
+  "adoption_inconsistent",
+];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The refusal match_invoice_item_to_catalog_listing raises when the chosen catalog item
+// cannot be added. Its JSON hint names the conflicting product; anything else is not a
+// catalog conflict (null), and an unreadable hint keeps the message with no product.
+export function toCatalogMatchConflict(
+  message: string,
+  hint: string | null | undefined,
+): InvoiceCatalogMatchConflict | null {
+  if (!message.startsWith("This catalog item conflicts with")) return null;
+  let record: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(hint ?? "");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      record = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // No usable hint: the message alone is shown.
+  }
+  const productId = UUID.test(text(record.productId)) ? text(record.productId) : null;
+  const productName = text(record.productName) || null;
+  return {
+    conflictType: CONFLICT_TYPES.find((type) => type === record.conflictType) ?? "unknown",
+    message,
+    productId,
+    productName,
+    vendorSku: text(record.vendorSku) || null,
+    canMatchExisting: record.canMatchExisting === true && Boolean(productId && productName),
+  };
+}
 
 // Shapes the search_invoice_line_catalog_listings result. Rows without an id or SKU are dropped.
 export function toInvoiceCatalogSearch(value: unknown): InvoiceCatalogSearch {
