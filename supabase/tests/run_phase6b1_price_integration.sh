@@ -81,16 +81,26 @@ probes="$(echo "$summary_plan" | grep -E "Index Scan using inventory_price_histo
 sorts="$(echo "$summary_plan" | grep -cE "Sort Method: external" || true)"
 echo "plan: university summary: one aggregated pass, ${probes} representative probes, ${spill} temp blocks written, ${sorts} external sorts"
 [ "$sorts" = "0" ] || fail "the university summary sorts on disk"
-# The counting path equals the canonical product state for every product, at both sizes.
+# The counting path equals the canonical product state for every product, at both sizes:
+# state, stale, signals, anchor vendor, observation count, and the set and count of vendors
+# (against the canonical observations).
 for org in 6b1c0000-0000-4000-8000-000000000101 6b1c0000-0000-4000-8000-000000000102; do
   mismatches="$(psql -X -At -U postgres -d postgres -c "
     WITH fast AS (SELECT * FROM public.price_summary_product_states('$org', (now() AT TIME ZONE 'UTC')::date) WHERE state IS NOT NULL),
-    full_ AS (SELECT * FROM public.price_product_state('$org', NULL, (now() AT TIME ZONE 'UTC')::date, false))
-    SELECT count(*) FROM fast FULL JOIN full_ USING (product_id)
+    full_ AS (SELECT * FROM public.price_product_state('$org', NULL, (now() AT TIME ZONE 'UTC')::date, false)),
+    vendors AS (
+      SELECT o.product_id, array_agg(DISTINCT o.vendor_id ORDER BY o.vendor_id) AS ids
+      FROM public.price_observation_rows('$org', NULL) o WHERE o.valid GROUP BY o.product_id)
+    SELECT count(*) FROM fast FULL JOIN full_ USING (product_id) LEFT JOIN vendors USING (product_id)
     WHERE fast.state IS DISTINCT FROM full_.state OR fast.stale IS DISTINCT FROM full_.stale
        OR fast.signals IS DISTINCT FROM full_.signals OR fast.anchor_vendor_id IS DISTINCT FROM full_.anchor_vendor_id
-       OR fast.observation_count IS DISTINCT FROM full_.observation_count")"
+       OR fast.observation_count IS DISTINCT FROM full_.observation_count
+       OR (SELECT array_agg(v ORDER BY v) FROM unnest(fast.valid_vendor_ids) v) IS DISTINCT FROM vendors.ids
+       OR cardinality(fast.valid_vendor_ids) IS DISTINCT FROM full_.vendor_count")"
   [ "$mismatches" = "0" ] || fail "summary counting path differs from price_product_state for $org: $mismatches products"
+  multi="$(psql -X -At -U postgres -d postgres -c "
+    SELECT count(*) FROM public.price_summary_product_states('$org', (now() AT TIME ZONE 'UTC')::date) WHERE cardinality(valid_vendor_ids) > 1")"
+  [ "$multi" -gt 0 ] || fail "no multi-vendor product for $org: the vendor comparison would be vacuous"
 done
-echo "equivalence: summary counting path equals price_product_state for all 5,000 + 24,996 products"
+echo "equivalence: summary counting path equals price_product_state for all 5,000 + 24,996 products (vendor sets included)"
 echo "run_phase6b1_price_integration: passed"
