@@ -13,8 +13,14 @@
 # mutant only counts as killed when a suite check fails ("Check N failed"), never on a
 # syntax or setup error.
 #
-# Not mutated: the reuse condition's vendor_id check (the fixture has one vendor, so a
-# mutant cannot be observed; it is defense in depth).
+# Not mutated, because no reachable state can observe them (defense in depth):
+#   * the reuse condition's vendor_id check: adoption only ever finds mappings of the
+#     organization vendor linked to the invoice vendor's catalog vendor, and an
+#     organization has at most one vendor per catalog vendor (vendors_org_catalog_vendor_uq),
+#     so a mapping of a different vendor never reaches the hint;
+#   * the reuse condition's unlinked-product branch: an unlinked product's SKU mapping is
+#     always linked directly by adoption (Check 9) or refused as
+#     catalog_product_adopted_elsewhere (Check 5c), never as a sku_mapped_* conflict.
 set -euo pipefail
 
 database="${1:?usage: $0 <database>}"
@@ -38,7 +44,23 @@ mutants=(
         AND normalized_name = _catalog_product.normalized_name
       LIMIT 1;|        AND normalized_name = _catalog_product.normalized_name
       LIMIT 1;"
-  "reuse offered for a line printed with another SKU|      AND public.normalize_catalog_sku_match_key(_line.sku) = public.normalize_catalog_sku_match_key(_listing.vendor_sku);|      AND true;"
+  "reuse offered for a line printed with another SKU|      AND public.normalize_catalog_sku_match_key(_line.sku) = public.normalize_catalog_sku_match_key(_listing.vendor_sku)
+      AND (|      AND true
+      AND ("
+  "cross-catalog contradiction offered as reuse|    _explanation := CASE|    _can_match_existing := _can_match_existing OR _conflict_type = 'sku_mapped_to_other_product';
+    _explanation := CASE"
+  "catalog identity equality not required|        _conflict_product.catalog_product_id = _listing.catalog_product_id
+        OR (|        true
+        OR ("
+  "same-catalog reuse never offered|        _conflict_product.catalog_product_id = _listing.catalog_product_id
+        OR (|        false
+        OR ("
+  "held catalog item not refused by name|      IF FOUND THEN
+        RAISE EXCEPTION
+          'Catalog product % is already organization product %',|      IF false THEN
+        RAISE EXCEPTION
+          'Catalog product % is already organization product %',"
+  "held catalog item message not named|      WHEN _conflict_type = 'catalog_product_adopted_elsewhere'|      WHEN false"
   "reuse offered through a retired mapping|      AND _conflict_vendor_product.active
 |"
   "SKU conflict hint dropped|      _organization_product.id
@@ -69,8 +91,8 @@ total=0
 report() {
   local name="$1"
   total=$((total + 1))
-  if grep -q 'Check [0-9]* failed' "$work/err"; then
-    echo "KILLED - $name: $(grep -m1 -o 'Check [0-9]* failed[^:]*' "$work/err")"
+  if grep -q 'Check [0-9]*[a-z]* failed' "$work/err"; then
+    echo "KILLED - $name: $(grep -m1 -o 'Check [0-9]*[a-z]* failed[^:]*' "$work/err")"
   else
     echo "SURVIVED - $name: $(grep -m1 -o 'ERROR: .*' "$work/err" | head -c 160)"
     survived=$((survived + 1))

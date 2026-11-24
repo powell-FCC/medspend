@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   MIN_CATALOG_SEARCH_LENGTH,
+  catalogConflictMatchAction,
   catalogSearchTerm,
   describeCatalogUnavailable,
   searchOrganizationProducts,
@@ -98,6 +99,8 @@ export function ProductMatchDialog({
     retry: false,
   });
   if (!item) return null;
+  // Offered only when the database marked the existing mapping safe to reuse.
+  const conflictMatch = catalogConflictMatchAction(conflict);
   const catalogName = catalog.data?.catalogVendorName || vendorName;
   const catalogHeading = catalogName ? `${catalogName} catalog` : "Vendor catalog";
   const selectedListing =
@@ -311,18 +314,14 @@ export function ProductMatchDialog({
             className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm"
           >
             <p className="text-destructive">{conflict.message}</p>
-            {/* Offered only when this line's vendor SKU already maps to that product. */}
-            {conflict.canMatchExisting && conflict.productId && (
+            {conflictMatch && (
               <Button
                 size="sm"
                 variant="outline"
                 disabled={busy}
-                onClick={() => {
-                  const productId = conflict.productId;
-                  if (productId) run(() => onConfirm(productId));
-                }}
+                onClick={() => run(() => onConfirm(conflictMatch.productId))}
               >
-                Match to {conflict.productName}
+                {conflictMatch.label}
               </Button>
             )}
           </div>

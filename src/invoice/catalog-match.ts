@@ -22,6 +22,7 @@ const CONFLICT_TYPES: InvoiceCatalogConflictType[] = [
   "name_twin_local",
   "name_twin_taken",
   "multiple_sku_mappings",
+  "catalog_product_adopted_elsewhere",
   "vendor_conflict",
   "adoption_inconsistent",
 ];
@@ -52,8 +53,20 @@ export function toCatalogMatchConflict(
     productId,
     productName,
     vendorSku: text(record.vendorSku) || null,
+    // Only the database's explicit true counts; nothing here derives safety from the
+    // product, its name, or the conflict type.
     canMatchExisting: record.canMatchExisting === true && Boolean(productId && productName),
   };
+}
+
+// The one action a refusal may offer: matching to the existing product the database marked
+// safe to reuse. Everything else (contradictions, name-only collisions, unreadable hints)
+// offers nothing.
+export function catalogConflictMatchAction(
+  conflict: InvoiceCatalogMatchConflict | null,
+): { productId: string; label: string } | null {
+  if (!conflict?.canMatchExisting || !conflict.productId || !conflict.productName) return null;
+  return { productId: conflict.productId, label: `Match to ${conflict.productName}` };
 }
 
 // Shapes the search_invoice_line_catalog_listings result. Rows without an id or SKU are dropped.

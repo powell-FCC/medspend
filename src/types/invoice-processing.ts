@@ -176,6 +176,7 @@ export type InvoiceCatalogConflictType =
   | "name_twin_local"
   | "name_twin_taken"
   | "multiple_sku_mappings"
+  | "catalog_product_adopted_elsewhere"
   | "vendor_conflict"
   | "adoption_inconsistent"
   | "unknown";
@@ -186,8 +187,10 @@ export interface InvoiceCatalogMatchConflict {
   productId: string | null;
   productName: string | null;
   vendorSku: string | null;
-  // True only when this line's own vendor SKU already maps to productId through an active
-  // mapping, so matching to it changes no mapping.
+  // Decided by the database alone: true only when this line's own vendor SKU already maps
+  // to productId through an active mapping AND productId is the selected catalog identity
+  // (or unlinked, with no other product holding it). Never true for a SKU mapped to a
+  // different catalog item. The UI never infers it from productId or productName.
   canMatchExisting: boolean;
 }
 

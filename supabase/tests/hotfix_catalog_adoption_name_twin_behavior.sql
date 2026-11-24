@@ -82,7 +82,9 @@ VALUES ('ca7a0000-0000-4000-8000-000000000201', 'Name Twin Henry Schein', 'x');
 -- in the opposite order. 215: twin whose qualified name is already taken. 216: local
 -- unlinked twin. 217/218: SKU mapped to a product of another catalog product. 219: brand
 -- new. 220: adopted product with a second SKU. 221: twin only as an inactive product.
--- 222: two mappings for one SKU.
+-- 222: two mappings for one SKU. 220 also has listings 244/246/250 for the safe same-catalog
+-- cases. 223: a catalog item another product already holds. 224: safe for an unlinked
+-- product.
 INSERT INTO public.catalog_products (id, name, active, verification_status)
 VALUES
   ('ca7a0000-0000-4000-8000-000000000211', 'The PowerFlex® Taping System', true, 'verified'),
@@ -97,7 +99,9 @@ VALUES
   ('ca7a0000-0000-4000-8000-000000000219', 'Brand New Catalog Item', true, 'verified'),
   ('ca7a0000-0000-4000-8000-000000000220', 'Ready Wrap', true, 'verified'),
   ('ca7a0000-0000-4000-8000-000000000221', 'Retired Name Product', true, 'verified'),
-  ('ca7a0000-0000-4000-8000-000000000222', 'Duplicate Mapping Product', true, 'verified');
+  ('ca7a0000-0000-4000-8000-000000000222', 'Duplicate Mapping Product', true, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000223', 'Held Catalog Item', true, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000224', 'Unlinked Safe Item', true, 'verified');
 INSERT INTO public.catalog_vendor_products (id, catalog_vendor_id, catalog_product_id, vendor_sku, normalized_vendor_sku, package_status, active, discontinued, verification_status)
 VALUES
   ('ca7a0000-0000-4000-8000-000000000231', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000211', '101-2983', 'x', 'unknown', true, false, 'verified'),
@@ -113,7 +117,13 @@ VALUES
   ('ca7a0000-0000-4000-8000-000000000240', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000220', '324-0025', 'x', 'unknown', true, false, 'verified'),
   ('ca7a0000-0000-4000-8000-000000000241', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000220', '324-0026', 'x', 'unknown', true, false, 'verified'),
   ('ca7a0000-0000-4000-8000-000000000242', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000221', '700-0001', 'x', 'unknown', true, false, 'verified'),
-  ('ca7a0000-0000-4000-8000-000000000243', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000222', '800-0001', 'x', 'unknown', true, false, 'verified');
+  ('ca7a0000-0000-4000-8000-000000000243', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000222', '800-0001', 'x', 'unknown', true, false, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000244', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000220', '324-0027', 'x', 'unknown', true, false, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000246', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000220', '324-0029', 'x', 'unknown', true, false, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000250', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000220', '324-0031', 'x', 'unknown', true, false, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000247', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000223', '900-0002', 'x', 'unknown', true, false, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000248', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000223', '900-0003', 'x', 'unknown', true, false, 'verified'),
+  ('ca7a0000-0000-4000-8000-000000000249', 'ca7a0000-0000-4000-8000-000000000201', 'ca7a0000-0000-4000-8000-000000000224', '900-0004', 'x', 'unknown', true, false, 'verified');
 
 INSERT INTO public.vendors (id, organization_id, name, normalized_name, active, catalog_vendor_id)
 VALUES ('ca7a0000-0000-4000-8000-000000000301', 'ca7a0000-0000-4000-8000-000000000101', 'Henry Schein', 'henry schein', true, 'ca7a0000-0000-4000-8000-000000000201');
@@ -122,17 +132,23 @@ VALUES ('ca7a0000-0000-4000-8000-000000000301', 'ca7a0000-0000-4000-8000-0000000
 -- 402: an active, unlinked product already holding the qualified Cover-Roll name.
 -- 403: inactive product with a catalog name (the active-name constraint ignores it).
 -- 404/405: two products for SKU 800-0001, one mapping inactive.
+-- 406: unlinked product holding SKU 900-0002, whose catalog item 248's adoption takes first.
+-- 407: unlinked product holding SKU 900-0004; nobody holds catalog item 224.
 INSERT INTO public.products (id, organization_id, name, normalized_name, approved, active, staff_requestable)
 VALUES
   ('ca7a0000-0000-4000-8000-000000000401', 'ca7a0000-0000-4000-8000-000000000101', 'Flexi-Wrap Plastic Film', 'x', true, true, true),
   ('ca7a0000-0000-4000-8000-000000000402', 'ca7a0000-0000-4000-8000-000000000101', 'Cover-Roll® Stretch Non-Woven Bandage (911-0007)', 'x', true, true, true),
   ('ca7a0000-0000-4000-8000-000000000403', 'ca7a0000-0000-4000-8000-000000000101', 'Retired Name Product', 'x', true, false, false),
   ('ca7a0000-0000-4000-8000-000000000404', 'ca7a0000-0000-4000-8000-000000000101', 'Duplicate A', 'x', true, true, true),
-  ('ca7a0000-0000-4000-8000-000000000405', 'ca7a0000-0000-4000-8000-000000000101', 'Duplicate B', 'x', true, true, true);
+  ('ca7a0000-0000-4000-8000-000000000405', 'ca7a0000-0000-4000-8000-000000000101', 'Duplicate B', 'x', true, true, true),
+  ('ca7a0000-0000-4000-8000-000000000406', 'ca7a0000-0000-4000-8000-000000000101', 'Local Held SKU Product', 'x', true, true, true),
+  ('ca7a0000-0000-4000-8000-000000000407', 'ca7a0000-0000-4000-8000-000000000101', 'Local Safe SKU Product', 'x', true, true, true);
 INSERT INTO public.vendor_products (id, organization_id, vendor_id, product_id, vendor_sku, active)
 VALUES
   ('ca7a0000-0000-4000-8000-000000000504', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301', 'ca7a0000-0000-4000-8000-000000000404', '800-0001', true),
-  ('ca7a0000-0000-4000-8000-000000000505', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301', 'ca7a0000-0000-4000-8000-000000000405', '800-0001', false);
+  ('ca7a0000-0000-4000-8000-000000000505', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301', 'ca7a0000-0000-4000-8000-000000000405', '800-0001', false),
+  ('ca7a0000-0000-4000-8000-000000000506', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301', 'ca7a0000-0000-4000-8000-000000000406', '900-0002', true),
+  ('ca7a0000-0000-4000-8000-000000000507', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301', 'ca7a0000-0000-4000-8000-000000000407', '900-0004', true);
 
 INSERT INTO public.vendor_invoices (id, organization_id, uploaded_by, storage_path, original_filename, file_size, mime_type)
 SELECT ('ca7a0000-0000-4000-8000-0000000006' || lpad(n::text, 2, '0'))::uuid,
@@ -158,7 +174,12 @@ VALUES
   ('ca7a0000-0000-4000-8000-000000000819', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 9, '324-0026', 'Ready Wrap second SKU', 1, 'EA', 1, 1),
   ('ca7a0000-0000-4000-8000-000000000820', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 10, '700-0001', 'Retired name', 1, 'EA', 1, 1),
   ('ca7a0000-0000-4000-8000-000000000821', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 11, '800-0001', 'Duplicate mapping', 1, 'EA', 1, 1),
-  ('ca7a0000-0000-4000-8000-000000000822', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 12, '398-0144', 'Ammex Large', 1, 'BX', 1, 1);
+  ('ca7a0000-0000-4000-8000-000000000822', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 12, '398-0144', 'Ammex Large', 1, 'BX', 1, 1),
+  ('ca7a0000-0000-4000-8000-000000000823', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 13, '324-0027', 'Ready Wrap third SKU', 1, 'EA', 1, 1),
+  ('ca7a0000-0000-4000-8000-000000000824', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 14, '900-0002', 'Held catalog item SKU', 1, 'EA', 1, 1),
+  ('ca7a0000-0000-4000-8000-000000000825', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 15, '900-0004', 'Unlinked safe SKU', 1, 'EA', 1, 1),
+  ('ca7a0000-0000-4000-8000-000000000826', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 16, 'OTHER-0027', 'Ready Wrap printed with another code', 1, 'EA', 1, 1),
+  ('ca7a0000-0000-4000-8000-000000000827', 'ca7a0000-0000-4000-8000-000000000702', 'ca7a0000-0000-4000-8000-000000000101', 17, '324-0031', 'Ready Wrap SKU already remembered', 1, 'EA', 1, 1);
 
 SET LOCAL ROLE authenticated;
 SELECT pg_catalog.set_config('request.jwt.claim.sub', 'ca7a0000-0000-4000-8000-000000000001', true);
@@ -168,7 +189,18 @@ SELECT pg_catalog.set_config('request.jwt.claim.sub', 'ca7a0000-0000-4000-8000-0
 -- production workaround this hotfix stops recommending.
 INSERT INTO nt_out VALUES ('setup_ready_wrap', pg_temp.nt_try($q$SELECT public.adopt_catalog_vendor_product('ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000240')$q$));
 INSERT INTO nt_out VALUES ('setup_ammex_large', pg_temp.nt_try($q$SELECT public.adopt_catalog_vendor_product('ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000238')$q$));
+INSERT INTO nt_out VALUES ('setup_held', pg_temp.nt_try($q$SELECT public.adopt_catalog_vendor_product('ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000248')$q$));
 RESET ROLE;
+-- Same catalog identity: Ready Wrap's product already carries SKU 324-0027 through a
+-- mapping linked to its other listing 246, and SKU 324-0031 through an unlinked mapping.
+INSERT INTO public.vendor_products (id, organization_id, vendor_id, product_id, vendor_sku, active, catalog_vendor_product_id)
+SELECT 'ca7a0000-0000-4000-8000-000000000508', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301',
+  (v->'result'->>'productId')::uuid, '324-0027', true, 'ca7a0000-0000-4000-8000-000000000246'
+FROM nt_out WHERE k = 'setup_ready_wrap';
+INSERT INTO public.vendor_products (id, organization_id, vendor_id, product_id, vendor_sku, active)
+SELECT 'ca7a0000-0000-4000-8000-000000000509', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301',
+  (v->'result'->>'productId')::uuid, '324-0031', true
+FROM nt_out WHERE k = 'setup_ready_wrap';
 INSERT INTO public.vendor_products (id, organization_id, vendor_id, product_id, vendor_sku, active)
 SELECT 'ca7a0000-0000-4000-8000-000000000501', 'ca7a0000-0000-4000-8000-000000000101', 'ca7a0000-0000-4000-8000-000000000301',
   (v->'result'->>'productId')::uuid, '398-0145', true
@@ -261,9 +293,9 @@ BEGIN
 END
 $nt_check_4$;
 
--- Check 5: the line's SKU already maps to a product of a different catalog product. That
--- contradiction stays refused, now naming the product, and matching to it is offered
--- because vendor + SKU already resolves there.
+-- Check 5: the line's SKU already maps to a product of a different catalog product. That is
+-- a genuine contradiction: refused, naming the product, and matching to it is NOT offered
+-- (it would put this catalog item's line on another catalog item's product).
 INSERT INTO nt_out VALUES ('sku_mapped', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000816', 'ca7a0000-0000-4000-8000-000000000237'));
 DO $nt_check_5$
 DECLARE
@@ -276,23 +308,60 @@ BEGIN
      OR _refusal->'hint'->>'productName' IS DISTINCT FROM 'Ammex Nitrile Glove Large'
      OR _refusal->'hint'->>'vendorProductId' IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000501'
      OR _refusal->'hint'->>'vendorSku' IS DISTINCT FROM '398-0145'
-     OR NOT (_refusal->'hint'->>'canMatchExisting')::boolean
-     OR position('Vendor SKU 398-0145 is already mapped to "Ammex Nitrile Glove Large", which is a different catalog item. Match this line to "Ammex Nitrile Glove Large"' IN _refusal->>'message') = 0 THEN
+     OR (_refusal->'hint'->>'canMatchExisting')::boolean IS DISTINCT FROM false
+     OR position('Vendor SKU 398-0145 is already mapped to "Ammex Nitrile Glove Large", which is linked to a different catalog item. Correct that mapping in Catalog first.' IN _refusal->>'message') = 0
+     OR position('Match this line' IN _refusal->>'message') <> 0 THEN
     RAISE EXCEPTION 'Check 5 failed: SKU mapped to another catalog product: %', _refusal;
   END IF;
 END
 $nt_check_5$;
 
--- Check 6: the same listing chosen for a line printed with another SKU, or after the
--- mapping is retired, is still refused but no longer offers the existing product.
-INSERT INTO nt_out VALUES ('sku_mapped_other_line', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000817', 'ca7a0000-0000-4000-8000-000000000237'));
+-- Check 5b: the line's SKU already maps (active, this vendor) to the product that IS the
+-- selected catalog item, through its other listing. That is safe reuse: offered.
+INSERT INTO nt_out VALUES ('same_catalog', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000823', 'ca7a0000-0000-4000-8000-000000000244'));
+DO $nt_check_5b$
+DECLARE
+  _refusal jsonb := (SELECT v FROM nt_out WHERE k = 'same_catalog');
+  _ready uuid := ((SELECT v FROM nt_out WHERE k = 'setup_ready_wrap')->'result'->>'productId')::uuid;
+BEGIN
+  IF (_refusal->>'ok')::boolean
+     OR _refusal->'hint'->>'conflictType' IS DISTINCT FROM 'sku_mapped_to_other_listing'
+     OR (_refusal->'hint'->>'productId')::uuid IS DISTINCT FROM _ready
+     OR _refusal->'hint'->>'vendorProductId' IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000508'
+     OR (_refusal->'hint'->>'canMatchExisting')::boolean IS DISTINCT FROM true
+     OR position('Vendor SKU 324-0027 is already mapped to "Ready Wrap", which is this catalog item. Match this line to "Ready Wrap".' IN _refusal->>'message') = 0 THEN
+    RAISE EXCEPTION 'Check 5b failed: same-catalog reuse not offered: %', _refusal;
+  END IF;
+END
+$nt_check_5b$;
+
+-- Check 5c: the line's SKU maps to an unlinked product, but another product already holds
+-- the selected catalog item. Linking would give one catalog item two products: refused by
+-- name, nothing offered.
+INSERT INTO nt_out VALUES ('unlinked_held', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000824', 'ca7a0000-0000-4000-8000-000000000247'));
+DO $nt_check_5c$
+DECLARE _refusal jsonb := (SELECT v FROM nt_out WHERE k = 'unlinked_held');
+BEGIN
+  IF (_refusal->>'ok')::boolean
+     OR _refusal->'hint'->>'conflictType' IS DISTINCT FROM 'catalog_product_adopted_elsewhere'
+     OR _refusal->'hint'->>'productId' IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000406'
+     OR (_refusal->'hint'->>'canMatchExisting')::boolean IS DISTINCT FROM false
+     OR position('Vendor SKU 900-0002 is mapped to "Local Held SKU Product", but this catalog item is already "Held Catalog Item" in your products. Correct that mapping in Catalog first.' IN _refusal->>'message') = 0 THEN
+    RAISE EXCEPTION 'Check 5c failed: unlinked product over a held catalog item: %', _refusal;
+  END IF;
+END
+$nt_check_5c$;
+
+-- Check 6: the safe same-catalog case of Check 5b stops being offered for a line printed
+-- with another SKU, or once that mapping is retired.
+INSERT INTO nt_out VALUES ('sku_mapped_other_line', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000826', 'ca7a0000-0000-4000-8000-000000000244'));
 RESET ROLE;
-UPDATE public.vendor_products SET active = false WHERE id = 'ca7a0000-0000-4000-8000-000000000501';
+UPDATE public.vendor_products SET active = false WHERE id = 'ca7a0000-0000-4000-8000-000000000508';
 SET LOCAL ROLE authenticated;
 SELECT pg_catalog.set_config('request.jwt.claim.sub', 'ca7a0000-0000-4000-8000-000000000001', true);
-INSERT INTO nt_out VALUES ('sku_mapped_inactive', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000816', 'ca7a0000-0000-4000-8000-000000000237'));
+INSERT INTO nt_out VALUES ('sku_mapped_inactive', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000823', 'ca7a0000-0000-4000-8000-000000000244'));
 RESET ROLE;
-UPDATE public.vendor_products SET active = true WHERE id = 'ca7a0000-0000-4000-8000-000000000501';
+UPDATE public.vendor_products SET active = true WHERE id = 'ca7a0000-0000-4000-8000-000000000508';
 SET LOCAL ROLE authenticated;
 SELECT pg_catalog.set_config('request.jwt.claim.sub', 'ca7a0000-0000-4000-8000-000000000001', true);
 DO $nt_check_6$
@@ -301,8 +370,8 @@ DECLARE
   _inactive jsonb := (SELECT v FROM nt_out WHERE k = 'sku_mapped_inactive');
 BEGIN
   IF (_other->>'ok')::boolean OR (_inactive->>'ok')::boolean
-     OR _other->'hint'->>'conflictType' IS DISTINCT FROM 'sku_mapped_to_other_product'
-     OR _inactive->'hint'->>'conflictType' IS DISTINCT FROM 'sku_mapped_to_other_product'
+     OR _other->'hint'->>'conflictType' IS DISTINCT FROM 'sku_mapped_to_other_listing'
+     OR _inactive->'hint'->>'conflictType' IS DISTINCT FROM 'sku_mapped_to_other_listing'
      OR (_other->'hint'->>'canMatchExisting')::boolean
      OR (_inactive->'hint'->>'canMatchExisting')::boolean
      OR position('Correct that mapping in Catalog first.' IN _other->>'message') = 0
@@ -342,6 +411,11 @@ $nt_check_8$;
 INSERT INTO nt_out VALUES ('brand_new', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000818', 'ca7a0000-0000-4000-8000-000000000239'));
 INSERT INTO nt_out VALUES ('second_sku', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000819', 'ca7a0000-0000-4000-8000-000000000241'));
 INSERT INTO nt_out VALUES ('inactive_twin', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000820', 'ca7a0000-0000-4000-8000-000000000242'));
+-- Existing mapping + same catalog product: adoption links the mapping and matches directly.
+INSERT INTO nt_out VALUES ('same_catalog_direct', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000827', 'ca7a0000-0000-4000-8000-000000000250'));
+-- Existing mapping + unlinked product nobody else holds the identity for: adoption links
+-- that product to the catalog item and matches directly.
+INSERT INTO nt_out VALUES ('unlinked_safe', pg_temp.nt_match('ca7a0000-0000-4000-8000-000000000602', 'ca7a0000-0000-4000-8000-000000000825', 'ca7a0000-0000-4000-8000-000000000249'));
 DO $nt_check_9$
 DECLARE
   _new jsonb := (SELECT v FROM nt_out WHERE k = 'brand_new');
@@ -355,6 +429,19 @@ BEGIN
      OR (pg_temp.nt_product_for('ca7a0000-0000-4000-8000-000000000242')).name IS DISTINCT FROM 'Retired Name Product'
      OR (pg_temp.nt_product_for('ca7a0000-0000-4000-8000-000000000242')).id = 'ca7a0000-0000-4000-8000-000000000403' THEN
     RAISE EXCEPTION 'Check 9 failed: unchanged adoption paths: % / % / %', _new, _second, _inactive;
+  END IF;
+  IF NOT ((SELECT v FROM nt_out WHERE k = 'same_catalog_direct')->>'ok')::boolean
+     OR ((SELECT v FROM nt_out WHERE k = 'same_catalog_direct')->'result'->>'productId')::uuid
+        IS DISTINCT FROM ((SELECT v FROM nt_out WHERE k = 'setup_ready_wrap')->'result'->>'productId')::uuid
+     OR ((SELECT v FROM nt_out WHERE k = 'same_catalog_direct')->'result'->>'vendorProductId') IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000509'
+     OR (SELECT catalog_vendor_product_id FROM public.vendor_products WHERE id = 'ca7a0000-0000-4000-8000-000000000509') IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000250'
+     OR NOT ((SELECT v FROM nt_out WHERE k = 'unlinked_safe')->>'ok')::boolean
+     OR ((SELECT v FROM nt_out WHERE k = 'unlinked_safe')->'result'->>'productId') IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000407'
+     OR ((SELECT v FROM nt_out WHERE k = 'unlinked_safe')->'result'->>'productCreated')::boolean
+     OR (SELECT catalog_product_id FROM public.products WHERE id = 'ca7a0000-0000-4000-8000-000000000407') IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000224'
+     OR (SELECT catalog_vendor_product_id FROM public.vendor_products WHERE id = 'ca7a0000-0000-4000-8000-000000000507') IS DISTINCT FROM 'ca7a0000-0000-4000-8000-000000000249' THEN
+    RAISE EXCEPTION 'Check 9 failed: safe existing mappings did not match directly: % / %',
+      (SELECT v FROM nt_out WHERE k = 'same_catalog_direct'), (SELECT v FROM nt_out WHERE k = 'unlinked_safe');
   END IF;
 END
 $nt_check_9$;

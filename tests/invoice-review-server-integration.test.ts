@@ -31,6 +31,7 @@ import {
   searchInvoiceCatalog,
   toInvoiceReviewError,
 } from "../src/invoice/review-actions.ts";
+import { catalogConflictMatchAction } from "../src/invoice/catalog-match.ts";
 
 const REST_URL = process.env.MEDSPEND_ITEST_REST_URL ?? "";
 const JWT_SECRET = process.env.MEDSPEND_ITEST_JWT_SECRET ?? "";
@@ -1108,3 +1109,101 @@ test("printed subtotal and total are untouched by any line change", { skip }, as
     [30, 37, "Parser", "Parser"],
   );
 });
+
+test(
+  "a catalog refusal tells the dialog whether the existing mapping is safe to reuse",
+  { skip },
+  async () => {
+    const IDENTITY_ORG = id("901");
+    const IDENTITY_SOURCE = id("971");
+    const choose = (itemId: string, catalogVendorProductId: string) =>
+      matchInvoiceItemToCatalogOutcome(
+        owner,
+        OWNER,
+        catalogMatchInput.parse({
+          organizationId: IDENTITY_ORG,
+          sourceFileId: IDENTITY_SOURCE,
+          itemId,
+          catalogVendorProductId,
+          expectedProductId: null,
+        }),
+      );
+    const mappingCount = async () =>
+      (
+        await inspect
+          .from("vendor_products")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", IDENTITY_ORG)
+      ).count;
+    const mappingsBefore = await mappingCount();
+
+    // Cross-catalog contradiction: SKU 990-0001 maps to a product of a different catalog
+    // item. Named, never offered.
+    const cross = await choose(id("991"), id("941"));
+    assert.equal(cross.status, "conflict");
+    if (cross.status === "conflict") {
+      assert.equal(cross.conflict.conflictType, "sku_mapped_to_other_product");
+      assert.equal(cross.conflict.productId, id("951"));
+      assert.equal(cross.conflict.productName, "Ammex Itest Glove Large");
+      assert.equal(cross.conflict.canMatchExisting, false);
+      assert.equal(catalogConflictMatchAction(cross.conflict), null);
+      assert.match(
+        cross.conflict.message,
+        /Vendor SKU 990-0001 is already mapped to "Ammex Itest Glove Large", which is linked to a different catalog item\. Correct that mapping in Catalog first\./,
+      );
+      assert.doesNotMatch(cross.conflict.message, /Match this line/);
+    }
+
+    // Same catalog identity, reached through the product's other listing: safe reuse.
+    const same = await choose(id("992"), id("944"));
+    assert.equal(same.status, "conflict");
+    if (same.status === "conflict") {
+      assert.equal(same.conflict.conflictType, "sku_mapped_to_other_listing");
+      assert.equal(same.conflict.canMatchExisting, true);
+      assert.deepEqual(catalogConflictMatchAction(same.conflict), {
+        productId: id("952"),
+        label: "Match to Ready Itest Wrap",
+      });
+      // The button's action is the ordinary product confirmation; it creates nothing.
+      const matched = await confirmInvoiceItemProduct(
+        owner,
+        OWNER,
+        confirmMatchInput.parse({
+          organizationId: IDENTITY_ORG,
+          sourceFileId: IDENTITY_SOURCE,
+          itemId: id("992"),
+          productId: id("952"),
+          expectedProductId: null,
+        }),
+      );
+      assert.equal(matched.productId, id("952"));
+      assert.equal((await line(id("992"))).vendor_product_id, id("964"));
+    }
+
+    // Unlinked product holding the SKU, but another product already holds the catalog item.
+    const held = await choose(id("993"), id("945"));
+    assert.equal(held.status, "conflict");
+    if (held.status === "conflict") {
+      assert.equal(held.conflict.conflictType, "catalog_product_adopted_elsewhere");
+      assert.equal(held.conflict.productId, id("954"));
+      assert.equal(held.conflict.canMatchExisting, false);
+      assert.equal(catalogConflictMatchAction(held.conflict), null);
+      assert.match(held.conflict.message, /this catalog item is already "Held Itest Item"/);
+    }
+    assert.equal((await line(id("991"))).product_id, null);
+    assert.equal((await line(id("993"))).product_id, null);
+    assert.equal(await mappingCount(), mappingsBefore);
+
+    // Unlinked product holding the SKU, catalog item free: adoption links it and matches.
+    const safe = await choose(id("994"), id("947"));
+    assert.equal(safe.status, "matched");
+    if (safe.status === "matched") assert.equal(safe.match.productId, id("955"));
+    const { data: linked } = await inspect
+      .from("products")
+      .select("catalog_product_id")
+      .eq("id", id("955"))
+      .single();
+    assert.equal(linked?.catalog_product_id, id("925"));
+    assert.equal(await mappingCount(), mappingsBefore);
+  },
+);

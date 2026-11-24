@@ -18,12 +18,20 @@
 --     new product is created as "<catalog name> (<vendor SKU>)". An unlinked same-named
 --     product is still refused (it may be the same item), as is a taken qualified name.
 --     Every reconciliation refusal keeps its SQLSTATE and message and adds a JSON HINT
---     {conflictType, productId?, vendorProductId?}. No other rule changes: one vendor SKU
---     still maps to one product, existing mappings are reused, contradictions are refused.
+--     {conflictType, productId?, vendorProductId?}. One refusal is new by name only: an
+--     unlinked product holding the SKU cannot take a catalog identity another product
+--     already holds (previously the same 23505 from products_org_catalog_product_uq, now
+--     conflictType catalog_product_adopted_elsewhere). No other rule changes: one vendor
+--     SKU still maps to one product, existing mappings are reused, contradictions are
+--     refused.
 --   * match_invoice_item_to_catalog_listing (20261012120000_beta_invoice_manual_catalog_matching.sql):
 --     a refused adoption now names the conflict in its message (which still begins with the
---     previous sentence) and returns a JSON HINT the app uses to offer "Match to <product>"
---     only when this line's vendor SKU already maps to that product. Return keys unchanged.
+--     previous sentence) and returns a JSON HINT whose canMatchExisting is the only
+--     authority for offering "Match to <product>": true only when this line's vendor SKU
+--     already maps (active, invoice vendor) to an active product that IS the selected
+--     catalog identity, or is unlinked with no other product holding it. A SKU mapped to a
+--     product of a different catalog item is a contradiction: named, never offered.
+--     Return keys unchanged.
 --
 -- No table, column, index, constraint, grant, or row is changed. Existing products keep
 -- their names. Rollback: re-run the adopt_catalog_vendor_product definition from
@@ -70,6 +78,7 @@ DECLARE
   _vendor_product_active boolean;
   _verified_unit text;
   _name_twin public.products%ROWTYPE;
+  _catalog_holder public.products%ROWTYPE;
   _product_name text;
 BEGIN
   IF _organization_id IS NULL OR _catalog_vendor_product_id IS NULL THEN
@@ -280,6 +289,26 @@ BEGIN
     END IF;
 
     IF _organization_product.catalog_product_id IS NULL THEN
+      -- The SKU's unlinked product can take this catalog identity only if no other product
+      -- already holds it (products_org_catalog_product_uq). Otherwise one catalog item would
+      -- have two products; refuse by name instead of failing on the constraint.
+      SELECT *
+      INTO _catalog_holder
+      FROM public.products
+      WHERE organization_id = _organization_id
+        AND catalog_product_id = _catalog_product.id
+        AND id <> _organization_product.id
+      LIMIT 1;
+
+      IF FOUND THEN
+        RAISE EXCEPTION
+          'Catalog product % is already organization product %',
+          _catalog_product.id,
+          _catalog_holder.id
+          USING ERRCODE = '23505',
+            HINT = jsonb_build_object('conflictType', 'catalog_product_adopted_elsewhere', 'productId', _organization_product.id, 'vendorProductId', _organization_vendor_product.id, 'adoptedProductId', _catalog_holder.id)::text;
+      END IF;
+
       UPDATE public.products
       SET catalog_product_id = _catalog_product.id
       WHERE id = _organization_product.id
@@ -454,6 +483,7 @@ DECLARE
   _conflict_type text;
   _conflict_product public.products%ROWTYPE;
   _conflict_vendor_product public.vendor_products%ROWTYPE;
+  _adopted_product public.products%ROWTYPE;
   _can_match_existing boolean := false;
   _explanation text;
 BEGIN
@@ -533,10 +563,16 @@ BEGIN
       SELECT * INTO _conflict_vendor_product FROM public.vendor_products
       WHERE id = (_conflict->>'vendorProductId')::uuid AND organization_id = _organization_id;
     END IF;
-    -- Matching to the existing product is offered only when this line's own vendor SKU
-    -- already resolves to it through an active mapping of the invoice vendor. That is the
-    -- answer vendor + SKU gives anyway, and it changes no mapping. A product that merely
-    -- shares a name is never offered: it may be a different item.
+    IF _conflict->>'adoptedProductId' IS NOT NULL THEN
+      SELECT * INTO _adopted_product FROM public.products
+      WHERE id = (_conflict->>'adoptedProductId')::uuid AND organization_id = _organization_id;
+    END IF;
+    -- Matching to the existing product is offered only when it is safe reuse: this line's
+    -- own vendor SKU already resolves to the product through an active mapping of the
+    -- invoice vendor, AND the product is the selected catalog identity (or is unlinked and
+    -- no other product holds that identity). A product linked to a different catalog
+    -- product is a genuine contradiction and is never offered; neither is a product that
+    -- merely shares a name. This is the only place reuse safety is decided.
     _can_match_existing :=
       _conflict_type IN ('sku_mapped_to_other_product', 'sku_mapped_to_other_listing')
       AND _conflict_product.id IS NOT NULL
@@ -546,14 +582,29 @@ BEGIN
       AND _conflict_vendor_product.vendor_id = _invoice.vendor_id
       AND _conflict_vendor_product.product_id = _conflict_product.id
       AND coalesce(public.normalize_catalog_sku_match_key(_line.sku), '') <> ''
-      AND public.normalize_catalog_sku_match_key(_line.sku) = public.normalize_catalog_sku_match_key(_listing.vendor_sku);
+      AND public.normalize_catalog_sku_match_key(_line.sku) = public.normalize_catalog_sku_match_key(_listing.vendor_sku)
+      AND (
+        _conflict_product.catalog_product_id = _listing.catalog_product_id
+        OR (
+          _conflict_product.catalog_product_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM public.products holder
+            WHERE holder.organization_id = _organization_id
+              AND holder.catalog_product_id = _listing.catalog_product_id
+              AND holder.id <> _conflict_product.id
+          )
+        )
+      );
     _explanation := CASE
       WHEN _conflict_type IN ('sku_mapped_to_other_product', 'sku_mapped_to_other_listing')
+           AND _conflict_product.id IS NOT NULL AND _can_match_existing THEN
+        format('Vendor SKU %s is already mapped to "%s", which is this catalog item. Match this line to "%s".', _listing.vendor_sku, _conflict_product.name, _conflict_product.name)
+      WHEN _conflict_type IN ('sku_mapped_to_other_product', 'sku_mapped_to_other_listing')
            AND _conflict_product.id IS NOT NULL THEN
-        format('Vendor SKU %s is already mapped to "%s", which is a different catalog item. ', _listing.vendor_sku, _conflict_product.name)
-        || CASE WHEN _can_match_existing
-             THEN format('Match this line to "%s", or correct that mapping in Catalog first.', _conflict_product.name)
-             ELSE 'Correct that mapping in Catalog first.' END
+        format('Vendor SKU %s is already mapped to "%s", which is linked to a different catalog item. Correct that mapping in Catalog first.', _listing.vendor_sku, _conflict_product.name)
+      WHEN _conflict_type = 'catalog_product_adopted_elsewhere'
+           AND _conflict_product.id IS NOT NULL AND _adopted_product.id IS NOT NULL THEN
+        format('Vendor SKU %s is mapped to "%s", but this catalog item is already "%s" in your products. Correct that mapping in Catalog first.', _listing.vendor_sku, _conflict_product.name, _adopted_product.name)
       WHEN _conflict_type = 'name_twin_local' AND _conflict_product.id IS NOT NULL THEN
         format('Your products already has "%s", which is not linked to the catalog. If it is the same item, choose it under Your products; otherwise rename it in Catalog first.', _conflict_product.name)
       WHEN _conflict_type = 'name_twin_taken' AND _conflict_product.id IS NOT NULL THEN
@@ -613,6 +664,6 @@ REVOKE ALL ON FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uuid, 
 GRANT EXECUTE ON FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uuid, uuid, uuid, uuid) TO authenticated;
 
 COMMENT ON FUNCTION public.match_invoice_item_to_catalog_listing(uuid, uuid, uuid, uuid, uuid) IS
-  'Owner-only manual decision: adopts one listing of the invoice vendor''s linked catalog vendor (existing idempotent adoption, no inventory) and matches the invoice line to it with manual provenance. Never approves, posts, or stocks. A refused adoption raises a reviewer message naming the conflict, with a JSON HINT (conflictType, productId, productName, vendorProductId, vendorSku, canMatchExisting).';
+  'Owner-only manual decision: adopts one listing of the invoice vendor''s linked catalog vendor (existing idempotent adoption, no inventory) and matches the invoice line to it with manual provenance. Never approves, posts, or stocks. A refused adoption raises a reviewer message naming the conflict, with a JSON HINT (conflictType, productId, productName, vendorProductId, vendorSku, canMatchExisting); canMatchExisting is true only for safe reuse of the same catalog identity, never for a SKU mapped to a different catalog item.';
 
 COMMIT;

@@ -125,5 +125,58 @@ VALUES
 -- Uploading an invoice file already created its job row.
 ON CONFLICT (invoice_id) DO UPDATE SET status = EXCLUDED.status, extraction_result = EXCLUDED.extraction_result;
 
+-- Catalog name-twin hotfix: a separate organization (same owner) whose catalog refusals
+-- must tell the dialog whether the existing mapping is safe to reuse. Adopted state is
+-- inserted directly, exactly as adoption leaves it.
+INSERT INTO public.organizations (id, name, created_by)
+VALUES ('c0de0000-0000-4000-8000-000000000901', 'Integration Identity Athletics', 'c0de0000-0000-4000-8000-000000000001');
+INSERT INTO public.organization_memberships (id, organization_id, user_id, role, active)
+VALUES ('c0de0000-0000-4000-8000-000000000911', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000001', 'owner', true);
+INSERT INTO public.catalog_products (id, name, manufacturer, active, verification_status)
+VALUES
+  ('c0de0000-0000-4000-8000-000000000921', 'Ammex Itest Glove', NULL, true, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000922', 'Ammex Itest Glove Large', NULL, true, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000923', 'Ready Itest Wrap', NULL, true, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000924', 'Held Itest Item', NULL, true, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000925', 'Unlinked Itest Item', NULL, true, 'verified');
+INSERT INTO public.catalog_vendor_products (id, catalog_vendor_id, catalog_product_id, vendor_sku, normalized_vendor_sku, package_description, package_status, active, discontinued, verification_status)
+VALUES
+  ('c0de0000-0000-4000-8000-000000000941', 'c0de0000-0000-4000-8000-000000000201', 'c0de0000-0000-4000-8000-000000000921', '990-0001', 'x', NULL, 'unknown', true, false, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000942', 'c0de0000-0000-4000-8000-000000000201', 'c0de0000-0000-4000-8000-000000000922', '990-0002', 'x', NULL, 'unknown', true, false, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000943', 'c0de0000-0000-4000-8000-000000000201', 'c0de0000-0000-4000-8000-000000000923', '990-0003', 'x', NULL, 'unknown', true, false, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000944', 'c0de0000-0000-4000-8000-000000000201', 'c0de0000-0000-4000-8000-000000000923', '990-0004', 'x', NULL, 'unknown', true, false, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000945', 'c0de0000-0000-4000-8000-000000000201', 'c0de0000-0000-4000-8000-000000000924', '990-0005', 'x', NULL, 'unknown', true, false, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000946', 'c0de0000-0000-4000-8000-000000000201', 'c0de0000-0000-4000-8000-000000000924', '990-0006', 'x', NULL, 'unknown', true, false, 'verified'),
+  ('c0de0000-0000-4000-8000-000000000947', 'c0de0000-0000-4000-8000-000000000201', 'c0de0000-0000-4000-8000-000000000925', '990-0007', 'x', NULL, 'unknown', true, false, 'verified');
+INSERT INTO public.vendors (id, organization_id, name, normalized_name, active, catalog_vendor_id)
+VALUES ('c0de0000-0000-4000-8000-000000000931', 'c0de0000-0000-4000-8000-000000000901', 'Henry Schein', 'henry schein', true, 'c0de0000-0000-4000-8000-000000000201');
+INSERT INTO public.products (id, organization_id, name, normalized_name, approved, active, staff_requestable, catalog_product_id)
+VALUES
+  ('c0de0000-0000-4000-8000-000000000951', 'c0de0000-0000-4000-8000-000000000901', 'Ammex Itest Glove Large', 'x', true, true, true, 'c0de0000-0000-4000-8000-000000000922'),
+  ('c0de0000-0000-4000-8000-000000000952', 'c0de0000-0000-4000-8000-000000000901', 'Ready Itest Wrap', 'x', true, true, true, 'c0de0000-0000-4000-8000-000000000923'),
+  ('c0de0000-0000-4000-8000-000000000953', 'c0de0000-0000-4000-8000-000000000901', 'Held Itest Item', 'x', true, true, true, 'c0de0000-0000-4000-8000-000000000924'),
+  ('c0de0000-0000-4000-8000-000000000954', 'c0de0000-0000-4000-8000-000000000901', 'Local Itest Held SKU', 'x', true, true, true, NULL),
+  ('c0de0000-0000-4000-8000-000000000955', 'c0de0000-0000-4000-8000-000000000901', 'Local Itest Safe SKU', 'x', true, true, true, NULL);
+INSERT INTO public.vendor_products (id, organization_id, vendor_id, product_id, vendor_sku, active, catalog_vendor_product_id)
+VALUES
+  ('c0de0000-0000-4000-8000-000000000961', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000931', 'c0de0000-0000-4000-8000-000000000951', '990-0002', true, 'c0de0000-0000-4000-8000-000000000942'),
+  -- Cross-catalog contradiction: SKU 990-0001 (catalog 921) remembered for the 922 product.
+  ('c0de0000-0000-4000-8000-000000000962', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000931', 'c0de0000-0000-4000-8000-000000000951', '990-0001', true, NULL),
+  -- Same catalog identity: SKU 990-0004 already on the 923 product via its other listing.
+  ('c0de0000-0000-4000-8000-000000000964', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000931', 'c0de0000-0000-4000-8000-000000000952', '990-0004', true, 'c0de0000-0000-4000-8000-000000000943'),
+  ('c0de0000-0000-4000-8000-000000000965', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000931', 'c0de0000-0000-4000-8000-000000000953', '990-0006', true, 'c0de0000-0000-4000-8000-000000000946'),
+  ('c0de0000-0000-4000-8000-000000000966', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000931', 'c0de0000-0000-4000-8000-000000000954', '990-0005', true, NULL),
+  ('c0de0000-0000-4000-8000-000000000967', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000931', 'c0de0000-0000-4000-8000-000000000955', '990-0007', true, NULL);
+INSERT INTO public.vendor_invoices (id, organization_id, uploaded_by, storage_path, original_filename, file_size, mime_type)
+VALUES ('c0de0000-0000-4000-8000-000000000971', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000001', 'c0de0000-0000-4000-8000-000000000901/identity.pdf', 'identity.pdf', 1024, 'application/pdf');
+INSERT INTO public.invoices (id, organization_id, source_file_id, vendor_id, vendor_name, invoice_number, processing_status)
+VALUES ('c0de0000-0000-4000-8000-000000000981', 'c0de0000-0000-4000-8000-000000000901', 'c0de0000-0000-4000-8000-000000000971', 'c0de0000-0000-4000-8000-000000000931', 'Henry Schein', 'ID-ITEST-1', 'review_required');
+INSERT INTO public.invoice_items (id, invoice_id, organization_id, line_number, sku, description, quantity, unit_of_measure, unit_price, total_price)
+VALUES
+  ('c0de0000-0000-4000-8000-000000000991', 'c0de0000-0000-4000-8000-000000000981', 'c0de0000-0000-4000-8000-000000000901', 1, '990-0001', 'Ammex Itest X-Large', 1, 'BX', 1, 1),
+  ('c0de0000-0000-4000-8000-000000000992', 'c0de0000-0000-4000-8000-000000000981', 'c0de0000-0000-4000-8000-000000000901', 2, '990-0004', 'Ready Itest Wrap second SKU', 1, 'EA', 1, 1),
+  ('c0de0000-0000-4000-8000-000000000993', 'c0de0000-0000-4000-8000-000000000981', 'c0de0000-0000-4000-8000-000000000901', 3, '990-0005', 'Held Itest SKU', 1, 'EA', 1, 1),
+  ('c0de0000-0000-4000-8000-000000000994', 'c0de0000-0000-4000-8000-000000000981', 'c0de0000-0000-4000-8000-000000000901', 4, '990-0007', 'Unlinked Itest safe SKU', 1, 'EA', 1, 1);
+
 -- PostgREST caches the schema; make sure it sees everything the migrations created.
 NOTIFY pgrst, 'reload schema';

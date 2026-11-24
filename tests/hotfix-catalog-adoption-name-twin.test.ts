@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
-import { toCatalogMatchConflict } from "../src/invoice/catalog-match.ts";
+import {
+  catalogConflictMatchAction,
+  toCatalogMatchConflict,
+} from "../src/invoice/catalog-match.ts";
 import { InvoiceReviewError, toInvoiceReviewError } from "../src/invoice/review-actions.ts";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -65,12 +68,77 @@ test("match refusals keep the original sentence first and add a JSON hint", () =
     /RAISE EXCEPTION '%', 'This catalog item conflicts with a product or vendor SKU mapping your organization already has, so it cannot be added automatically\. ' \|\| _explanation/,
   );
   assert.match(migration, /'canMatchExisting', _can_match_existing/);
-  // Reuse is only ever offered for the line's own SKU through an active mapping.
+  // Reuse is only ever offered for the line's own SKU through an active mapping, to the
+  // product that IS the selected catalog identity (or unlinked with nobody else holding it).
   assert.match(
     migration,
-    /AND public\.normalize_catalog_sku_match_key\(_line\.sku\) = public\.normalize_catalog_sku_match_key\(_listing\.vendor_sku\);/,
+    /AND public\.normalize_catalog_sku_match_key\(_line\.sku\) = public\.normalize_catalog_sku_match_key\(_listing\.vendor_sku\)\n\s+AND \(\n\s+_conflict_product\.catalog_product_id = _listing\.catalog_product_id\n\s+OR \(\n\s+_conflict_product\.catalog_product_id IS NULL/,
   );
   assert.match(migration, /AND _conflict_vendor_product\.active\n/);
+});
+
+test("a SKU mapped to a different catalog item is named and never offered", () => {
+  const explanation = migration.slice(
+    migration.indexOf("_explanation := CASE"),
+    migration.indexOf("RAISE EXCEPTION '%'"),
+  );
+  // "Match this line" appears only in the branch guarded by _can_match_existing.
+  assert.equal(explanation.match(/Match this line/g)?.length, 1);
+  assert.match(
+    explanation,
+    /AND _conflict_product\.id IS NOT NULL AND _can_match_existing THEN\s+format\('Vendor SKU %s is already mapped to "%s", which is this catalog item\. Match this line to "%s"\.'/,
+  );
+  assert.match(
+    explanation,
+    /which is linked to a different catalog item\. Correct that mapping in Catalog first\./,
+  );
+  // An unlinked SKU product cannot take a catalog item another product already holds.
+  assert.match(
+    migration,
+    /'conflictType', 'catalog_product_adopted_elsewhere', 'productId', _organization_product\.id/,
+  );
+});
+
+test("only the server's explicit canMatchExisting produces a Match action", () => {
+  const conflict = (hint: Record<string, unknown>) =>
+    toCatalogMatchConflict(`${PREFIX}x`, JSON.stringify(hint));
+  const safe = conflict({
+    conflictType: "sku_mapped_to_other_listing",
+    productId: PRODUCT,
+    productName: "Ready Wrap",
+    canMatchExisting: true,
+  });
+  assert.deepEqual(catalogConflictMatchAction(safe), {
+    productId: PRODUCT,
+    label: "Match to Ready Wrap",
+  });
+  // A cross-catalog contradiction, a name-only twin, a held catalog item: the database says
+  // false, so nothing is offered even with a product id and name present.
+  for (const conflictType of [
+    "sku_mapped_to_other_product",
+    "name_twin_local",
+    "name_twin_taken",
+    "catalog_product_adopted_elsewhere",
+  ]) {
+    const refused = conflict({
+      conflictType,
+      productId: PRODUCT,
+      productName: "Ammex Large",
+      canMatchExisting: false,
+    });
+    assert.equal(catalogConflictMatchAction(refused), null, conflictType);
+  }
+  // Anything short of an explicit boolean true, or a malformed payload, offers nothing.
+  for (const value of ["true", 1, null, undefined]) {
+    assert.equal(
+      catalogConflictMatchAction(
+        conflict({ productId: PRODUCT, productName: "P", canMatchExisting: value }),
+      ),
+      null,
+    );
+  }
+  assert.equal(catalogConflictMatchAction(toCatalogMatchConflict(`${PREFIX}x`, "{oops")), null);
+  assert.equal(catalogConflictMatchAction(null), null);
 });
 
 test("a refusal hint becomes a named conflict", () => {
@@ -165,7 +233,10 @@ test("the server returns a refusal to the dialog instead of throwing it", () => 
     /=> matchInvoiceItemToCatalogOutcome\(context\.supabase, context\.userId, data\)\);/,
   );
   assert.match(page, /if \(outcome\.status === "conflict"\) return outcome\.conflict;/);
-  assert.match(dialog, /conflict\.canMatchExisting && conflict\.productId/);
-  assert.match(dialog, /run\(\(\) => onConfirm\(productId\)\)/);
-  assert.match(dialog, /Match to \{conflict\.productName\}/);
+  // The dialog renders the button only from the gate, and the button runs the ordinary
+  // product confirmation. It never reads canMatchExisting or the product itself.
+  assert.match(dialog, /const conflictMatch = catalogConflictMatchAction\(conflict\);/);
+  assert.match(dialog, /\{conflictMatch && \(/);
+  assert.match(dialog, /onClick=\{\(\) => run\(\(\) => onConfirm\(conflictMatch\.productId\)\)\}/);
+  assert.doesNotMatch(dialog, /canMatchExisting|conflict\.productId|conflict\.productName/);
 });
