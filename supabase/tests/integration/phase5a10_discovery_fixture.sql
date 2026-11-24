@@ -63,6 +63,9 @@ SELECT request.organization_id, request.id,
   END::uuid, 1
 FROM public.supply_requests request
 WHERE request.id::text LIKE '5a10c000-0000-4000-8000-0000000007%';
+-- Posted lines are written the way post_reviewed_invoice writes them (the Phase 7E
+-- posted-document guard otherwise refuses them).
+SELECT set_config('sportspend.financial_context', 'post', false);
 INSERT INTO public.invoices (id, organization_id, invoice_number, invoice_date, posted_at, processing_status, document_type) VALUES
   ('5a10c000-0000-4000-8000-000000000801', '5a10c000-0000-4000-8000-000000000101', 'A-1', current_date - 3, now() - interval '2 days', 'completed', 'INVOICE'),
   ('5a10c000-0000-4000-8000-000000000811', '5a10c000-0000-4000-8000-000000000102', 'B-1', current_date - 3, now() - interval '2 days', 'completed', 'INVOICE');
@@ -78,6 +81,14 @@ SELECT ('5a10c000-0000-4000-8000-0000000002' || lpad(v::text, 2, '0'))::uuid,
   (ARRAY['Summit Sports Supply', 'Northline Medical', 'Peak Athletic Health', 'Harbor Clinical'])[v - 1],
   'x' || v, true
 FROM generate_series(2, 5) v;
+
+-- Phase 7F.1A: staff search only returns catalog vendors an organization uses (an active
+-- organization vendor linked to the catalog vendor). Both organizations use all five.
+INSERT INTO public.vendors (organization_id, name, active, catalog_vendor_id)
+SELECT organization_id, catalog_vendor.name, true, catalog_vendor.id
+FROM public.catalog_vendors catalog_vendor
+CROSS JOIN unnest(ARRAY['5a10c000-0000-4000-8000-000000000101', '5a10c000-0000-4000-8000-000000000102']::uuid[]) organization_id
+WHERE catalog_vendor.id::text LIKE '5a10c000-%';
 
 INSERT INTO public.catalog_products (id, name, normalized_name, description, manufacturer, active, verification_status)
 SELECT
@@ -151,3 +162,5 @@ FROM generate_series(1, 40) n
 WHERE (n * 2477 % 99000 + 1) % 50 <> 0;
 
 ANALYZE;
+
+SELECT set_config('sportspend.financial_context', '', false);
