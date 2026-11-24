@@ -35,7 +35,7 @@ BEGIN
       WHERE n.nspname = 'public' AND p.proname = expected.name ORDER BY p.oid LIMIT 1), 'absent'))
     FROM (VALUES
       ('get_price_intelligence_summary', '67329e91e08a4fd9011a1c681a7b2aa1 secdef=true authenticated=true anon=false service_role=true public=false'),
-      ('get_product_vendor_price_history', 'ecb7918693fefa1fa1b9a2f13a3a67d0 secdef=true authenticated=true anon=false service_role=true public=false'),
+      ('get_product_vendor_price_history', '7e1ebef79c77b1ef841fe82a7bd8cdf1 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('get_supply_request_price_context', 'e8a43186d246e62eeded7c27cadf6ca1 secdef=true authenticated=true anon=false service_role=true public=false'),
       ('list_price_intelligence_products', '9079e327227131398e9c5c91fb0565ec secdef=true authenticated=true anon=false service_role=true public=false'),
       ('price_catalog_package_agreement', 'd33d918453d36e2e0d06dfa93703deaf secdef=false authenticated=false anon=false service_role=false public=false'),
@@ -43,14 +43,14 @@ BEGIN
       ('price_name_anchors', '4fb0880db42390aa5c7b0a1ce7465fc3 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_observation_evidence', '15081d61dc47831f94cceeb6debf8e26 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_observation_rows', '4cd335de010bf74214349e2c8671fc2e secdef=false authenticated=false anon=false service_role=false public=false'),
-      ('price_package_agreement', '5bbdf26bb9dd166184fc71e8bcbd12e3 secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('price_package_agreement', '71ad0802627909d5bec4517f5a6f6b2f secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_product_state', '5db90470c261d6aaa62bb7050b41fbba secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_recency', 'fb403da288c6e437f9aa519510593431 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_recent_anchors', '36886a9ddb97afefc6a562035fec27aa secdef=false authenticated=false anon=false service_role=false public=false'),
-      ('price_row_is_valid', '2e85fbbe4ff80187affd0209409f950a secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('price_row_is_valid', 'c2b1905e12c3d46c7219e4c0d1a8cd17 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_unit_is_valid', 'c2674c12ffefef577bc32592365d0860 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_summary_flagged_invoices', 'b587ef4bca59e5eb23fc62de51373e2a secdef=false authenticated=false anon=false service_role=false public=false'),
-      ('price_summary_groups', 'dc0cb0c506c16407611f3c2054b63eeb secdef=false authenticated=false anon=false service_role=false public=false'),
+      ('price_summary_groups', 'b788cf0acfbf2f0f782260e704ef8de0 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_summary_product_states', '63f42a9b2a60e1e79e29014eb8bab261 secdef=false authenticated=false anon=false service_role=false public=false'),
       ('price_unit_key', '7a7e2d23bf9282f611c5475fac69d97b secdef=false authenticated=false anon=false service_role=false public=false')
     ) AS expected(name, value)
@@ -80,7 +80,7 @@ BEGIN
       WHERE n.nspname = 'public' AND p.proname = expected.name ORDER BY p.oid LIMIT 1), 'absent'))
     FROM (VALUES
       ('get_price_intelligence_overview', 'e91ed500705f2c687126404ceefd4db7 secdef=true authenticated=true anon=false service_role=true public=false'),
-      ('get_product_price_intelligence', '8e682b7e339dd44ddc7ea1a5b498aa8a secdef=true authenticated=true anon=false service_role=true public=false')
+      ('get_product_price_intelligence', '42289b639b0834ec5ba0b7d6419f5bfb secdef=true authenticated=true anon=false service_role=true public=false')
     ) AS expected(name, value)
     WHERE coalesce((
       SELECT md5(pg_get_functiondef(p.oid)) || ' secdef=' || p.prosecdef
