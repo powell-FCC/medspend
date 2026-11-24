@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import {
-  sameSkuChangeText,
-  formatUsd,
-} from "../src/price-intelligence/vendor-intelligence.ts";
+import { sameSkuChangeText, formatUsd } from "../src/price-intelligence/vendor-intelligence.ts";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const migration = read("../supabase/migrations/20260921120000_phase6b_price_intelligence.sql");
@@ -19,7 +16,6 @@ const staffRequest = read("../src/routes/_authenticated/staff/request.tsx");
 const staffRequests = read("../src/routes/_authenticated/staff/requests.tsx");
 const generatedTypes = read("../src/integrations/supabase/types.ts");
 const docs = read("../docs/phase6b-price-intelligence.md");
-
 
 test("6B reuses authoritative inventory price history instead of creating a second ledger", () => {
   assert.match(migration, /FROM public\.inventory_price_history history/);
@@ -110,7 +106,12 @@ test("zero or missing previous price never produces an invalid percentage", () =
     migration,
     /summary\.previous_price IS NULL[\s\S]*summary\.previous_price = 0 THEN NULL/,
   );
-  assert.match(behavior, /summary,previousPrice.*<> 0[\s\S]*summary,percentChange.*'null'::jsonb/);
+  // Phase 6B.1: a $0 line is not an observation, so it is never the previous price.
+  assert.match(
+    behavior,
+    /summary,previousPrice.*'null'::jsonb[\s\S]*summary,percentChange.*'null'::jsonb/,
+  );
+  assert.match(behavior, /coverage,excludedMissingPriceCount\}'\)::integer <> 1/);
   assert.equal(sameSkuChangeText(null, null), null);
   assert.equal(sameSkuChangeText(5, null), "Price increased +$5.00");
 });

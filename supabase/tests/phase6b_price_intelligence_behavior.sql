@@ -159,7 +159,7 @@ END
 $phase6b_seed_exclusions$;
 
 -- A different canonical product has a zero previous price. It must remain isolated and
--- must not produce an invalid percentage.
+-- must not produce an invalid percentage (since Phase 6B.1 the $0 line is not an observation).
 DO $phase6b_seed_zero_baseline$
 DECLARE
   _price numeric;
@@ -334,10 +334,14 @@ BEGIN
     '6b000000-0000-4000-8000-000000000101',
     '6b000000-0000-4000-8000-000000000202'
   );
-  IF (_result #>> '{summary,observationCount}')::integer <> 2
+  -- Phase 6B.1: a $0 line is never a purchase price. It is not an observation (and so never
+  -- the previous price); coverage counts it as having no usable price.
+  IF (_result #>> '{summary,observationCount}')::integer <> 1
      OR (_result #>> '{summary,latestPrice}')::numeric <> 5
-     OR (_result #>> '{summary,previousPrice}')::numeric <> 0
-     OR (_result #> '{summary,percentChange}') <> 'null'::jsonb THEN
+     OR (_result #> '{summary,previousPrice}') <> 'null'::jsonb
+     OR (_result #> '{summary,absoluteChange}') <> 'null'::jsonb
+     OR (_result #> '{summary,percentChange}') <> 'null'::jsonb
+     OR (_result #>> '{coverage,excludedMissingPriceCount}')::integer <> 1 THEN
     RAISE EXCEPTION 'Exact product scoping or zero-baseline behavior is incorrect: %', _result;
   END IF;
 END

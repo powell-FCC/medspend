@@ -68,7 +68,12 @@ mutants=(
   "differing package text falls back to the catalog|    WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL AND NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
       THEN lower(btrim(_package_a)) = lower(btrim(_package_b))|    WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL AND NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
         AND lower(btrim(_package_a)) = lower(btrim(_package_b))
-      THEN true"
+      THEN true|    WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL OR NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
+      THEN false
+|"
+  "one stated package falls back to the catalog|    WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL OR NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
+      THEN false
+|"
   "catalog agreement with the invoiced unit skipped|      AND public.price_catalog_unit_agrees(a.package_quantity, a.package_description, _unit_key)
       AND public.price_catalog_unit_agrees(b.package_quantity, b.package_description, _unit_key)
 |"
@@ -93,6 +98,7 @@ mutants=(
   "order confirmations show no order number|    CASE WHEN invoice.document_type = 'ORDER_CONFIRMATION'
       THEN COALESCE(NULLIF(btrim(invoice.order_number), ''), NULLIF(btrim(invoice.invoice_number), ''))|    CASE WHEN false
       THEN NULL"
+  "zero-dollar observations allowed|  SELECT (COALESCE(_unit_price, _extended_price / NULLIF(_quantity, 0)) > 0|  SELECT (COALESCE(_unit_price, _extended_price / NULLIF(_quantity, 0)) >= 0"
   "non-USD included|    AND (_currency_code IS NULL OR btrim(_currency_code) = '' OR upper(btrim(_currency_code)) = 'USD')) IS TRUE|    AND true) IS TRUE"
   "NULL currency excluded|    AND (_currency_code IS NULL OR btrim(_currency_code) = '' OR upper(btrim(_currency_code)) = 'USD')) IS TRUE|    AND upper(btrim(_currency_code)) = 'USD') IS TRUE"
   "unposted documents observed|   AND invoice.posted_at IS NOT NULL
@@ -123,8 +129,12 @@ mutants=(
   # Summary counting path (price_summary_*): each must still equal price_product_state.
   "summary counts non-USD as USD|      (invoice.currency_code IS NULL OR btrim(invoice.currency_code) = ''
         OR upper(btrim(invoice.currency_code)) = 'USD') AS usd_basis,|      true AS usd_basis,"
-  "summary validity ignores price|            AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) >= 0
+  "summary validity ignores price|            AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) > 0
             AND history.quantity > 0 THEN 4 ELSE 0 END)|            THEN 4 ELSE 0 END)"
+  "summary counts zero-dollar lines as prices|            AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) > 0
+            AND history.quantity > 0 THEN 4 ELSE 0 END)|            AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) >= 0
+            AND history.quantity > 0 THEN 4 ELSE 0 END)"
+  "summary coverage ignores zero-dollar lines|COALESCE(COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)), 0) = 0 THEN 64|COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) IS NULL THEN 64"
   "summary loses order confirmations|       + (CASE WHEN flag.order_confirmation THEN 8 ELSE 0 END)|       + 0"
   "summary loses missing packages|       + (CASE WHEN NULLIF(btrim(history.package_size), '') IS NULL THEN 32 ELSE 0 END)|       + 0"
   "summary ignores mapped SKU identities|       OR COALESCE(mk.key_count, 0) > 1

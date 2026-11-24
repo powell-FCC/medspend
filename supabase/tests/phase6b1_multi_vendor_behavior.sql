@@ -71,7 +71,8 @@ $$;
 
 -- ---------------------------------------------------------------------------------------
 -- Fixtures. Organization A: owner 001, admin 002, staff 003, removed admin 005.
--- Organization B: owner 004. 007 belongs to nothing.
+-- Organization B: owner 004. 007 belongs to nothing. Organization C (no members; read through
+-- the internal functions): zero-dollar, one-sided package and mapping-history fixtures.
 -- ---------------------------------------------------------------------------------------
 INSERT INTO auth.users (id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -81,7 +82,8 @@ FROM unnest(ARRAY[1, 2, 3, 4, 5, 7]) n;
 
 INSERT INTO public.organizations (id, name, created_by) VALUES
   ('6b100000-0000-4000-8000-000000000101', 'Phase 6B.1 Organization', '6b100000-0000-4000-8000-000000000001'),
-  ('6b100000-0000-4000-8000-000000000102', 'Phase 6B.1 Other Organization', '6b100000-0000-4000-8000-000000000004');
+  ('6b100000-0000-4000-8000-000000000102', 'Phase 6B.1 Other Organization', '6b100000-0000-4000-8000-000000000004'),
+  ('6b100000-0000-4000-8000-000000000103', 'Phase 6B.1 Correction Organization', '6b100000-0000-4000-8000-000000000001');
 INSERT INTO public.organization_memberships (organization_id, user_id, role, active) VALUES
   ('6b100000-0000-4000-8000-000000000101', '6b100000-0000-4000-8000-000000000001', 'owner', true),
   ('6b100000-0000-4000-8000-000000000101', '6b100000-0000-4000-8000-000000000002', 'admin', true),
@@ -96,7 +98,9 @@ INSERT INTO public.vendors (id, organization_id, name, active, catalog_vendor_id
   ('6b100000-0000-4000-8000-000000000301', '6b100000-0000-4000-8000-000000000101', 'P6B1 Henry Schein', true, '6b100000-0000-4000-8000-000000000251'),
   ('6b100000-0000-4000-8000-000000000302', '6b100000-0000-4000-8000-000000000101', 'P6B1 Vendor Two', true, '6b100000-0000-4000-8000-000000000252'),
   ('6b100000-0000-4000-8000-000000000303', '6b100000-0000-4000-8000-000000000101', 'P6B1 Vendor Three', true, NULL),
-  ('6b100000-0000-4000-8000-000000000304', '6b100000-0000-4000-8000-000000000102', 'P6B1 Other Vendor', true, NULL);
+  ('6b100000-0000-4000-8000-000000000304', '6b100000-0000-4000-8000-000000000102', 'P6B1 Other Vendor', true, NULL),
+  ('6b100000-0000-4000-8000-000000000305', '6b100000-0000-4000-8000-000000000103', 'P6B1 C Vendor Five', true, '6b100000-0000-4000-8000-000000000251'),
+  ('6b100000-0000-4000-8000-000000000306', '6b100000-0000-4000-8000-000000000103', 'P6B1 C Vendor Six', true, '6b100000-0000-4000-8000-000000000252');
 
 -- Products are looked up by name.
 INSERT INTO public.products (organization_id, name, approved, active, staff_requestable)
@@ -112,6 +116,12 @@ FROM unnest(ARRAY[
   'Unmapped Rising', 'Unit Switch', 'Missing Price']) name;
 INSERT INTO public.products (organization_id, name, approved, active, staff_requestable)
 VALUES ('6b100000-0000-4000-8000-000000000102', 'P6B1 Other Org Tape', true, true, true);
+INSERT INTO public.products (organization_id, name, approved, active, staff_requestable)
+SELECT '6b100000-0000-4000-8000-000000000103', 'P6B1 C ' || name, true, true, true
+FROM unnest(ARRAY[
+  'Zero Then Paid', 'Paid Then Zero', 'Paid Zero Paid', 'Zero Vendor', 'All Zero',
+  'Text Vs Catalog 12', 'Text Vs Catalog 10', 'Text Equal', 'Text Differ',
+  'Separator SKU', 'Deactivated Mapping', 'Deactivated Plus Active', 'Repointed From', 'Repointed To']) name;
 
 CREATE FUNCTION pg_temp.pid(_name text)
 RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER AS $$
@@ -125,8 +135,7 @@ RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE _id uuid;
 BEGIN
   INSERT INTO public.vendor_products (organization_id, vendor_id, product_id, vendor_sku, catalog_vendor_product_id)
-  VALUES (CASE WHEN _product = 'Other Org Tape' THEN '6b100000-0000-4000-8000-000000000102'::uuid
-               ELSE '6b100000-0000-4000-8000-000000000101'::uuid END,
+  VALUES ((SELECT organization_id FROM public.products WHERE id = pg_temp.pid(_product)),
           pg_temp.vendor(_vendor), pg_temp.pid(_product), _sku, _catalog_listing)
   RETURNING id INTO _id;
   RETURN _id;
@@ -139,11 +148,12 @@ CREATE FUNCTION pg_temp.obs(
   _product text, _vendor integer, _sku text, _unit text, _package text, _price numeric,
   _quantity numeric, _age integer, _order integer DEFAULT 0, _document_type text DEFAULT 'INVOICE',
   _no_invoice_date boolean DEFAULT false, _currency text DEFAULT NULL, _map boolean DEFAULT true,
-  _number text DEFAULT NULL, _also_invoice_number text DEFAULT NULL)
+  _number text DEFAULT NULL, _also_invoice_number text DEFAULT NULL, _mapping_sku text DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE
-  _org uuid := CASE WHEN _product = 'Other Org Tape' THEN '6b100000-0000-4000-8000-000000000102'::uuid
-                    ELSE '6b100000-0000-4000-8000-000000000101'::uuid END;
+  -- _mapping_sku: the line is matched to a mapping whose SKU text differs from the line's
+  -- (separator variants, as manual catalog matching links them).
+  _org uuid := (SELECT organization_id FROM public.products WHERE id = pg_temp.pid(_product));
   _invoice uuid := gen_random_uuid();
   _item uuid := gen_random_uuid();
   _history uuid := gen_random_uuid();
@@ -152,8 +162,9 @@ DECLARE
 BEGIN
   IF _map AND _sku IS NOT NULL THEN
     SELECT id INTO _mapping FROM public.vendor_products
-    WHERE organization_id = _org AND vendor_id = pg_temp.vendor(_vendor) AND upper(btrim(vendor_sku)) = upper(btrim(_sku));
-    IF _mapping IS NULL THEN _mapping := pg_temp.map(_product, _vendor, _sku); END IF;
+    WHERE organization_id = _org AND vendor_id = pg_temp.vendor(_vendor)
+      AND upper(btrim(vendor_sku)) = upper(btrim(COALESCE(_mapping_sku, _sku)));
+    IF _mapping IS NULL THEN _mapping := pg_temp.map(_product, _vendor, COALESCE(_mapping_sku, _sku)); END IF;
   END IF;
   PERFORM set_config('sportspend.financial_context', 'post', true);
   INSERT INTO public.invoices (id, organization_id, vendor_id, vendor_name, document_type, invoice_number, order_number,
@@ -299,6 +310,64 @@ SELECT pg_temp.obs('Unit Switch', 1, 'US-1', 'ea', NULL, 12, 1, 20);
 -- A newer line with no price: excluded everywhere (reported as missing price in coverage).
 SELECT pg_temp.obs('Missing Price', 1, 'MP-1', 'ea', NULL, 10, 1, 30);
 SELECT pg_temp.obs('Missing Price', 1, 'MP-1', 'ea', NULL, NULL, 1, 10);
+-- Organization C. Vendor 5 is always the last purchase; vendor 6 the other vendor.
+-- $0 lines (free samples, promotions) are never purchase prices.
+SELECT pg_temp.obs('C Zero Then Paid', 5, 'ZP-1', 'ea', NULL, 0, 1, 40);
+SELECT pg_temp.obs('C Zero Then Paid', 5, 'ZP-1', 'ea', NULL, 10, 1, 20);
+SELECT pg_temp.obs('C Paid Then Zero', 5, 'PZ-1', 'ea', NULL, 10, 1, 40);
+SELECT pg_temp.obs('C Paid Then Zero', 5, 'PZ-1', 'ea', NULL, 0, 1, 20);
+SELECT pg_temp.obs('C Paid Zero Paid', 5, 'PP-1', 'ea', NULL, 10, 1, 50);
+SELECT pg_temp.obs('C Paid Zero Paid', 5, 'PP-1', 'ea', NULL, 0, 1, 30);
+SELECT pg_temp.obs('C Paid Zero Paid', 5, 'PP-1', 'ea', NULL, 12, 1, 20);
+SELECT pg_temp.obs('C Zero Vendor', 6, 'ZV-6', 'bx', '12/box', 0, 1, 10);
+SELECT pg_temp.obs('C Zero Vendor', 5, 'ZV-5', 'bx', '12/box', 10, 1, 20);
+SELECT pg_temp.obs('C All Zero', 5, 'AZ-1', 'ea', NULL, 0, 1, 30);
+SELECT pg_temp.obs('C All Zero', 5, 'AZ-1', 'ea', NULL, 0, 1, 20);
+-- One stated package is never overridden by catalog packages (verified 12/box or 10/box on
+-- both listings); two stated packages must match.
+INSERT INTO public.catalog_products (id, name, normalized_name) VALUES
+  ('6b100000-0000-4000-8000-000000000265', 'P6B1 Catalog Text Twelve', 'p6b1 catalog text twelve'),
+  ('6b100000-0000-4000-8000-000000000266', 'P6B1 Catalog Text Ten', 'p6b1 catalog text ten');
+UPDATE public.products SET catalog_product_id = '6b100000-0000-4000-8000-000000000265' WHERE id = pg_temp.pid('C Text Vs Catalog 12');
+UPDATE public.products SET catalog_product_id = '6b100000-0000-4000-8000-000000000266' WHERE id = pg_temp.pid('C Text Vs Catalog 10');
+INSERT INTO public.catalog_vendor_products (id, catalog_product_id, catalog_vendor_id, vendor_sku, normalized_vendor_sku,
+  package_description, package_quantity, package_unit, package_status) VALUES
+  ('6b100000-0000-4000-8000-000000000279', '6b100000-0000-4000-8000-000000000265', '6b100000-0000-4000-8000-000000000251', 'CAT-T5', 'CAT-T5', '12/box', 12, 'item', 'verified'),
+  ('6b100000-0000-4000-8000-000000000280', '6b100000-0000-4000-8000-000000000265', '6b100000-0000-4000-8000-000000000252', 'CAT-T6', 'CAT-T6', '12/box', 12, 'item', 'verified'),
+  ('6b100000-0000-4000-8000-000000000281', '6b100000-0000-4000-8000-000000000266', '6b100000-0000-4000-8000-000000000251', 'CAT-U5', 'CAT-U5', '10/box', 10, 'item', 'verified'),
+  ('6b100000-0000-4000-8000-000000000282', '6b100000-0000-4000-8000-000000000266', '6b100000-0000-4000-8000-000000000252', 'CAT-U6', 'CAT-U6', '10/box', 10, 'item', 'verified');
+SELECT pg_temp.map('C Text Vs Catalog 12', 5, 'CAT-T5', '6b100000-0000-4000-8000-000000000279');
+SELECT pg_temp.map('C Text Vs Catalog 12', 6, 'CAT-T6', '6b100000-0000-4000-8000-000000000280');
+SELECT pg_temp.map('C Text Vs Catalog 10', 5, 'CAT-U5', '6b100000-0000-4000-8000-000000000281');
+SELECT pg_temp.map('C Text Vs Catalog 10', 6, 'CAT-U6', '6b100000-0000-4000-8000-000000000282');
+SELECT pg_temp.obs('C Text Vs Catalog 12', 6, 'CAT-T6', 'bx', '10/box', 9, 1, 30);
+SELECT pg_temp.obs('C Text Vs Catalog 12', 5, 'CAT-T5', 'bx', NULL, 10, 1, 20);
+SELECT pg_temp.obs('C Text Vs Catalog 10', 6, 'CAT-U6', 'bx', '10/box', 9, 1, 30);
+SELECT pg_temp.obs('C Text Vs Catalog 10', 5, 'CAT-U5', 'bx', NULL, 10, 1, 20);
+SELECT pg_temp.obs('C Text Equal', 6, 'TE-6', 'bx', '10/box', 9, 1, 30);
+SELECT pg_temp.obs('C Text Equal', 5, 'TE-5', 'bx', '10/Box', 10, 1, 20);
+SELECT pg_temp.obs('C Text Differ', 6, 'TD-6', 'bx', '12/box', 9, 1, 30);
+SELECT pg_temp.obs('C Text Differ', 5, 'TD-5', 'bx', '10/box', 10, 1, 20);
+-- Mapping history. A line SKU 3240025 matched to the mapping 324-0025 (both purchases), with
+-- a second vendor.
+SELECT pg_temp.obs('C Separator SKU', 5, '3240025', 'bx', '12/box', 10, 1, 40, 0, 'INVOICE', false, NULL, true, NULL, NULL, '324-0025');
+SELECT pg_temp.obs('C Separator SKU', 6, 'SEP-6', 'bx', '12/box', 11, 1, 30);
+SELECT pg_temp.obs('C Separator SKU', 5, '3240025', 'bx', '12/box', 12, 1, 20, 0, 'INVOICE', false, NULL, true, NULL, NULL, '324-0025');
+-- A mapping deactivated after its purchases; and one deactivated while another SKU is mapped.
+SELECT pg_temp.obs('C Deactivated Mapping', 5, 'DM-1', 'ea', NULL, 10, 1, 40);
+SELECT pg_temp.obs('C Deactivated Mapping', 5, 'DM-1', 'ea', NULL, 11, 1, 20);
+SELECT pg_temp.obs('C Deactivated Plus Active', 5, 'DA-1', 'ea', NULL, 10, 1, 40);
+SELECT pg_temp.obs('C Deactivated Plus Active', 5, 'DA-1', 'ea', NULL, 11, 1, 20);
+UPDATE public.vendor_products SET active = false
+WHERE organization_id = '6b100000-0000-4000-8000-000000000103' AND vendor_sku IN ('DM-1', 'DA-1');
+SELECT pg_temp.map('C Deactivated Plus Active', 5, 'DA-2');
+-- A mapping re-pointed to another product after its purchases (as manual matching does).
+SELECT pg_temp.obs('C Repointed From', 5, 'RP-1', 'ea', NULL, 10, 1, 40);
+SELECT pg_temp.obs('C Repointed From', 5, 'RP-1', 'ea', NULL, 12, 1, 20);
+SELECT pg_temp.obs('C Repointed To', 5, 'RP-2', 'ea', NULL, 5, 1, 30);
+SELECT pg_temp.obs('C Repointed To', 5, 'RP-2', 'ea', NULL, 6, 1, 10);
+UPDATE public.vendor_products SET product_id = pg_temp.pid('C Repointed To')
+WHERE organization_id = '6b100000-0000-4000-8000-000000000103' AND vendor_sku = 'RP-1';
 -- Organization B: never visible to A.
 SELECT pg_temp.obs('Other Org Tape', 4, 'OT-1', 'bx', '12/box', 1, 1, 5);
 
@@ -492,15 +561,99 @@ SELECT pg_temp.eq((SELECT sum(missing_price_count) FROM public.price_summary_pro
 SELECT pg_temp.eq((pg_temp.st('Unmapped Rising')).change_amount, 2::numeric, 'unmapped SKU: same-SKU change from the line SKU');
 SELECT pg_temp.eq((pg_temp.st('Unit Switch')).change_amount, 2::numeric, 'a different-unit row between is skipped (12 vs 10, never 99)');
 
--- The summary's counting path executes the same rules: identical per product.
-SELECT pg_temp.eq((
-  SELECT count(*) FROM (
-    SELECT * FROM public.price_summary_product_states('6b100000-0000-4000-8000-000000000101', pg_temp.today()) WHERE state IS NOT NULL) fast
-  FULL JOIN phase6b1_states full_ USING (product_id)
+-- The summary's counting path executes the same rules: identical per product, including the
+-- set of vendors (against the canonical observations) and the vendor count.
+CREATE FUNCTION pg_temp.summary_mismatches(_org uuid)
+RETURNS bigint LANGUAGE sql AS $$
+  WITH fast AS (SELECT * FROM public.price_summary_product_states(_org, pg_temp.today()) WHERE state IS NOT NULL),
+  full_ AS (SELECT * FROM public.price_product_state(_org, NULL, pg_temp.today(), false)),
+  vendors AS (
+    SELECT o.product_id, array_agg(DISTINCT o.vendor_id ORDER BY o.vendor_id) AS ids
+    FROM public.price_observation_rows(_org, NULL) o WHERE o.valid GROUP BY o.product_id)
+  SELECT count(*) FROM fast FULL JOIN full_ USING (product_id) LEFT JOIN vendors USING (product_id)
   WHERE fast.state IS DISTINCT FROM full_.state OR fast.stale IS DISTINCT FROM full_.stale
      OR fast.signals IS DISTINCT FROM full_.signals OR fast.anchor_vendor_id IS DISTINCT FROM full_.anchor_vendor_id
-     OR fast.observation_count IS DISTINCT FROM full_.observation_count), 0::bigint,
-  'summary counting path equals price_product_state for every product');
+     OR fast.observation_count IS DISTINCT FROM full_.observation_count
+     OR (SELECT array_agg(v ORDER BY v) FROM unnest(fast.valid_vendor_ids) v) IS DISTINCT FROM vendors.ids
+     OR cardinality(fast.valid_vendor_ids) IS DISTINCT FROM full_.vendor_count
+$$;
+SELECT pg_temp.eq(pg_temp.summary_mismatches('6b100000-0000-4000-8000-000000000101'), 0::bigint,
+  'summary counting path equals price_product_state for every product (state, stale, signals, anchor vendor, observations, vendors)');
+SELECT pg_temp.assert(EXISTS (SELECT 1 FROM public.price_summary_product_states('6b100000-0000-4000-8000-000000000101', pg_temp.today())
+  WHERE cardinality(valid_vendor_ids) > 1), 'the vendor-list comparison covers multi-vendor products');
+
+-- ---------------------------------------------------------------------------------------
+-- Organization C: $0 lines, one-sided package text, mapping history.
+-- ---------------------------------------------------------------------------------------
+CREATE TEMP TABLE phase6b1_c_states ON COMMIT DROP AS
+SELECT replace(p.name, 'P6B1 C ', '') AS name, s.*
+FROM public.price_product_state('6b100000-0000-4000-8000-000000000103', NULL, pg_temp.today()) s
+JOIN public.products p ON p.id = s.product_id;
+CREATE FUNCTION pg_temp.cst(_name text)
+RETURNS phase6b1_c_states LANGUAGE sql STABLE AS $$ SELECT * FROM phase6b1_c_states WHERE name = _name $$;
+
+SELECT pg_temp.eq(public.price_row_is_valid(0, 0, 1, NULL), false, 'a $0 line is not a valid price observation');
+SELECT pg_temp.eq(public.price_row_is_valid(NULL, 0, 2, 'USD'), false, 'a $0 extended amount is not a valid price observation');
+SELECT pg_temp.eq(public.price_row_is_valid(0.01, NULL, 1, NULL), true, 'one cent is a price');
+SELECT pg_temp.eq((SELECT count(*) FROM phase6b1_c_states), 13::bigint, 'organization C: every product with a priced observation has one state');
+SELECT pg_temp.assert(NOT EXISTS (SELECT 1 FROM phase6b1_c_states WHERE name = 'All Zero'), 'only $0 lines: no state');
+-- $0 then paid: the paid line is the only observation.
+SELECT pg_temp.eq((pg_temp.cst('Zero Then Paid')).state, 'one_purchase', '$0 sample then paid: one purchase');
+SELECT pg_temp.eq((pg_temp.cst('Zero Then Paid')).observation_count, 1, '$0 sample is not counted');
+SELECT pg_temp.eq(((pg_temp.cst('Zero Then Paid')).anchor ->> 'price')::numeric, 10::numeric, '$0 sample then paid: anchor is the paid line');
+SELECT pg_temp.eq((pg_temp.cst('Zero Then Paid')).change_amount, NULL::numeric, '$0 sample then paid: no change');
+-- Paid then $0: the $0 promotion is never the last purchase price and never a decrease.
+SELECT pg_temp.eq((pg_temp.cst('Paid Then Zero')).state, 'one_purchase', 'paid then $0 promotion: one purchase');
+SELECT pg_temp.eq(((pg_temp.cst('Paid Then Zero')).anchor ->> 'price')::numeric, 10::numeric, 'paid then $0: anchor is the paid line');
+SELECT pg_temp.eq((pg_temp.cst('Paid Then Zero')).change_amount, NULL::numeric, 'paid then $0: no decrease');
+-- Paid, $0, paid: the change skips the $0 line.
+SELECT pg_temp.eq((pg_temp.cst('Paid Zero Paid')).state, 'single_vendor', 'paid, $0, paid: single vendor');
+SELECT pg_temp.eq((pg_temp.cst('Paid Zero Paid')).change_amount, 2::numeric, 'paid, $0, paid: 12 against 10, never against 0');
+SELECT pg_temp.eq(((pg_temp.cst('Paid Zero Paid')).prior ->> 'price')::numeric, 10::numeric, 'paid, $0, paid: the prior is the paid line');
+-- One vendor $0 (newer), the other paid: no second vendor, no lower price.
+SELECT pg_temp.eq((pg_temp.cst('Zero Vendor')).state, 'one_purchase', '$0 vendor is not observed');
+SELECT pg_temp.eq((pg_temp.cst('Zero Vendor')).vendor_count, 1, '$0 vendor not counted');
+SELECT pg_temp.eq((pg_temp.cst('Zero Vendor')).anchor_vendor_id, pg_temp.vendor(5), 'the newer $0 line is not the last purchase');
+SELECT pg_temp.eq((pg_temp.cst('Zero Vendor')).lowest, NULL::jsonb, '$0 is never the lowest comparable purchase price');
+SELECT pg_temp.assert(NOT ('lower_comparable_price_other_vendor' = ANY ((pg_temp.cst('Zero Vendor')).signals)), '$0 never signals a lower price');
+SELECT pg_temp.eq((SELECT state FROM public.price_summary_product_states('6b100000-0000-4000-8000-000000000103', pg_temp.today())
+  WHERE product_id = pg_temp.pid('C All Zero')), NULL::text, 'summary: only $0 lines has no state');
+SELECT pg_temp.eq((SELECT sum(missing_price_count) FROM public.price_summary_product_states('6b100000-0000-4000-8000-000000000103', pg_temp.today())),
+  6::bigint, 'summary coverage: the six $0 lines have no usable price');
+-- Package evidence.
+SELECT pg_temp.eq(public.price_package_agreement('bx', '10/box', NULL, '6b100000-0000-4000-8000-000000000279', '6b100000-0000-4000-8000-000000000280'),
+  false, '10/box against no text: catalog 12/box never overrides the stated package');
+SELECT pg_temp.eq(public.price_package_agreement('bx', NULL, '10/box', '6b100000-0000-4000-8000-000000000281', '6b100000-0000-4000-8000-000000000282'),
+  false, 'no text against 10/box: even an agreeing catalog does not prove one side');
+SELECT pg_temp.eq(public.price_package_agreement('bx', NULL, NULL, '6b100000-0000-4000-8000-000000000279', '6b100000-0000-4000-8000-000000000280'),
+  true, 'no text on either line: verified matching catalog packages agree');
+SELECT pg_temp.eq((pg_temp.cst('Text Vs Catalog 12')).state, 'missing_package_details', '10/box vs NULL with catalogs 12/box');
+SELECT pg_temp.eq((pg_temp.cst('Text Vs Catalog 12')).difference, NULL::numeric, '10/box vs NULL: no numbers');
+SELECT pg_temp.eq((pg_temp.cst('Text Vs Catalog 10')).state, 'missing_package_details', '10/box vs NULL with catalogs 10/box: still not proven (V1)');
+SELECT pg_temp.eq((pg_temp.cst('Text Equal')).state, 'comparable', '10/box vs 10/Box');
+SELECT pg_temp.eq((pg_temp.cst('Text Equal')).difference, 1::numeric, '10/box vs 10/box has numbers');
+SELECT pg_temp.eq((pg_temp.cst('Text Differ')).state, 'missing_package_details', '10/box vs 12/box');
+SELECT pg_temp.eq((pg_temp.st('MV Catalog')).state, 'comparable', 'NULL vs NULL with verified matching catalogs: comparable');
+SELECT pg_temp.eq((pg_temp.st('MV Catalog Quantity')).state, 'missing_package_details', 'NULL vs NULL with a catalog mismatch: missing package details');
+-- Mapping history.
+SELECT pg_temp.eq((pg_temp.cst('Separator SKU')).state, 'comparable', 'line 3240025 on mapping 324-0025: one SKU identity');
+SELECT pg_temp.eq((pg_temp.cst('Separator SKU')).identity_issue, NULL::text, 'separator variant is not a second SKU');
+SELECT pg_temp.eq((pg_temp.cst('Separator SKU')).change_amount, 2::numeric, 'separator variant: same-SKU change');
+SELECT pg_temp.eq((pg_temp.cst('Separator SKU')).anchor ->> 'sku', '3240025', 'the displayed SKU is the posted line''s');
+SELECT pg_temp.eq((pg_temp.cst('Separator SKU')).signals,
+  ARRAY['lower_comparable_price_other_vendor', 'same_sku_price_increased'], 'separator variant: both signals');
+SELECT pg_temp.eq((pg_temp.cst('Deactivated Mapping')).state, 'single_vendor', 'a mapping deactivated after its purchases keeps its history');
+SELECT pg_temp.eq((pg_temp.cst('Deactivated Mapping')).change_amount, 1::numeric, 'deactivated mapping: same-SKU change');
+SELECT pg_temp.eq((pg_temp.cst('Deactivated Plus Active')).state, 'insufficient_identity', 'purchased deactivated SKU plus another active SKU');
+SELECT pg_temp.eq((pg_temp.cst('Deactivated Plus Active')).identity_issue, 'multiple_skus', 'deactivated plus active: several SKUs');
+SELECT pg_temp.eq((pg_temp.cst('Repointed From')).state, 'single_vendor', 're-pointed mapping: its purchases stay with their product');
+SELECT pg_temp.eq((pg_temp.cst('Repointed From')).change_amount, 2::numeric, 're-pointed mapping: same-SKU change unchanged');
+SELECT pg_temp.eq((pg_temp.cst('Repointed From')).anchor ->> 'sku', 'RP-1', 're-pointed mapping: displayed SKU unchanged');
+SELECT pg_temp.eq((SELECT count(*) FROM public.inventory_price_history WHERE product_id = pg_temp.pid('C Repointed From')), 2::bigint,
+  're-pointing never moves price history');
+SELECT pg_temp.eq((pg_temp.cst('Repointed To')).state, 'insufficient_identity', 'the product the mapping now names has two SKUs');
+SELECT pg_temp.eq(pg_temp.summary_mismatches('6b100000-0000-4000-8000-000000000103'), 0::bigint,
+  'organization C: summary counting path equals price_product_state for every product, vendors included');
 SELECT pg_temp.eq((SELECT sum(posted_count) FROM public.price_summary_product_states('6b100000-0000-4000-8000-000000000101', pg_temp.today())),
   (SELECT count(*) FROM public.price_observation_rows('6b100000-0000-4000-8000-000000000101', NULL)),
   'summary coverage: posted observations');

@@ -9,16 +9,18 @@
 --   * SKU identity = upper(btrim(mapping SKU, else the posted line SKU)) within one vendor.
 --     Unit key = lower(btrim(unit)); a unit is valid only when the key matches ^[a-z]{1,10}$.
 --     Package key = lower(btrim(package text)). No synonyms, no base-unit normalization.
---   * Same-SKU change: same product, vendor, SKU identity and valid unit key, USD basis, valid
---     price, quantity > 0; newest against the observation before it, ordered by
---     purchase_date DESC, created_at DESC, id DESC. Never across SKU, vendor or unit.
+--   * Same-SKU change: same product, vendor, SKU identity and valid unit key, USD basis, a price
+--     above zero (a $0 line is never a purchase price), quantity > 0; newest against the
+--     observation before it, ordered by purchase_date DESC, created_at DESC, id DESC. Never
+--     across SKU, vendor or unit.
 --   * Insufficient identity: a vendor has more than one SKU identity for the product (observed
 --     SKUs plus its active SKU mappings), an observation has no SKU, or the last purchase / a
 --     vendor's latest observation has a missing or malformed unit. No change is shown.
 --   * Cross-vendor: each vendor is represented by its latest observation. A pair is structurally
 --     comparable when the unit keys are valid and equal and the package is proven equal
---     (matching non-null package text, or verified catalog packages of equal quantity and unit
---     that agree with the invoiced unit). Numbers (lowest comparable purchase price, difference,
+--     (matching non-null package text on both lines; or, only when neither line has package
+--     text, verified catalog packages of equal quantity and unit that agree with the invoiced
+--     unit). One line's package text is never overridden by catalog data. Numbers (lowest comparable purchase price, difference,
 --     the lower-price signal) only exist against the last purchase, with both observations
 --     180 UTC days old or less. A structurally comparable stale pair stays "Comparable" with the
 --     Stale marker and withheld numbers.
@@ -184,7 +186,7 @@ REVOKE ALL ON FUNCTION public.price_catalog_package_agreement(text, uuid, uuid) 
 COMMENT ON FUNCTION public.price_catalog_package_agreement(text, uuid, uuid) IS
   'Phase 6B.1: verified catalog packages of equal quantity and unit that both agree with the invoiced unit. Used by price_package_agreement when a package text is missing.';
 
--- Inlinable (no sub-select): the catalog lookup runs only when a package text is missing.
+-- Inlinable (no sub-select): the catalog lookup runs only when both package texts are missing.
 CREATE FUNCTION public.price_package_agreement(
   _unit_key text,
   _package_a text,
@@ -199,15 +201,20 @@ AS $$
   SELECT CASE
     WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL AND NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
       THEN lower(btrim(_package_a)) = lower(btrim(_package_b))
+    -- Exactly one line states its package: that invoice evidence is never overridden by the
+    -- catalog, so the package is not proven.
+    WHEN NULLIF(lower(btrim(_package_a)), '') IS NOT NULL OR NULLIF(lower(btrim(_package_b)), '') IS NOT NULL
+      THEN false
     WHEN _catalog_vendor_product_a IS NULL OR _catalog_vendor_product_b IS NULL THEN false
     ELSE public.price_catalog_package_agreement(_unit_key, _catalog_vendor_product_a, _catalog_vendor_product_b)
   END
 $$;
 REVOKE ALL ON FUNCTION public.price_package_agreement(text, text, text, uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
 COMMENT ON FUNCTION public.price_package_agreement(text, text, text, uuid, uuid) IS
-  'Phase 6B.1: package equality is proven only by matching non-null package text, or (when either text is missing) by verified catalog packages of equal quantity and unit that both agree with the invoiced unit. Differing package texts never agree.';
+  'Phase 6B.1: package equality is proven only by matching non-null package text on both lines, or (only when neither line has package text) by verified catalog packages of equal quantity and unit that both agree with the invoiced unit. Differing package texts never agree; one stated package is never overridden by the catalog.';
 
--- A price observation is usable in USD figures: a price at or above zero, a positive quantity,
+-- A price observation is usable in USD figures: a price above zero (a $0 line, such as a free
+-- sample or promotion, is never a purchase price), a positive quantity,
 -- and USD or no currency recorded (the Phase 7E rule).
 CREATE FUNCTION public.price_row_is_valid(_unit_price numeric, _extended_price numeric, _quantity numeric, _currency_code text)
 RETURNS boolean
@@ -215,7 +222,7 @@ LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
 AS $$
-  SELECT (COALESCE(_unit_price, _extended_price / NULLIF(_quantity, 0)) >= 0
+  SELECT (COALESCE(_unit_price, _extended_price / NULLIF(_quantity, 0)) > 0
     AND _quantity > 0
     AND (_currency_code IS NULL OR btrim(_currency_code) = '' OR upper(btrim(_currency_code)) = 'USD')) IS TRUE
 $$;
@@ -777,16 +784,16 @@ AS $$
       END AS line_sku_key,
       -- The observation's flags as one small key (decoded below): 1 posted, 2 USD basis,
       -- 4 valid (price_row_is_valid), 8 order confirmation, 16 dated by posting, 32 package
-      -- missing, 64 price missing.
+      -- missing, 64 no usable price (missing or $0).
       ((CASE WHEN flag.posted IS NOT FALSE THEN 1 ELSE 0 END)
        + (CASE WHEN flag.usd_basis IS NOT FALSE THEN 2 ELSE 0 END)
        + (CASE WHEN flag.posted IS NOT FALSE AND flag.usd_basis IS NOT FALSE
-            AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) >= 0
+            AND COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) > 0
             AND history.quantity > 0 THEN 4 ELSE 0 END)
        + (CASE WHEN flag.order_confirmation THEN 8 ELSE 0 END)
        + (CASE WHEN flag.dated_by_posting THEN 16 ELSE 0 END)
        + (CASE WHEN NULLIF(btrim(history.package_size), '') IS NULL THEN 32 ELSE 0 END)
-       + (CASE WHEN COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)) IS NULL THEN 64 ELSE 0 END)
+       + (CASE WHEN COALESCE(COALESCE(history.unit_price, history.extended_price / NULLIF(history.quantity, 0)), 0) = 0 THEN 64 ELSE 0 END)
       )::smallint AS flags
     FROM public.inventory_price_history history
     LEFT JOIN flagged flag ON flag.id = history.invoice_id
@@ -1583,7 +1590,7 @@ BEGIN
       SELECT jsonb_build_object(
         'postedObservationCount', count(*),
         'excludedNonUsdCount', count(*) FILTER (WHERE o.currency_basis = 'other'),
-        'excludedMissingPriceCount', count(*) FILTER (WHERE o.currency_basis <> 'other' AND o.price IS NULL))
+        'excludedMissingPriceCount', count(*) FILTER (WHERE o.currency_basis <> 'other' AND COALESCE(o.price, 0) = 0))
       FROM public.price_observation_rows(_organization_id, ARRAY[_product.id]) o
     )
   ) INTO _result;
@@ -1909,7 +1916,7 @@ BEGIN
     SELECT
       count(*)::integer AS posted_observation_count,
       count(*) FILTER (WHERE currency_basis = 'other')::integer AS non_usd_count,
-      count(*) FILTER (WHERE currency_basis <> 'other' AND price IS NULL)::integer AS missing_price_count
+      count(*) FILTER (WHERE currency_basis <> 'other' AND COALESCE(price, 0) = 0)::integer AS missing_price_count
     FROM posted
   ),
   recent AS (
