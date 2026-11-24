@@ -85,7 +85,10 @@ function Page() {
   // Phase 6B.1: read-only purchase history per request line. It never assigns a vendor.
   const priceContext = useQuery({
     queryKey: ["org", active?.organizationId, "requests", selected?.id, "price-context"],
-    queryFn: () => fetchPriceContext({ data: { organizationId: active!.organizationId, requestId: selected!.id } }),
+    queryFn: () =>
+      fetchPriceContext({
+        data: { organizationId: active!.organizationId, requestId: selected!.id },
+      }),
     enabled: !!active && !!selected,
   });
 

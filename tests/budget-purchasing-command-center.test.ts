@@ -115,7 +115,6 @@ const overview = (overrides: Partial<CommandCenterOverview> = {}): CommandCenter
   ...overrides,
 });
 
-
 // ---------------------------------------------------------------------------
 // Financial summary
 // ---------------------------------------------------------------------------

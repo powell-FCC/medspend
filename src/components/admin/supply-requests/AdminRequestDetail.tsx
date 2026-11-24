@@ -16,7 +16,10 @@ import { translateAdminRequestStatus, type AdminSupplyRequestViewModel } from "@
 import { requestItemIsCustom, requestTimestamp } from "@/supply-requests/admin-request-inbox";
 import { formatUSD } from "@/budget/budget";
 import { Link } from "@tanstack/react-router";
-import { RequestItemPriceContext, type RenderLink } from "@/components/price-intelligence/PriceIntelligenceSections";
+import {
+  RequestItemPriceContext,
+  type RenderLink,
+} from "@/components/price-intelligence/PriceIntelligenceSections";
 import type { RequestPriceContext } from "@/price-intelligence/vendor-intelligence";
 import { pricingDescription, type CommitmentReleaseKind, type RequestBudgetImpact } from "@/supply-requests/commitments";
 import {
@@ -46,7 +49,9 @@ export type AdminDrawerAction = AdminWorkflowActionKind | "decline";
 
 // Phase 6B.1: purchase history opens in Budget & Purchasing.
 const priceLink: RenderLink = ({ to, search, className, children }) => (
-  <Link to={to as never} search={search as never} className={className}>{children}</Link>
+  <Link to={to as never} search={search as never} className={className}>
+    {children}
+  </Link>
 );
 
 const primaryTransition: Partial<Record<SupplyRequestStatus, SupplyRequestStatus>> = {
@@ -85,6 +90,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
   destinationsError?: boolean;
   onRetryDestinations?: () => void;
 }) {
+  const priceItem = (id: string) => priceContext?.items.find((context) => context.itemId === id);
   const [staffMessage, setStaffMessage] = useState("");
   const [internalNote, setInternalNote] = useState("");
   const [mode, setMode] = useState<"review" | "decline">("review");
@@ -186,7 +192,7 @@ export function AdminRequestDetail({ request, updates, loadingUpdates, updatesEr
                         {(item.manufacturer || item.vendorName) && <p className="mt-1 text-xs leading-5 text-[#697687] [overflow-wrap:anywhere]">{[item.manufacturer, item.vendorName].filter((value, index, values) => value && values.indexOf(value) === index).join(" · ")}</p>}
                         {(item.vendorSku || item.packageDisplay) && <p className="text-xs leading-5 text-[#697687] [overflow-wrap:anywhere]">{[item.vendorSku ? "SKU " + item.vendorSku : null, item.packageDisplay].filter(Boolean).join(" · ")}</p>}
                       </>}
-                      <RequestItemPriceContext item={priceContext?.items.find((context) => context.itemId === item.id)} renderLink={priceLink} />
+                        <RequestItemPriceContext item={priceItem(item.id)} renderLink={priceLink} />
                     </div>
                     <div className="shrink-0 text-right text-sm"><span className="text-xs text-[#697687]">Qty </span><span className="font-semibold tabular-nums text-[#293e55]">{item.quantity}</span>{item.unit && <p className="mt-1 text-xs text-[#697687]">{item.unit}</p>}</div>
                   </li>)}
